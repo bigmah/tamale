@@ -27,7 +27,7 @@ async fn main() -> Result<()> {
             "-h" | "--help" => {
                 println!(
                     "usage: harness [--model <anthropic-model-id>] [-p <prompt>]\n\n\
-                     -p runs one prompt non-interactively (write/edit/bash are denied).\n\
+                     -p runs one prompt non-interactively and exits.\n\
                      Requires ANTHROPIC_API_KEY. HARNESS_MODEL sets the default model."
                 );
                 return Ok(());
@@ -58,12 +58,12 @@ async fn print_mode<M>(model: M, prompt: String) -> Result<()>
 where
     M: rig_core::completion::CompletionModel + Clone + Send + Sync + 'static,
 {
-    use agent::{AgentEvent, Approval};
+    use agent::AgentEvent;
     use std::io::Write;
 
     let (tx, mut rx) = mpsc::unbounded_channel();
     let history = vec![rig_core::completion::Message::user(prompt)];
-    tokio::spawn(agent::run(model, history, Default::default(), tx));
+    tokio::spawn(agent::run(model, history, tx));
 
     let mut failed = false;
     while let Some(ev) = rx.recv().await {
@@ -73,9 +73,6 @@ where
                 std::io::stdout().flush()?;
             }
             AgentEvent::ToolCall { name, summary } => eprintln!("\n⏺ {name}({summary})"),
-            AgentEvent::ApprovalRequest { reply, .. } => {
-                let _ = reply.send(Approval::Deny);
-            }
             AgentEvent::Error(e) => {
                 eprintln!("\nerror: {e}");
                 failed = true;

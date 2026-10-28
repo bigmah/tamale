@@ -1,6 +1,3 @@
-use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
-
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Position, Rect};
@@ -11,11 +8,11 @@ use ratatui::widgets::{
 };
 use rig_core::completion::message::UserContent;
 use rig_core::completion::{CompletionModel, Message};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use unicode_width::UnicodeWidthChar;
 
-use crate::agent::{self, AgentEvent, Approval};
+use crate::agent::{self, AgentEvent};
 
 const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const TOOL_PREVIEW_LINES: usize = 6;
@@ -55,14 +52,6 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
-        "Tool approval",
-        &[
-            ("y / Enter", "Allow this call once"),
-            ("a", "Always allow this tool for the session"),
-            ("n / Esc", "Deny this call"),
-        ],
-    ),
-    (
         "Help",
         &[
             ("↑/↓ or j/k", "Scroll by 1 line"),
@@ -74,11 +63,11 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
 ];
 
 const TOOLS: &[(&str, &str)] = &[
-    ("read_file", "Read a file (no approval)"),
-    ("list_dir", "List a directory (no approval)"),
-    ("write_file", "Create/overwrite a file (asks first)"),
-    ("edit_file", "Replace exact text in a file (asks first)"),
-    ("bash", "Run a shell command (asks first)"),
+    ("read_file", "Read a file"),
+    ("list_dir", "List a directory"),
+    ("write_file", "Create/overwrite a file"),
+    ("edit_file", "Replace exact text in a file"),
+    ("bash", "Run a shell command"),
 ];
 
 enum Entry {
@@ -93,12 +82,6 @@ enum Entry {
     Error(String),
 }
 
-struct PendingApproval {
-    name: String,
-    summary: String,
-    reply: oneshot::Sender<Approval>,
-}
-
 pub type TurnEvent = (u64, AgentEvent);
 
 pub struct App<M> {
@@ -106,14 +89,12 @@ pub struct App<M> {
     model_name: String,
     tx: mpsc::UnboundedSender<TurnEvent>,
     history: Vec<Message>,
-    always_allowed: Arc<Mutex<HashSet<String>>>,
     entries: Vec<Entry>,
     input: String,
     cursor: usize,
     scroll_back: usize,
     turn: u64,
     task: Option<JoinHandle<()>>,
-    approval: Option<PendingApproval>,
     /// Scroll offset of the help popup; `Some` while it is open.
     help_scroll: Option<usize>,
     help_page: usize,
@@ -141,7 +122,6 @@ where
             model_name,
             tx,
             history: Vec::new(),
-            always_allowed: Arc::default(),
             entries: vec![Entry::Info(
                 "Welcome! Type a request and press Enter. /help for commands.".into(),
             )],
@@ -150,7 +130,6 @@ where
             scroll_back: 0,
             turn: 0,
             task: None,
-            approval: None,
             help_scroll: None,
             help_page: 10,
             input_tokens: 0,
@@ -197,27 +176,6 @@ where
                 KeyCode::End | KeyCode::Char('G') => Some(usize::MAX),
                 _ => Some(scroll),
             };
-            return;
-        }
-
-        if let Some(pending) = self.approval.take() {
-            let choice = match key.code {
-                KeyCode::Char('y') | KeyCode::Enter => Some(Approval::Once),
-                KeyCode::Char('a') => Some(Approval::Always),
-                KeyCode::Char('n') | KeyCode::Esc => Some(Approval::Deny),
-                KeyCode::Char('c') if ctrl => {
-                    drop(pending);
-                    self.interrupt();
-                    return;
-                }
-                _ => None,
-            };
-            match choice {
-                Some(c) => {
-                    let _ = pending.reply.send(c);
-                }
-                None => self.approval = Some(pending),
-            }
             return;
         }
 
@@ -347,7 +305,6 @@ where
         self.task = Some(tokio::spawn(agent::run(
             self.model.clone(),
             self.history.clone(),
-            self.always_allowed.clone(),
             atx,
         )));
     }
@@ -374,7 +331,6 @@ where
     fn interrupt(&mut self) {
         if let Some(task) = self.task.take() {
             task.abort();
-            self.approval = None;
             self.entries.push(Entry::Info("Interrupted.".into()));
         }
     }
@@ -410,27 +366,13 @@ where
                     *slot = Some((output, is_error));
                 }
             }
-            AgentEvent::ApprovalRequest {
-                name,
-                summary,
-                reply,
-            } => {
-                self.approval = Some(PendingApproval {
-                    name,
-                    summary,
-                    reply,
-                })
-            }
             AgentEvent::History(h) => self.history = h,
             AgentEvent::Usage(u) => {
                 self.input_tokens += u.input_tokens;
                 self.output_tokens += u.output_tokens;
             }
             AgentEvent::Error(e) => self.entries.push(Entry::Error(e)),
-            AgentEvent::Done => {
-                self.task = None;
-                self.approval = None;
-            }
+            AgentEvent::Done => self.task = None,
         }
     }
 
@@ -440,11 +382,7 @@ where
         let area = frame.area();
         let input_width = area.width.saturating_sub(4).max(1) as usize;
         let (rows, cursor) = wrap_input(&self.input, self.cursor, input_width);
-        let input_height = if self.approval.is_some() {
-            4
-        } else {
-            (rows.len() as u16).clamp(1, 10) + 2
-        };
+        let input_height = (rows.len() as u16).clamp(1, 10) + 2;
 
         let [chat_area, input_area, status_area] = Layout::vertical([
             Constraint::Min(1),
@@ -454,11 +392,7 @@ where
         .areas(area);
 
         self.draw_chat(frame, chat_area);
-        if let Some(pending) = &self.approval {
-            draw_approval(frame, input_area, pending);
-        } else {
-            self.draw_input(frame, input_area, rows, cursor);
-        }
+        self.draw_input(frame, input_area, rows, cursor);
         self.draw_status(frame, status_area);
         if self.help_scroll.is_some() {
             self.draw_help(frame, chat_area);
@@ -512,7 +446,7 @@ where
             render_entry(entry, &mut lines);
             lines.push(Line::default());
         }
-        if self.is_running() && self.approval.is_none() {
+        if self.is_running() {
             lines.push(Line::from(
                 format!("{} Thinking…", SPINNER[self.tick % SPINNER.len()]).fg(Color::Yellow),
             ));
@@ -556,8 +490,6 @@ where
     fn draw_status(&self, frame: &mut Frame, area: Rect) {
         let hint = if self.help_scroll.is_some() {
             "↑/↓ j/k scroll · pgup/pgdn page · esc close"
-        } else if self.approval.is_some() {
-            "y allow · a always · n deny"
         } else if self.is_running() {
             "esc to interrupt"
         } else {
@@ -716,26 +648,6 @@ fn render_markdown<'a>(text: &'a str, lines: &mut Vec<Line<'a>>) {
         }
         lines.push(Line::from(spans));
     }
-}
-
-fn draw_approval(frame: &mut Frame, area: Rect, pending: &PendingApproval) {
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(Color::Yellow))
-        .title(format!(" Allow {}? ", pending.name).bold());
-    let summary = pending.summary.replace('\n', " ⏎ ");
-    let lines = vec![
-        Line::from(summary.fg(Color::White)),
-        Line::from(vec![
-            "[y]".fg(Color::Green).bold(),
-            " yes   ".into(),
-            "[a]".fg(Color::Cyan).bold(),
-            format!(" always allow {}   ", pending.name).into(),
-            "[n]".fg(Color::Red).bold(),
-            " no".into(),
-        ]),
-    ];
-    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 /// Wraps input text to `width` columns, returning visual rows and the

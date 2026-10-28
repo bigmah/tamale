@@ -1,22 +1,12 @@
-use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
-
 use futures::StreamExt;
 use rig_core::completion::message::{ToolResultContent, UserContent};
 use rig_core::completion::{AssistantContent, CompletionModel, Message, Usage};
 use rig_core::streaming::StreamedAssistantContent;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 
 use crate::tools;
 
 const MAX_TOKENS: u64 = 16_000;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Approval {
-    Once,
-    Always,
-    Deny,
-}
 
 pub enum AgentEvent {
     TextDelta(String),
@@ -27,11 +17,6 @@ pub enum AgentEvent {
     ToolResult {
         output: String,
         is_error: bool,
-    },
-    ApprovalRequest {
-        name: String,
-        summary: String,
-        reply: oneshot::Sender<Approval>,
     },
     /// A consistent snapshot of the conversation, safe to resume from.
     History(Vec<Message>),
@@ -59,15 +44,11 @@ Environment:\n- Working directory: {cwd}\n- Platform: {}\n",
 }
 
 /// Runs the agent loop until the model stops calling tools.
-pub async fn run<M>(
-    model: M,
-    mut history: Vec<Message>,
-    always_allowed: Arc<Mutex<HashSet<String>>>,
-    tx: mpsc::UnboundedSender<AgentEvent>,
-) where
+pub async fn run<M>(model: M, mut history: Vec<Message>, tx: mpsc::UnboundedSender<AgentEvent>)
+where
     M: CompletionModel + Clone,
 {
-    if let Err(e) = run_inner(model, &mut history, always_allowed, &tx).await {
+    if let Err(e) = run_inner(model, &mut history, &tx).await {
         let _ = tx.send(AgentEvent::Error(format!("{e:#}")));
     }
     let _ = tx.send(AgentEvent::Done);
@@ -76,7 +57,6 @@ pub async fn run<M>(
 async fn run_inner<M>(
     model: M,
     history: &mut Vec<Message>,
-    always_allowed: Arc<Mutex<HashSet<String>>>,
     tx: &mpsc::UnboundedSender<AgentEvent>,
 ) -> anyhow::Result<()>
 where
@@ -135,38 +115,14 @@ where
         for call in calls {
             let name = call.function.name.clone();
             let args = call.function.arguments.clone();
-            let summary = tools::summarize(&name, &args);
             let _ = tx.send(AgentEvent::ToolCall {
                 name: name.clone(),
-                summary: summary.clone(),
+                summary: tools::summarize(&name, &args),
             });
 
-            let allowed = !tools::needs_approval(&name)
-                || always_allowed.lock().unwrap().contains(&name)
-                || {
-                    let (reply, rx) = oneshot::channel();
-                    let _ = tx.send(AgentEvent::ApprovalRequest {
-                        name: name.clone(),
-                        summary,
-                        reply,
-                    });
-                    match rx.await.unwrap_or(Approval::Deny) {
-                        Approval::Once => true,
-                        Approval::Always => {
-                            always_allowed.lock().unwrap().insert(name.clone());
-                            true
-                        }
-                        Approval::Deny => false,
-                    }
-                };
-
-            let (output, is_error) = if !allowed {
-                ("The user denied this tool call.".to_string(), true)
-            } else {
-                match tools::execute(&name, args).await {
-                    Ok(out) => (out, false),
-                    Err(e) => (format!("Error: {e:#}"), true),
-                }
+            let (output, is_error) = match tools::execute(&name, args).await {
+                Ok(out) => (out, false),
+                Err(e) => (format!("Error: {e:#}"), true),
             };
             let _ = tx.send(AgentEvent::ToolResult {
                 output: output.clone(),

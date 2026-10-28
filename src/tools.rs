@@ -85,11 +85,6 @@ pub fn definitions() -> Vec<ToolDefinition> {
     ]
 }
 
-/// Whether a tool call needs user approval before running.
-pub fn needs_approval(name: &str) -> bool {
-    matches!(name, "write_file" | "edit_file" | "bash")
-}
-
 /// Short human-readable summary of a tool call for the UI.
 pub fn summarize(name: &str, args: &Value) -> String {
     let s = |k: &str| {

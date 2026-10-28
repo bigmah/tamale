@@ -16,16 +16,10 @@ cargo run --release -- -p "summarize src/"   # one-shot, non-interactive
 
 ## Tools
 
-| Tool         | Approval |
-|--------------|----------|
-| `read_file`  | no       |
-| `list_dir`   | no       |
-| `write_file` | yes      |
-| `edit_file`  | yes      |
-| `bash`       | yes      |
+`read_file`, `list_dir`, `write_file`, `edit_file`, `bash`.
 
-When asked to approve: `y` allow once, `a` always allow that tool for the session, `n` deny.
-In `-p` mode, tools that need approval are denied.
+All tools run immediately without asking for confirmation, in both the TUI and `-p` mode.
+The agent can modify files and run any shell command in the working directory.
 
 ## Keys
 
@@ -39,6 +33,6 @@ In `-p` mode, tools that need approval are denied.
 ## Layout
 
 - `src/main.rs` – CLI args, terminal setup, event loop
-- `src/agent.rs` – agent loop: streams completions via rig, runs tools, asks for approval
+- `src/agent.rs` – agent loop: streams completions via rig, runs tools
 - `src/tools.rs` – tool definitions and implementations
 - `src/app.rs` – TUI state, key handling, rendering
