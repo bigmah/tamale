@@ -6,11 +6,14 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, BorderType, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
 };
+use ratatui::widgets::{List, ListItem, ListState};
+use rig_core::client::{CompletionClient, ModelListingClient};
+use rig_core::completion::Message;
 use rig_core::completion::message::UserContent;
-use rig_core::completion::{CompletionModel, Message};
+use rig_core::providers::anthropic;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::agent::{self, AgentEvent};
 
@@ -21,6 +24,11 @@ const COMMANDS: &[(&str, &str)] = &[
     (
         "/help",
         "Show this help (scroll with ↑/↓, close with Esc or q)",
+    ),
+    ("/model", "Pick a model from a list (type to filter)"),
+    (
+        "/model <id>",
+        "Switch directly to a model, e.g. /model claude-opus-4-8",
     ),
     ("/clear", "Clear the conversation and start fresh"),
     ("/quit, /exit", "Quit harness"),
@@ -49,6 +57,15 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
             ("Esc", "Interrupt the agent"),
             ("Ctrl+C", "Clear input / interrupt agent / quit"),
             ("Ctrl+D", "Quit (when input is empty)"),
+        ],
+    ),
+    (
+        "Model picker",
+        &[
+            ("Type", "Filter models by id or name"),
+            ("↑/↓, Ctrl+P/Ctrl+N", "Move selection"),
+            ("Enter", "Switch to selected model"),
+            ("Esc", "Cancel"),
         ],
     ),
     (
@@ -82,12 +99,43 @@ enum Entry {
     Error(String),
 }
 
-pub type TurnEvent = (u64, AgentEvent);
+pub enum AppEvent {
+    /// An agent event tagged with the turn it belongs to.
+    Agent(u64, AgentEvent),
+    Models(Result<Vec<ModelInfo>, String>),
+}
 
-pub struct App<M> {
-    model: M,
+#[derive(Clone)]
+pub struct ModelInfo {
+    id: String,
+    name: String,
+}
+
+/// Used when the live model list can't be fetched.
+const FALLBACK_MODELS: &[(&str, &str)] = &[
+    (anthropic::completion::CLAUDE_OPUS_4_8, "Claude Opus 4.8"),
+    (anthropic::completion::CLAUDE_OPUS_4_7, "Claude Opus 4.7"),
+    (anthropic::completion::CLAUDE_OPUS_4_6, "Claude Opus 4.6"),
+    (
+        anthropic::completion::CLAUDE_SONNET_4_6,
+        "Claude Sonnet 4.6",
+    ),
+    (anthropic::completion::CLAUDE_HAIKU_4_5, "Claude Haiku 4.5"),
+];
+
+#[derive(Default)]
+struct ModelPicker {
+    filter: String,
+    selected: usize,
+}
+
+pub struct App {
+    client: anthropic::Client,
     model_name: String,
-    tx: mpsc::UnboundedSender<TurnEvent>,
+    tx: mpsc::UnboundedSender<AppEvent>,
+    /// `None` until the list has been fetched.
+    models: Option<Vec<ModelInfo>>,
+    picker: Option<ModelPicker>,
     history: Vec<Message>,
     entries: Vec<Entry>,
     input: String,
@@ -104,23 +152,26 @@ pub struct App<M> {
     pub should_quit: bool,
 }
 
-impl<M> App<M>
-where
-    M: CompletionModel + Clone + Send + Sync + 'static,
-{
+impl App {
     pub fn new_with_channel(
-        model: M,
+        client: anthropic::Client,
         model_name: String,
-    ) -> (Self, mpsc::UnboundedReceiver<TurnEvent>) {
+    ) -> (Self, mpsc::UnboundedReceiver<AppEvent>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        (Self::new(model, model_name, tx), rx)
+        (Self::new(client, model_name, tx), rx)
     }
 
-    fn new(model: M, model_name: String, tx: mpsc::UnboundedSender<TurnEvent>) -> Self {
+    fn new(
+        client: anthropic::Client,
+        model_name: String,
+        tx: mpsc::UnboundedSender<AppEvent>,
+    ) -> Self {
         Self {
-            model,
+            client,
             model_name,
             tx,
+            models: None,
+            picker: None,
             history: Vec::new(),
             entries: vec![Entry::Info(
                 "Welcome! Type a request and press Enter. /help for commands.".into(),
@@ -143,6 +194,11 @@ where
         self.task.is_some()
     }
 
+    /// Whether something on screen is animating (spinners).
+    pub fn is_busy(&self) -> bool {
+        self.is_running() || (self.picker.is_some() && self.models.is_none())
+    }
+
     pub fn on_tick(&mut self) {
         self.tick = self.tick.wrapping_add(1);
     }
@@ -161,6 +217,11 @@ where
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+
+        if self.picker.is_some() {
+            self.on_picker_key(key, ctrl);
+            return;
+        }
 
         if let Some(scroll) = self.help_scroll {
             let page = self.help_page.max(1);
@@ -297,16 +358,140 @@ where
         let tx = self.tx.clone();
         tokio::spawn(async move {
             while let Some(ev) = arx.recv().await {
-                if tx.send((turn, ev)).is_err() {
+                if tx.send(AppEvent::Agent(turn, ev)).is_err() {
                     break;
                 }
             }
         });
         self.task = Some(tokio::spawn(agent::run(
-            self.model.clone(),
+            self.client.completion_model(self.model_name.clone()),
             self.history.clone(),
             atx,
         )));
+    }
+
+    // --------------------------------------------------------- model picker
+
+    fn open_picker(&mut self) {
+        let mut picker = ModelPicker::default();
+        if let Some(models) = &self.models {
+            picker.selected = models
+                .iter()
+                .position(|m| m.id == self.model_name)
+                .unwrap_or(0);
+        } else {
+            let client = self.client.clone();
+            let tx = self.tx.clone();
+            tokio::spawn(async move {
+                let result = client
+                    .list_models()
+                    .await
+                    .map(|list| {
+                        list.data
+                            .into_iter()
+                            .map(|m| ModelInfo {
+                                name: m.name.unwrap_or_else(|| m.id.clone()),
+                                id: m.id,
+                            })
+                            .collect()
+                    })
+                    .map_err(|e| e.to_string());
+                let _ = tx.send(AppEvent::Models(result));
+            });
+        }
+        self.picker = Some(picker);
+    }
+
+    fn on_models(&mut self, result: Result<Vec<ModelInfo>, String>) {
+        let models = match result {
+            Ok(models) if !models.is_empty() => models,
+            other => {
+                if let Err(e) = other {
+                    self.entries.push(Entry::Error(format!(
+                        "Couldn't fetch model list ({e}); showing built-in list."
+                    )));
+                }
+                FALLBACK_MODELS
+                    .iter()
+                    .map(|(id, name)| ModelInfo {
+                        id: id.to_string(),
+                        name: name.to_string(),
+                    })
+                    .collect()
+            }
+        };
+        if let Some(picker) = &mut self.picker {
+            picker.selected = models
+                .iter()
+                .position(|m| m.id == self.model_name)
+                .unwrap_or(0);
+        }
+        self.models = Some(models);
+    }
+
+    /// Models matching the picker's filter.
+    fn filtered_models(&self) -> Vec<&ModelInfo> {
+        let filter = self
+            .picker
+            .as_ref()
+            .map(|p| p.filter.to_lowercase())
+            .unwrap_or_default();
+        self.models
+            .iter()
+            .flatten()
+            .filter(|m| {
+                m.id.to_lowercase().contains(&filter) || m.name.to_lowercase().contains(&filter)
+            })
+            .collect()
+    }
+
+    fn on_picker_key(&mut self, key: KeyEvent, ctrl: bool) {
+        let count = self.filtered_models().len();
+        let Some(picker) = &mut self.picker else {
+            return;
+        };
+        match key.code {
+            KeyCode::Esc => self.picker = None,
+            KeyCode::Char('c') if ctrl => self.picker = None,
+            KeyCode::Up => picker.selected = picker.selected.saturating_sub(1),
+            KeyCode::Down => picker.selected = (picker.selected + 1).min(count.saturating_sub(1)),
+            KeyCode::Char('p') if ctrl => picker.selected = picker.selected.saturating_sub(1),
+            KeyCode::Char('n') if ctrl => {
+                picker.selected = (picker.selected + 1).min(count.saturating_sub(1))
+            }
+            KeyCode::Home => picker.selected = 0,
+            KeyCode::End => picker.selected = count.saturating_sub(1),
+            KeyCode::Backspace => {
+                picker.filter.pop();
+                picker.selected = 0;
+            }
+            KeyCode::Char(c) if !ctrl => {
+                picker.filter.push(c);
+                picker.selected = 0;
+            }
+            KeyCode::Enter => {
+                let selected = picker.selected;
+                if let Some(id) = self.filtered_models().get(selected).map(|m| m.id.clone()) {
+                    self.picker = None;
+                    self.set_model(id);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn set_model(&mut self, id: String) {
+        if id == self.model_name {
+            return;
+        }
+        let note = if self.is_running() {
+            " (takes effect on your next message)"
+        } else {
+            ""
+        };
+        self.entries
+            .push(Entry::Info(format!("Switched model to {id}{note}.")));
+        self.model_name = id;
     }
 
     fn command(&mut self, cmd: &str) {
@@ -322,6 +507,10 @@ where
                     .push(Entry::Info("Conversation cleared.".into()));
             }
             "/help" => self.help_scroll = Some(0),
+            "/model" | "/models" => match cmd.split_whitespace().nth(1) {
+                Some(id) => self.set_model(id.to_string()),
+                None => self.open_picker(),
+            },
             other => self.entries.push(Entry::Error(format!(
                 "Unknown command: {other} (type /help to see all commands)"
             ))),
@@ -335,7 +524,14 @@ where
         }
     }
 
-    pub fn on_agent(&mut self, (turn, event): TurnEvent) {
+    pub fn on_app_event(&mut self, event: AppEvent) {
+        match event {
+            AppEvent::Agent(turn, ev) => self.on_agent(turn, ev),
+            AppEvent::Models(result) => self.on_models(result),
+        }
+    }
+
+    fn on_agent(&mut self, turn: u64, event: AgentEvent) {
         if turn != self.turn {
             return;
         }
@@ -397,6 +593,77 @@ where
         if self.help_scroll.is_some() {
             self.draw_help(frame, chat_area);
         }
+        if self.picker.is_some() {
+            self.draw_picker(frame, chat_area);
+        }
+    }
+
+    fn draw_picker(&self, frame: &mut Frame, area: Rect) {
+        let Some(picker) = &self.picker else {
+            return;
+        };
+        let popup = area.centered(Constraint::Max(70), Constraint::Max(20));
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::new().fg(Color::Cyan))
+            .title(" Select model ".bold())
+            .title_bottom(
+                Line::from(" type to filter · ↑/↓ move · enter select · esc cancel ")
+                    .right_aligned(),
+            );
+        let inner = block.inner(popup);
+        frame.render_widget(Clear, popup);
+        frame.render_widget(block, popup);
+
+        let [filter_area, list_area] =
+            Layout::vertical([Constraint::Length(2), Constraint::Min(1)]).areas(inner);
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::from(" Filter: ").fg(Color::DarkGray),
+                Span::from(picker.filter.as_str()),
+            ])),
+            filter_area,
+        );
+        frame.set_cursor_position(Position::new(
+            filter_area.x + 9 + picker.filter.width() as u16,
+            filter_area.y,
+        ));
+
+        if self.models.is_none() {
+            frame.render_widget(
+                Paragraph::new(
+                    format!(" {} Loading models…", SPINNER[self.tick % SPINNER.len()])
+                        .fg(Color::Yellow),
+                ),
+                list_area,
+            );
+            return;
+        }
+        let models = self.filtered_models();
+        if models.is_empty() {
+            frame.render_widget(
+                Paragraph::new(" No matching models".fg(Color::DarkGray)),
+                list_area,
+            );
+            return;
+        }
+        let id_width = models.iter().map(|m| m.id.len()).max().unwrap_or(0);
+        let items: Vec<ListItem> = models
+            .iter()
+            .map(|m| {
+                let current = m.id == self.model_name;
+                ListItem::new(Line::from(vec![
+                    Span::from(if current { "● " } else { "  " }).fg(Color::Green),
+                    Span::from(format!("{:<id_width$}  ", m.id)),
+                    Span::from(m.name.as_str()).fg(Color::DarkGray),
+                ]))
+            })
+            .collect();
+        let list = List::new(items)
+            .highlight_style(Style::new().bg(Color::Cyan).fg(Color::Black))
+            .highlight_symbol("› ");
+        let mut state = ListState::default().with_selected(Some(picker.selected));
+        frame.render_stateful_widget(list, list_area, &mut state);
     }
 
     fn draw_help(&mut self, frame: &mut Frame, area: Rect) {
@@ -488,12 +755,14 @@ where
     }
 
     fn draw_status(&self, frame: &mut Frame, area: Rect) {
-        let hint = if self.help_scroll.is_some() {
+        let hint = if self.picker.is_some() {
+            "type to filter · ↑/↓ move · enter select · esc cancel"
+        } else if self.help_scroll.is_some() {
             "↑/↓ j/k scroll · pgup/pgdn page · esc close"
         } else if self.is_running() {
             "esc to interrupt"
         } else {
-            "enter send · alt+enter newline · /help"
+            "enter send · alt+enter newline · /model · /help"
         };
         let line = Line::from(vec![
             Span::from(format!(" {} ", self.model_name)).fg(Color::Magenta),

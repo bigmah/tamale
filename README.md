@@ -28,6 +28,8 @@ The agent can modify files and run any shell command in the working directory.
 - `PgUp/PgDn`, `Shift+↑/↓` scroll
 - `Ctrl+C` clear input / interrupt / quit
 - `/help` opens a scrollable popup listing all commands, keys and tools
+- `/model` opens a model picker (live list from the Anthropic API; type to filter, Enter to switch).
+  `/model <id>` switches directly. The conversation is kept when switching.
 - `/clear` resets the conversation, `/quit` (or `/exit`) quits
 
 ## Layout

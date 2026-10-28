@@ -40,15 +40,14 @@ async fn main() -> Result<()> {
         bail!("ANTHROPIC_API_KEY is not set");
     }
     let client = anthropic::Client::from_env().context("creating Anthropic client")?;
-    let model = client.completion_model(model_name.clone());
 
     if let Some(prompt) = print_prompt {
-        return print_mode(model, prompt).await;
+        return print_mode(client.completion_model(model_name), prompt).await;
     }
 
     let mut terminal = ratatui::init();
     execute!(std::io::stdout(), EnableBracketedPaste)?;
-    let result = run(&mut terminal, App::new_with_channel(model, model_name)).await;
+    let result = run(&mut terminal, App::new_with_channel(client, model_name)).await;
     let _ = execute!(std::io::stdout(), DisableBracketedPaste);
     ratatui::restore();
     result
@@ -88,13 +87,10 @@ where
     Ok(())
 }
 
-async fn run<M>(
+async fn run(
     terminal: &mut ratatui::DefaultTerminal,
-    (mut app, mut rx): (App<M>, mpsc::UnboundedReceiver<app::TurnEvent>),
-) -> Result<()>
-where
-    M: rig_core::completion::CompletionModel + Clone + Send + Sync + 'static,
-{
+    (mut app, mut rx): (App, mpsc::UnboundedReceiver<app::AppEvent>),
+) -> Result<()> {
     let mut events = EventStream::new();
     let mut tick = tokio::time::interval(Duration::from_millis(80));
 
@@ -102,8 +98,8 @@ where
         terminal.draw(|f| app.draw(f))?;
         tokio::select! {
             Some(ev) = events.next() => app.on_event(ev?),
-            Some(ev) = rx.recv() => app.on_agent(ev),
-            _ = tick.tick(), if app.is_running() => app.on_tick(),
+            Some(ev) = rx.recv() => app.on_app_event(ev),
+            _ = tick.tick(), if app.is_busy() => app.on_tick(),
         }
     }
     Ok(())
