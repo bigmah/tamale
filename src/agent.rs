@@ -169,11 +169,29 @@ impl Config {
 }
 
 /// Context window of a model in tokens. `HARNESS_CONTEXT_WINDOW` overrides it.
-pub fn context_window(_model: &str) -> u64 {
+pub fn context_window(model: &str) -> u64 {
     std::env::var("HARNESS_CONTEXT_WINDOW")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(DEFAULT_CONTEXT_WINDOW)
+        .unwrap_or_else(|| model_context_window(model))
+}
+
+/// Built-in context window per model, matching `max_input_tokens` from the Models API.
+fn model_context_window(model: &str) -> u64 {
+    let m = model.strip_prefix("anthropic/").unwrap_or(model);
+    // Opus 4.6+, Sonnet 4.6 and every Claude 5 model have a 1M-token window.
+    let one_million = m.starts_with("claude-opus-4-6")
+        || m.starts_with("claude-opus-4-7")
+        || m.starts_with("claude-opus-4-8")
+        || m.starts_with("claude-sonnet-4-6")
+        || ["opus", "sonnet", "haiku", "fable"]
+            .iter()
+            .any(|line| m.starts_with(&format!("claude-{line}-5")));
+    if one_million {
+        1_000_000
+    } else {
+        DEFAULT_CONTEXT_WINDOW
+    }
 }
 
 /// USD price per million input and output tokens, or `None` for unknown models.

@@ -19,7 +19,7 @@ cargo run --release -- --resume              # pick a saved session to resume
 `HARNESS_MODEL` sets the default model (otherwise `claude-sonnet-4-6`).
 `HARNESS_EFFORT` sets the default effort level (otherwise the API default).
 `HARNESS_THINKING` sets the thinking mode (`adaptive` or `on`, the default; `off` to disable).
-`HARNESS_CONTEXT_WINDOW` overrides the context window size (default 200k tokens).
+`HARNESS_CONTEXT_WINDOW` overrides the context window size (default: 1M tokens for Claude 5, Opus 4.6+ and Sonnet 4.6; 200k for older models).
 
 Adaptive thinking is **on by default**: Claude decides when and how much to reason,
 with `--effort` or `/effort` controlling thoroughness. The setting applies to tool
