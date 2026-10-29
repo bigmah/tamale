@@ -37,6 +37,10 @@ const COMMANDS: &[(&str, &str)] = &[
         "/effort [level]",
         "Show or set effort: low, medium, high, xhigh, max, or default",
     ),
+    (
+        "/thinking [mode]",
+        "Toggle adaptive thinking (on by default); /thinking on|off to set",
+    ),
     ("/clear", "Clear the conversation and start fresh"),
     ("/quit, /exit", "Quit harness"),
 ];
@@ -139,8 +143,7 @@ struct ModelPicker {
 pub struct App {
     client: anthropic::Client,
     model_name: String,
-    /// `None` uses the API default.
-    effort: Option<agent::Effort>,
+    reasoning: agent::Reasoning,
     tx: mpsc::UnboundedSender<AppEvent>,
     /// `None` until the list has been fetched.
     models: Option<Vec<ModelInfo>>,
@@ -173,22 +176,22 @@ impl App {
     pub fn new_with_channel(
         client: anthropic::Client,
         model_name: String,
-        effort: Option<agent::Effort>,
+        reasoning: agent::Reasoning,
     ) -> (Self, mpsc::UnboundedReceiver<AppEvent>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        (Self::new(client, model_name, effort, tx), rx)
+        (Self::new(client, model_name, reasoning, tx), rx)
     }
 
     fn new(
         client: anthropic::Client,
         model_name: String,
-        effort: Option<agent::Effort>,
+        reasoning: agent::Reasoning,
         tx: mpsc::UnboundedSender<AppEvent>,
     ) -> Self {
         Self {
             client,
             model_name,
-            effort,
+            reasoning,
             tx,
             models: None,
             picker: None,
@@ -376,7 +379,7 @@ impl App {
         let config = agent::Config {
             context_window: agent::context_window(&self.model_name),
             context_tokens: self.context_tokens,
-            effort: self.effort,
+            reasoning: self.reasoning,
         };
         let atx = self.start_turn();
         self.task = Some(tokio::spawn(agent::run(
@@ -404,7 +407,7 @@ impl App {
             self.model(),
             self.history.clone(),
             instructions,
-            self.effort,
+            self.reasoning,
             atx,
         )));
     }
@@ -559,7 +562,7 @@ impl App {
 
     fn set_effort(&mut self, arg: Option<&str>) {
         let levels = agent::Effort::ALL.map(|e| e.as_str()).join(", ");
-        let current = self.effort.map_or("default", |e| e.as_str());
+        let current = self.reasoning.effort.map_or("default", |e| e.as_str());
         let Some(arg) = arg else {
             self.entries.push(Entry::Info(format!(
                 "Effort: {current}. Set with /effort <level> ({levels}, or default)."
@@ -583,10 +586,38 @@ impl App {
         } else {
             ""
         };
-        self.effort = effort;
+        self.reasoning.effort = effort;
         self.entries.push(Entry::Info(format!(
             "Effort set to {}{note}.",
             effort.map_or("default", |e| e.as_str())
+        )));
+    }
+
+    fn set_thinking(&mut self, arg: Option<&str>) {
+        let thinking = match arg {
+            None => match self.reasoning.thinking {
+                agent::Thinking::Adaptive => agent::Thinking::Off,
+                agent::Thinking::Off => agent::Thinking::Adaptive,
+            },
+            Some(arg) => match agent::Thinking::parse(arg) {
+                Some(thinking) => thinking,
+                None => {
+                    self.entries.push(Entry::Error(format!(
+                        "Unknown thinking mode: {arg} (use adaptive, on, off)"
+                    )));
+                    return;
+                }
+            },
+        };
+        self.reasoning.thinking = thinking;
+        let note = if self.is_running() {
+            " (takes effect on your next message)"
+        } else {
+            ""
+        };
+        self.entries.push(Entry::Info(format!(
+            "Thinking set to {}{note}.",
+            thinking.as_str()
         )));
     }
 
@@ -604,6 +635,7 @@ impl App {
                     .push(Entry::Info("Conversation cleared.".into()));
             }
             "/help" => self.help_scroll = Some(0),
+            "/thinking" => self.set_thinking(cmd.split_whitespace().nth(1)),
             "/compact" => {
                 let rest = cmd["/compact".len()..].trim();
                 self.compact((!rest.is_empty()).then(|| rest.to_string()));
@@ -945,7 +977,9 @@ impl App {
         };
         let line = Line::from(vec![
             Span::from(format!(" {} ", self.model_name)).fg(Color::Magenta),
-            Span::from(match self.effort {
+            Span::from(format!("· thinking {} ", self.reasoning.thinking.as_str()))
+                .fg(Color::Magenta),
+            Span::from(match self.reasoning.effort {
                 Some(e) => format!("· {} ", e.as_str()),
                 None => String::new(),
             })
@@ -1019,6 +1053,10 @@ fn help_lines() -> Vec<Line<'static>> {
             (
                 "--effort <level>",
                 "Effort level: low|medium|high|xhigh|max (or set HARNESS_EFFORT)",
+            ),
+            (
+                "--thinking <mode>",
+                "Thinking: adaptive|off (default: adaptive; or set HARNESS_THINKING)",
             ),
             ("-p <prompt>", "Run one prompt non-interactively and exit"),
         ],
@@ -1159,4 +1197,31 @@ fn wrap_input(input: &str, cursor: usize, width: usize) -> (Vec<String>, (usize,
         }
     });
     (rows, pos)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn thinking_command_toggles_and_accepts_explicit_modes() {
+        let client = anthropic::Client::new("test-key").unwrap();
+        let (mut app, _rx) = App::new_with_channel(
+            client,
+            "claude-sonnet-4-6".into(),
+            agent::Reasoning::default(),
+        );
+        assert_eq!(app.reasoning.thinking, agent::Thinking::Adaptive);
+        app.command("/thinking");
+        assert_eq!(app.reasoning.thinking, agent::Thinking::Off);
+        app.command("/thinking");
+        assert_eq!(app.reasoning.thinking, agent::Thinking::Adaptive);
+        app.command("/thinking off");
+        assert_eq!(app.reasoning.thinking, agent::Thinking::Off);
+        app.command("/thinking on");
+        assert_eq!(app.reasoning.thinking, agent::Thinking::Adaptive);
+        app.command("/thinking typo");
+        assert_eq!(app.reasoning.thinking, agent::Thinking::Adaptive);
+        assert!(matches!(app.entries.last(), Some(Entry::Error(_))));
+    }
 }

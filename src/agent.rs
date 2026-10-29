@@ -11,6 +11,9 @@ use tokio::sync::mpsc;
 
 use crate::tools;
 
+#[cfg(test)]
+mod tests;
+
 const MAX_TOKENS: u64 = 16_000;
 const COMPACT_MAX_TOKENS: u64 = 8_000;
 const DEFAULT_CONTEXT_WINDOW: u64 = 200_000;
@@ -99,9 +102,52 @@ impl Effort {
             .into_iter()
             .find(|e| e.as_str().eq_ignore_ascii_case(s.trim()))
     }
+}
 
-    fn params(effort: Option<Self>) -> Option<serde_json::Value> {
-        effort.map(|e| serde_json::json!({ "output_config": { "effort": e.as_str() } }))
+/// Anthropic's adaptive thinking, controlled independently of effort.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Thinking {
+    #[default]
+    Adaptive,
+    Off,
+}
+
+impl Thinking {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "adaptive" | "on" => Some(Self::Adaptive),
+            "off" | "disabled" => Some(Self::Off),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Adaptive => "adaptive",
+            Self::Off => "off",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Reasoning {
+    pub thinking: Thinking,
+    /// `None` leaves the API default.
+    pub effort: Option<Effort>,
+}
+
+impl Reasoning {
+    fn params(self) -> serde_json::Value {
+        let mut params = serde_json::json!({
+            "thinking": { "type": match self.thinking {
+                Thinking::Adaptive => "adaptive",
+                Thinking::Off => "disabled",
+            } }
+        });
+        if let Some(effort) = self.effort {
+            params["output_config"] = serde_json::json!({ "effort": effort.as_str() });
+        }
+        params
     }
 }
 
@@ -110,8 +156,7 @@ pub struct Config {
     pub context_window: u64,
     /// Context size of the most recent request, used to decide when to auto-compact.
     pub context_tokens: u64,
-    /// `None` leaves the API default.
-    pub effort: Option<Effort>,
+    pub reasoning: Reasoning,
 }
 
 impl Config {
@@ -230,7 +275,7 @@ pub async fn compact<M>(
     model: M,
     history: Vec<Message>,
     instructions: Option<String>,
-    effort: Option<Effort>,
+    reasoning: Reasoning,
     tx: mpsc::UnboundedSender<AgentEvent>,
 ) where
     M: CompletionModel + Clone,
@@ -245,7 +290,7 @@ pub async fn compact<M>(
             &tools::definitions(),
             &history,
             instructions.as_deref(),
-            effort,
+            reasoning,
             &tx,
         )
         .await?;
@@ -279,7 +324,7 @@ where
                 &tool_defs,
                 history,
                 None,
-                config.effort,
+                config.reasoning,
                 tx,
             )
             .await?;
@@ -293,7 +338,7 @@ where
             &tool_defs,
             history,
             MAX_TOKENS,
-            config.effort,
+            config.reasoning,
             true,
             tx,
         )
@@ -363,7 +408,7 @@ async fn compact_history<M>(
     tool_defs: &[ToolDefinition],
     history: &[Message],
     instructions: Option<&str>,
-    effort: Option<Effort>,
+    reasoning: Reasoning,
     tx: &mpsc::UnboundedSender<AgentEvent>,
 ) -> anyhow::Result<Vec<Message>>
 where
@@ -385,7 +430,7 @@ where
         tool_defs,
         &messages,
         COMPACT_MAX_TOKENS,
-        effort,
+        reasoning,
         false,
         tx,
     )
@@ -431,7 +476,7 @@ async fn request<M>(
     tool_defs: &[ToolDefinition],
     history: &[Message],
     max_tokens: u64,
-    effort: Option<Effort>,
+    reasoning: Reasoning,
     stream_text: bool,
     tx: &mpsc::UnboundedSender<AgentEvent>,
 ) -> anyhow::Result<(Vec<AssistantContent>, Usage)>
@@ -451,7 +496,7 @@ where
                 .messages(rest.to_vec())
                 .tools(tool_defs.to_vec())
                 .max_tokens(max_tokens)
-                .additional_params_opt(Effort::params(effort))
+                .additional_params(reasoning.params())
                 .stream()
                 .await?;
             while let Some(item) = stream.next().await {

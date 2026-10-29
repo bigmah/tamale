@@ -10,12 +10,21 @@ export ANTHROPIC_API_KEY=sk-ant-...
 cargo run --release                          # interactive TUI
 cargo run --release -- --model claude-opus-4-8
 cargo run --release -- --effort low          # less thorough, faster, cheaper
+cargo run --release -- --thinking off        # disable adaptive thinking
 cargo run --release -- -p "summarize src/"   # one-shot, non-interactive
 ```
 
 `HARNESS_MODEL` sets the default model (otherwise `claude-sonnet-4-6`).
 `HARNESS_EFFORT` sets the default effort level (otherwise the API default).
+`HARNESS_THINKING` sets the thinking mode (`adaptive` or `on`, the default; `off` to disable).
 `HARNESS_CONTEXT_WINDOW` overrides the context window size (default 200k tokens).
+
+Adaptive thinking is **on by default**: Claude decides when and how much to reason,
+with `--effort` or `/effort` controlling thoroughness. The setting applies to tool
+follow-ups and compaction as well as normal replies. Thinking blocks and their
+signatures are preserved in conversation history; thinking text is not displayed.
+Use `--thinking off` or `/thinking off` for models that don't support adaptive
+thinking (e.g. Haiku 4.5). See [Anthropic's thinking documentation](https://platform.claude.com/docs/en/build-with-claude/thinking).
 
 ## Context, caching and retries
 
@@ -54,6 +63,9 @@ The agent can modify files and run any shell command in the working directory.
 - `/effort [level]` shows or sets the effort level (`low`, `medium`, `high`, `xhigh`, `max`,
   or `default` to omit it). It is sent as `output_config.effort`; models that don't support it
   (e.g. Haiku 4.5) or a given level reject the request with an error. Shown in the status bar when set.
+- `/thinking` toggles adaptive thinking (on by default). `/thinking on` (or `adaptive`)
+  and `/thinking off` set it explicitly. Shown in the status bar; changes during a run
+  take effect on the next message.
 - `/compact [focus]` summarizes the conversation to free context
 - `/clear` resets the conversation, `/quit` (or `/exit`) quits
 

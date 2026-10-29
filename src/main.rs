@@ -23,6 +23,10 @@ async fn main() -> Result<()> {
         Ok(v) if !v.trim().is_empty() => parse_effort(&v)?,
         _ => None,
     };
+    let mut thinking = match std::env::var("HARNESS_THINKING") {
+        Ok(v) if !v.trim().is_empty() => parse_thinking(&v)?,
+        _ => agent::Thinking::default(),
+    };
     let mut print_prompt = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -30,13 +34,17 @@ async fn main() -> Result<()> {
             "-e" | "--effort" => {
                 effort = parse_effort(&args.next().context("--effort needs a value")?)?
             }
+            "--thinking" => {
+                thinking = parse_thinking(&args.next().context("--thinking needs a value")?)?
+            }
             "-p" | "--print" => print_prompt = Some(args.next().context("--print needs a prompt")?),
             "-h" | "--help" => {
                 println!(
-                    "usage: harness [--model <anthropic-model-id>] [--effort <level>] [-p <prompt>]\n\n\
+                    "usage: harness [--model <anthropic-model-id>] [--effort <level>] [--thinking <mode>] [-p <prompt>]\n\n\
                      -p runs one prompt non-interactively and exits.\n\
                      --effort is one of low, medium, high, xhigh, max (default: API default).\n\
-                     Requires ANTHROPIC_API_KEY. HARNESS_MODEL and HARNESS_EFFORT set defaults."
+                     --thinking is adaptive (on) or off (default: adaptive).\n\
+                     Requires ANTHROPIC_API_KEY. HARNESS_MODEL, HARNESS_EFFORT and HARNESS_THINKING set defaults."
                 );
                 return Ok(());
             }
@@ -48,12 +56,13 @@ async fn main() -> Result<()> {
         bail!("ANTHROPIC_API_KEY is not set");
     }
     let client = anthropic::Client::from_env().context("creating Anthropic client")?;
+    let reasoning = agent::Reasoning { thinking, effort };
 
     if let Some(prompt) = print_prompt {
         let config = agent::Config {
             context_window: agent::context_window(&model_name),
             context_tokens: 0,
-            effort,
+            reasoning,
         };
         let model = client.completion_model(model_name).with_prompt_caching();
         return print_mode(model, config, prompt).await;
@@ -63,12 +72,17 @@ async fn main() -> Result<()> {
     execute!(std::io::stdout(), EnableBracketedPaste)?;
     let result = run(
         &mut terminal,
-        App::new_with_channel(client, model_name, effort),
+        App::new_with_channel(client, model_name, reasoning),
     )
     .await;
     let _ = execute!(std::io::stdout(), DisableBracketedPaste);
     ratatui::restore();
     result
+}
+
+fn parse_thinking(s: &str) -> Result<agent::Thinking> {
+    agent::Thinking::parse(s)
+        .with_context(|| format!("unknown thinking mode: {s} (use adaptive, on, off)"))
 }
 
 fn parse_effort(s: &str) -> Result<Option<agent::Effort>> {
