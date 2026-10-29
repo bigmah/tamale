@@ -1,6 +1,8 @@
 mod agent;
 mod app;
+mod cli;
 mod clipboard;
+mod config;
 mod session;
 mod tools;
 
@@ -21,59 +23,25 @@ use crate::app::App;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut args = std::env::args().skip(1);
-    let mut model_name =
-        std::env::var("HARNESS_MODEL").unwrap_or_else(|_| "claude-opus-5-5".into());
-    let mut effort = match std::env::var("HARNESS_EFFORT") {
-        Ok(v) if !v.trim().is_empty() => parse_effort(&v)?,
-        _ => None,
-    };
-    let mut thinking = match std::env::var("HARNESS_THINKING") {
-        Ok(v) if !v.trim().is_empty() => parse_thinking(&v)?,
-        _ => agent::Thinking::default(),
-    };
-    let mut print_prompt = None;
-    let mut resume = None;
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "-m" | "--model" => model_name = args.next().context("--model needs a value")?,
-            "-e" | "--effort" => {
-                effort = parse_effort(&args.next().context("--effort needs a value")?)?
-            }
-            "--thinking" => {
-                thinking = parse_thinking(&args.next().context("--thinking needs a value")?)?
-            }
-            "-c" | "--continue" => resume = Some(Resume::Latest),
-            "-r" | "--resume" => resume = Some(Resume::Pick),
-            "-p" | "--print" => print_prompt = Some(args.next().context("--print needs a prompt")?),
-            "-h" | "--help" => {
-                println!(
-                    "usage: harness [--model <anthropic-model-id>] [--effort <level>] [--thinking <mode>] [-c | -r] [-p <prompt>]\n\n\
-                     -p runs one prompt non-interactively and exits.\n\
-                     -c/--continue resumes the most recent session in this directory; -r/--resume picks one.\n\
-                     --effort is one of low, medium, high, xhigh, max (default: API default).\n\
-                     --thinking is adaptive (on) or off (default: adaptive).\n\
-                     Requires ANTHROPIC_API_KEY. HARNESS_MODEL, HARNESS_EFFORT and HARNESS_THINKING set defaults."
-                );
-                return Ok(());
-            }
-            other => bail!("unknown argument: {other}"),
-        }
+    let cli = cli::Cli::parse(std::env::args().skip(1))?;
+    if cli.help {
+        println!("{}", cli::HELP);
+        return Ok(());
     }
+    let mut settings = config::Settings::load(&std::env::current_dir()?, cli.config.as_deref())?;
+    settings.apply_env(|name| std::env::var(name).ok())?;
+    cli.apply(&mut settings);
+    settings.validate()?;
 
     if std::env::var("ANTHROPIC_API_KEY").is_err() {
         bail!("ANTHROPIC_API_KEY is not set");
     }
     let client = anthropic::Client::from_env().context("creating Anthropic client")?;
-    let reasoning = agent::Reasoning { thinking, effort };
-
-    if let Some(prompt) = print_prompt {
-        let config = agent::Config {
-            context_window: agent::context_window(&model_name),
-            context_tokens: 0,
-            reasoning,
-        };
-        let model = client.completion_model(model_name).with_prompt_caching();
+    if let Some(prompt) = cli.print_prompt {
+        let config = settings.turn_config(0);
+        let model = client
+            .completion_model(settings.model.name)
+            .with_prompt_caching();
         return print_mode(model, config, prompt).await;
     }
 
@@ -88,14 +56,17 @@ async fn main() -> Result<()> {
         hook(info);
     }));
     let mut terminal = ratatui::init();
-    execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture)?;
-    let (mut app, rx) = App::new_with_channel(client, model_name, reasoning);
-    match resume {
-        Some(Resume::Latest) => match session::list(Some(&std::env::current_dir()?)).first() {
+    execute!(std::io::stdout(), EnableBracketedPaste)?;
+    if settings.ui.mouse {
+        execute!(std::io::stdout(), EnableMouseCapture)?;
+    }
+    let (mut app, rx) = App::new_with_channel(client, settings);
+    match cli.resume {
+        Some(cli::Resume::Latest) => match session::list(Some(&std::env::current_dir()?)).first() {
             Some(latest) => app.resume(&latest.id),
             None => app.resume_command(None),
         },
-        Some(Resume::Pick) => app.resume_command(None),
+        Some(cli::Resume::Pick) => app.resume_command(None),
         None => {}
     }
     let result = run(&mut terminal, (app, rx)).await;
@@ -108,29 +79,7 @@ async fn main() -> Result<()> {
     result
 }
 
-enum Resume {
-    Latest,
-    Pick,
-}
-
-fn parse_thinking(s: &str) -> Result<agent::Thinking> {
-    agent::Thinking::parse(s)
-        .with_context(|| format!("unknown thinking mode: {s} (use adaptive, on, off)"))
-}
-
-fn parse_effort(s: &str) -> Result<Option<agent::Effort>> {
-    if matches!(
-        s.trim().to_ascii_lowercase().as_str(),
-        "default" | "auto" | "none"
-    ) {
-        return Ok(None);
-    }
-    agent::Effort::parse(s)
-        .map(Some)
-        .with_context(|| format!("unknown effort level: {s} (use low, medium, high, xhigh, max)"))
-}
-
-async fn print_mode<M>(model: M, config: agent::Config, prompt: String) -> Result<()>
+async fn print_mode<M>(model: M, config: agent::TurnConfig, prompt: String) -> Result<()>
 where
     M: rig_core::completion::CompletionModel + Clone + Send + Sync + 'static,
 {

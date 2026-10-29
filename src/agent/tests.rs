@@ -8,7 +8,10 @@ use rig_core::streaming::{
 };
 use serde_json::json;
 
+use super::models::context_window;
 use super::*;
+use crate::config::Settings;
+use rig_core::completion::CompletionError;
 
 #[derive(Clone, Default)]
 struct Model {
@@ -100,25 +103,17 @@ async fn tool_followup_preserves_thinking_and_effort() {
     ]);
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut history = vec![Message::user("Do the task")];
-    run_inner(
-        model.clone(),
-        &mut history,
-        Config {
-            context_window: DEFAULT_CONTEXT_WINDOW,
-            context_tokens: 0,
-            reasoning: Reasoning {
-                effort: Some(Effort::High),
-                ..Reasoning::default()
-            },
-        },
-        &tx,
-    )
-    .await
-    .unwrap();
+    let mut settings = Settings::default();
+    settings.agent.max_tokens = 2048;
+    settings.model.effort = Some(Effort::High);
+    run_inner(model.clone(), &mut history, settings.turn_config(0), &tx)
+        .await
+        .unwrap();
 
     let requests = model.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
     for request in requests.iter() {
+        assert_eq!(request.max_tokens, Some(2048));
         assert_eq!(
             request.additional_params,
             Some(json!({
@@ -154,12 +149,8 @@ async fn tool_followup_preserves_thinking_and_effort() {
 }
 
 #[tokio::test]
-async fn compaction_keeps_thinking_setting() {
+async fn manual_and_automatic_compaction_use_configured_limits_and_thinking() {
     for thinking in [Thinking::Adaptive, Thinking::Off] {
-        let reasoning = Reasoning {
-            thinking,
-            effort: None,
-        };
         let model = Model::new(vec![
             vec![RawStreamingChoice::Message("Summary".into())],
             vec![RawStreamingChoice::Message("Summary".into())],
@@ -167,29 +158,33 @@ async fn compaction_keeps_thinking_setting() {
         ]);
         let (tx, mut rx) = mpsc::unbounded_channel();
         let mut history = vec![Message::user("Task"), Message::assistant("Progress")];
-        compact(model.clone(), history.clone(), None, reasoning, tx.clone()).await;
+        let mut settings = Settings::default();
+        settings.model.thinking = thinking;
+        settings.model.context_window = Some(1000);
+        settings.agent.max_tokens = 2048;
+        settings.agent.compact_max_tokens = 1024;
+        settings.agent.auto_compact_percent = 25;
+        compact(
+            model.clone(),
+            history.clone(),
+            None,
+            settings.turn_config(0),
+            tx.clone(),
+        )
+        .await;
         assert!(
             std::iter::from_fn(|| rx.try_recv().ok())
                 .any(|e| matches!(e, AgentEvent::Compacted { .. }))
         );
-        // A full context forces automatic compaction before the next completion.
-        run_inner(
-            model.clone(),
-            &mut history,
-            Config {
-                context_window: DEFAULT_CONTEXT_WINDOW,
-                context_tokens: DEFAULT_CONTEXT_WINDOW,
-                reasoning,
-            },
-            &tx,
-        )
-        .await
-        .unwrap();
+        // A custom threshold forces compaction well below the default 80%.
+        run_inner(model.clone(), &mut history, settings.turn_config(250), &tx)
+            .await
+            .unwrap();
         let requests = model.requests.lock().unwrap();
         assert_eq!(requests.len(), 3);
-        assert_eq!(requests[0].max_tokens, Some(COMPACT_MAX_TOKENS));
-        assert_eq!(requests[1].max_tokens, Some(COMPACT_MAX_TOKENS));
-        assert_eq!(requests[2].max_tokens, Some(MAX_TOKENS));
+        assert_eq!(requests[0].max_tokens, Some(1024));
+        assert_eq!(requests[1].max_tokens, Some(1024));
+        assert_eq!(requests[2].max_tokens, Some(2048));
         for request in requests.iter() {
             assert_eq!(
                 request.additional_params,
@@ -198,6 +193,70 @@ async fn compaction_keeps_thinking_setting() {
                 }))
             );
         }
+    }
+}
+
+#[test]
+fn compaction_threshold_handles_boundaries_and_large_windows() {
+    let mut settings = Settings::default();
+    settings.model.context_window = Some(1000);
+    settings.agent.auto_compact_percent = 25;
+    assert!(!settings.turn_config(249).should_compact());
+    assert!(settings.turn_config(250).should_compact());
+    settings.model.context_window = Some(u64::MAX);
+    settings.agent.auto_compact_percent = 100;
+    assert!(!settings.turn_config(u64::MAX - 1).should_compact());
+    assert!(settings.turn_config(u64::MAX).should_compact());
+}
+
+#[derive(Clone, Default)]
+struct FailingModel(Arc<std::sync::atomic::AtomicU32>);
+
+impl CompletionModel for FailingModel {
+    async fn completion(
+        &self,
+        _: CompletionRequest,
+    ) -> Result<CompletionResponse, CompletionError> {
+        panic!("the harness should stream requests")
+    }
+
+    async fn stream(
+        &self,
+        _: CompletionRequest,
+    ) -> Result<StreamingCompletionResponse, CompletionError> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Err(CompletionError::ProviderError("connection reset".into()))
+    }
+}
+
+#[tokio::test]
+async fn configured_retry_limit_controls_actual_attempts() {
+    for retries in [0, 1] {
+        let model = FailingModel::default();
+        let mut settings = Settings::default();
+        settings.agent.max_retries = retries;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        run(
+            model.clone(),
+            vec![Message::user("Task")],
+            settings.turn_config(0),
+            tx,
+        )
+        .await;
+        assert_eq!(
+            model.0.load(std::sync::atomic::Ordering::Relaxed),
+            retries + 1
+        );
+        let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, AgentEvent::Retry { .. }))
+                .count(),
+            retries as usize
+        );
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::Error(_))));
+        assert!(matches!(events.last(), Some(AgentEvent::Done)));
     }
 }
 
@@ -215,7 +274,7 @@ fn context_windows_match_models_api() {
         "claude-sonnet-4-6",
         "anthropic/claude-opus-5-5",
     ] {
-        assert_eq!(model_context_window(model), 1_000_000, "{model}");
+        assert_eq!(context_window(model), 1_000_000, "{model}");
     }
     for model in [
         "claude-opus-4-5-20251101",
@@ -223,6 +282,6 @@ fn context_windows_match_models_api() {
         "claude-haiku-4-5-20251001",
         "some-other-model",
     ] {
-        assert_eq!(model_context_window(model), 200_000, "{model}");
+        assert_eq!(context_window(model), 200_000, "{model}");
     }
 }

@@ -14,12 +14,56 @@ cargo run --release -- --thinking off        # disable adaptive thinking
 cargo run --release -- -p "summarize src/"   # one-shot, non-interactive
 cargo run --release -- --continue            # resume the latest session in this directory
 cargo run --release -- --resume              # pick a saved session to resume
+cargo run --release -- --config dev.toml    # add settings from a TOML file
 ```
+
+## Configuration
+
+Defaults live in [`config/default.toml`](config/default.toml) and are embedded in the
+binary. Override just the fields you need in a personal or project TOML file:
+
+```toml
+[model]
+name = "claude-opus-5-5"
+effort = "high"
+thinking = "adaptive"
+# context_window = 1000000 # otherwise inferred from the selected model
+
+[agent]
+max_tokens = 16000
+compact_max_tokens = 8000
+auto_compact_percent = 80
+max_retries = 5
+
+[ui]
+verbose = false
+mouse = true
+```
+
+Settings are merged field by field, in this order (later values win):
+
+1. Built-in `config/default.toml`
+2. `~/.config/harness/config.toml` (or `$XDG_CONFIG_HOME/harness/config.toml`)
+3. `harness.toml` in each directory from the enclosing git root down to the working
+   directory; outside a repository, only the working directory is checked
+4. A file passed with `--config <path>` (relative to the working directory)
+5. The `HARNESS_*` environment variables below
+6. `--model`, `--effort`, and `--thinking` flags
+
+All fields are optional in override files. `effort = "default"` resets an inherited
+effort to the API default. Unknown fields, invalid types, empty model names, zero
+token limits and compaction percentages outside 1–100 produce a startup error.
+Missing personal/project files are skipped; an explicit `--config` file must exist.
+The same settings apply to interactive and `-p` runs, tool follow-ups, retries and
+manual/automatic compaction. Settings load at startup; slash commands change the
+current session's settings without rewriting TOML files.
 
 `HARNESS_MODEL` sets the default model (otherwise `claude-opus-5-5`).
 `HARNESS_EFFORT` sets the default effort level (otherwise the API default).
 `HARNESS_THINKING` sets the thinking mode (`adaptive` or `on`, the default; `off` to disable).
 `HARNESS_CONTEXT_WINDOW` overrides the context window size (default: 1M tokens for Claude 5, Opus 4.6+ and Sonnet 4.6; 200k for older models).
+API keys (`ANTHROPIC_API_KEY`, `BRAVE_SEARCH_API_KEY`) and storage paths
+(`HARNESS_SESSIONS_DIR`, XDG directories) continue to use environment variables.
 
 Adaptive thinking is **on by default**: Claude decides when and how much to reason,
 with `--effort` or `/effort` controlling thoroughness. The setting applies to tool
@@ -36,9 +80,10 @@ thinking (e.g. Haiku 4.5). See [Anthropic's thinking documentation](https://plat
 - The status bar shows the **context usage** of the last request against the window
   (yellow at 60%, red at 80%) and session totals with the cache hit rate.
 - **Compaction**: `/compact [focus]` replaces the conversation with a model-written summary.
-  It also runs automatically before a request once the context is 80% full (also mid-turn).
-- **Retries**: rate limits (429), overload (529), 5xx and network errors are retried up to 5 times
-  with exponential backoff (honoring `Retry-After`).
+  It also runs automatically before a request once the context reaches
+  `agent.auto_compact_percent` (default 80%, also mid-turn).
+- **Retries**: rate limits (429), overload (529), 5xx and network errors are retried up to
+  `agent.max_retries` times (default 5) with exponential backoff (honoring `Retry-After`).
 
 ## Sessions
 
@@ -155,10 +200,16 @@ Your terminal's native copy/paste shortcuts also work without these utilities, i
 
 ## Layout
 
-- `src/main.rs` – CLI args, terminal setup, event loop
-- `src/agent.rs` – agent loop: streams completions via rig, runs tools
+- `src/main.rs` – startup, terminal setup, event loop and one-shot output
+- `src/cli.rs` – command-line parsing and overrides
+- `src/config.rs`, `config/default.toml` – typed settings, defaults, file discovery and merging
+- `src/agent.rs` – agent turns, tool execution and compaction
+- `src/agent/{request,reasoning,prompt,models}.rs` – streaming/retries, reasoning settings,
+  instruction loading and model metadata/cost estimates
 - `src/tools.rs` – tool definitions and implementations
 - `src/tools/search.rs`, `src/tools/web.rs` – built-in repository search and web tools
-- `src/app.rs` – TUI state, key handling, rendering
+- `src/app.rs` – conversation state and agent event handling
+- `src/app/{input,commands,sessions,view,help}.rs` – key/clipboard input, commands and pickers,
+  session actions, rendering and help content
 - `src/clipboard.rs` – system clipboard access
 - `src/session.rs` – saving, listing and loading sessions

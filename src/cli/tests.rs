@@ -1,0 +1,61 @@
+use super::*;
+
+fn parse(args: &[&str]) -> Result<Cli> {
+    Cli::parse(args.iter().map(|s| s.to_string()))
+}
+
+#[test]
+fn parses_startup_options_and_keeps_last_value() {
+    let cli = parse(&[
+        "--config",
+        "settings.toml",
+        "-m",
+        "first",
+        "--model",
+        "last",
+        "-e",
+        "HIGH",
+        "--thinking",
+        "off",
+        "-c",
+        "-r",
+        "-p",
+        "a prompt",
+    ])
+    .unwrap();
+    assert_eq!(cli.config, Some(PathBuf::from("settings.toml")));
+    assert_eq!(cli.print_prompt.as_deref(), Some("a prompt"));
+    assert_eq!(cli.resume, Some(Resume::Pick));
+    let mut settings = Settings::default();
+    cli.apply(&mut settings);
+    assert_eq!(settings.model.name, "last");
+    assert_eq!(settings.model.effort, Some(Effort::High));
+    assert_eq!(settings.model.thinking, Thinking::Off);
+}
+
+#[test]
+fn omitted_flags_preserve_settings_and_default_resets_effort() {
+    let mut settings = Settings::default();
+    settings.model.name = "configured-model".into();
+    settings.model.effort = Some(Effort::High);
+    settings.model.thinking = Thinking::Off;
+    parse(&[]).unwrap().apply(&mut settings);
+    assert_eq!(settings.model.name, "configured-model");
+    assert_eq!(settings.model.effort, Some(Effort::High));
+    assert_eq!(settings.model.thinking, Thinking::Off);
+    parse(&["--effort", "default"])
+        .unwrap()
+        .apply(&mut settings);
+    assert_eq!(settings.model.effort, None);
+}
+
+#[test]
+fn reports_missing_values_unknown_options_and_invalid_modes() {
+    for flag in ["--config", "--model", "--effort", "--thinking", "--print"] {
+        assert!(parse(&[flag]).unwrap_err().to_string().contains("needs"));
+    }
+    assert!(parse(&["--unknown"]).is_err());
+    assert!(parse(&["--effort", "typo"]).is_err());
+    assert!(parse(&["--thinking", "typo"]).is_err());
+    assert!(parse(&["--help"]).unwrap().help);
+}

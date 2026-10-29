@@ -1,0 +1,19 @@
+# Built into the binary. Copy any sections to ~/.config/harness/config.toml
+# for personal defaults, or harness.toml in a project. All fields are optional
+# in those files; omitted fields keep the value from the previous layer.
+
+[model]
+name = "claude-opus-5-5"
+effort = "default" # low, medium, high, xhigh, max, or default (API decides)
+thinking = "adaptive" # adaptive (or on), off
+# context_window = 1000000 # omit to infer from the selected model
+
+[agent]
+max_tokens = 16000
+compact_max_tokens = 8000
+auto_compact_percent = 80 # 1–100
+max_retries = 5 # retries after the initial attempt; 0 disables retries
+
+[ui]
+verbose = false
+mouse = true
