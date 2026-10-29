@@ -42,7 +42,12 @@ async fn main() -> Result<()> {
     let client = anthropic::Client::from_env().context("creating Anthropic client")?;
 
     if let Some(prompt) = print_prompt {
-        return print_mode(client.completion_model(model_name), prompt).await;
+        let config = agent::Config {
+            context_window: agent::context_window(&model_name),
+            context_tokens: 0,
+        };
+        let model = client.completion_model(model_name).with_prompt_caching();
+        return print_mode(model, config, prompt).await;
     }
 
     let mut terminal = ratatui::init();
@@ -53,7 +58,7 @@ async fn main() -> Result<()> {
     result
 }
 
-async fn print_mode<M>(model: M, prompt: String) -> Result<()>
+async fn print_mode<M>(model: M, config: agent::Config, prompt: String) -> Result<()>
 where
     M: rig_core::completion::CompletionModel + Clone + Send + Sync + 'static,
 {
@@ -62,7 +67,7 @@ where
 
     let (tx, mut rx) = mpsc::unbounded_channel();
     let history = vec![rig_core::completion::Message::user(prompt)];
-    tokio::spawn(agent::run(model, history, tx));
+    tokio::spawn(agent::run(model, history, config, tx));
 
     let mut failed = false;
     while let Some(ev) = rx.recv().await {
@@ -72,6 +77,15 @@ where
                 std::io::stdout().flush()?;
             }
             AgentEvent::ToolCall { name, summary } => eprintln!("\n⏺ {name}({summary})"),
+            AgentEvent::Retry {
+                attempt,
+                delay,
+                error,
+            } => eprintln!(
+                "\n⟳ {error}; retrying in {:.1}s (attempt {attempt})",
+                delay.as_secs_f64()
+            ),
+            AgentEvent::Compacting => eprintln!("\n⏺ compacting conversation…"),
             AgentEvent::Error(e) => {
                 eprintln!("\nerror: {e}");
                 failed = true;

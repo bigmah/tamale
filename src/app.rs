@@ -9,7 +9,6 @@ use ratatui::widgets::{
 use ratatui::widgets::{List, ListItem, ListState};
 use rig_core::client::{CompletionClient, ModelListingClient};
 use rig_core::completion::Message;
-use rig_core::completion::message::UserContent;
 use rig_core::providers::anthropic;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -29,6 +28,10 @@ const COMMANDS: &[(&str, &str)] = &[
     (
         "/model <id>",
         "Switch directly to a model, e.g. /model claude-opus-4-8",
+    ),
+    (
+        "/compact [focus]",
+        "Summarize the conversation to free up context (optional focus instructions)",
     ),
     ("/clear", "Clear the conversation and start fresh"),
     ("/quit, /exit", "Quit harness"),
@@ -146,8 +149,16 @@ pub struct App {
     /// Scroll offset of the help popup; `Some` while it is open.
     help_scroll: Option<usize>,
     help_page: usize,
+    /// Size of the context window used by the most recent request.
+    context_tokens: u64,
+    /// Session totals. `input_tokens` includes cache reads and writes.
     input_tokens: u64,
+    cached_tokens: u64,
     output_tokens: u64,
+    /// Whether the running task is currently compacting the conversation.
+    compacting: bool,
+    /// Assistant entry created by the in-flight request, dropped if the request is retried.
+    attempt_entry: Option<usize>,
     tick: usize,
     pub should_quit: bool,
 }
@@ -183,8 +194,12 @@ impl App {
             task: None,
             help_scroll: None,
             help_page: 10,
+            context_tokens: 0,
             input_tokens: 0,
+            cached_tokens: 0,
             output_tokens: 0,
+            compacting: false,
+            attempt_entry: None,
             tick: 0,
             should_quit: false,
         }
@@ -347,12 +362,53 @@ impl App {
 
         self.entries.push(Entry::User(text.clone()));
         // Consecutive user turns (e.g. after an interrupt) are merged into one message.
-        match self.history.last_mut() {
-            Some(Message::User { content }) => content.push(UserContent::text(text)),
-            _ => self.history.push(Message::user(text)),
-        }
+        agent::push_user_text(&mut self.history, text);
 
+        let config = agent::Config {
+            context_window: agent::context_window(&self.model_name),
+            context_tokens: self.context_tokens,
+        };
+        let atx = self.start_turn();
+        self.task = Some(tokio::spawn(agent::run(
+            self.model(),
+            self.history.clone(),
+            config,
+            atx,
+        )));
+    }
+
+    fn compact(&mut self, instructions: Option<String>) {
+        if self.is_running() {
+            self.entries.push(Entry::Error(
+                "Can't compact while the agent is running (Esc to interrupt first).".into(),
+            ));
+            return;
+        }
+        if self.history.is_empty() {
+            self.entries
+                .push(Entry::Info("Nothing to compact yet.".into()));
+            return;
+        }
+        let atx = self.start_turn();
+        self.task = Some(tokio::spawn(agent::compact(
+            self.model(),
+            self.history.clone(),
+            instructions,
+            atx,
+        )));
+    }
+
+    fn model(&self) -> anthropic::completion::CompletionModel {
+        self.client
+            .completion_model(self.model_name.clone())
+            .with_prompt_caching()
+    }
+
+    /// Starts a new turn and returns the sender the agent task should report to.
+    fn start_turn(&mut self) -> mpsc::UnboundedSender<AgentEvent> {
         self.turn += 1;
+        self.compacting = false;
+        self.attempt_entry = None;
         let turn = self.turn;
         let (atx, mut arx) = mpsc::unbounded_channel();
         let tx = self.tx.clone();
@@ -363,11 +419,7 @@ impl App {
                 }
             }
         });
-        self.task = Some(tokio::spawn(agent::run(
-            self.client.completion_model(self.model_name.clone()),
-            self.history.clone(),
-            atx,
-        )));
+        atx
     }
 
     // --------------------------------------------------------- model picker
@@ -502,11 +554,16 @@ impl App {
             )),
             "/clear" => {
                 self.history.clear();
+                self.context_tokens = 0;
                 self.entries.clear();
                 self.entries
                     .push(Entry::Info("Conversation cleared.".into()));
             }
             "/help" => self.help_scroll = Some(0),
+            "/compact" => {
+                let rest = cmd["/compact".len()..].trim();
+                self.compact((!rest.is_empty()).then(|| rest.to_string()));
+            }
             "/model" | "/models" => match cmd.split_whitespace().nth(1) {
                 Some(id) => self.set_model(id.to_string()),
                 None => self.open_picker(),
@@ -545,13 +602,54 @@ impl App {
         match event {
             AgentEvent::TextDelta(delta) => match self.entries.last_mut() {
                 Some(Entry::Assistant(text)) => text.push_str(&delta),
-                _ => self.entries.push(Entry::Assistant(delta)),
+                _ => {
+                    self.attempt_entry = Some(self.entries.len());
+                    self.entries.push(Entry::Assistant(delta));
+                }
             },
-            AgentEvent::ToolCall { name, summary } => self.entries.push(Entry::Tool {
-                name,
-                summary,
-                output: None,
-            }),
+            AgentEvent::ToolCall { name, summary } => {
+                self.attempt_entry = None;
+                self.entries.push(Entry::Tool {
+                    name,
+                    summary,
+                    output: None,
+                })
+            }
+            AgentEvent::Retry {
+                attempt,
+                delay,
+                error,
+            } => {
+                if let Some(i) = self.attempt_entry.take()
+                    && matches!(self.entries.get(i), Some(Entry::Assistant(_)))
+                {
+                    self.entries.remove(i);
+                }
+                self.entries.push(Entry::Info(format!(
+                    "⟳ {error} — retrying in {:.1}s (attempt {attempt})",
+                    delay.as_secs_f64()
+                )));
+            }
+            AgentEvent::Compacting => {
+                self.compacting = true;
+                self.attempt_entry = None;
+                self.entries
+                    .push(Entry::Info("Compacting conversation…".into()));
+            }
+            AgentEvent::Compacted {
+                usage,
+                before,
+                after,
+            } => {
+                self.compacting = false;
+                self.add_usage(&usage);
+                self.context_tokens = after;
+                self.entries.push(Entry::Info(format!(
+                    "Conversation compacted ({} → {} tokens).",
+                    fmt_tokens(before),
+                    fmt_tokens(after)
+                )));
+            }
             AgentEvent::ToolResult { output, is_error } => {
                 if let Some(Entry::Tool { output: slot, .. }) = self
                     .entries
@@ -562,14 +660,26 @@ impl App {
                     *slot = Some((output, is_error));
                 }
             }
-            AgentEvent::History(h) => self.history = h,
+            AgentEvent::History(h) => {
+                self.attempt_entry = None;
+                self.history = h;
+            }
             AgentEvent::Usage(u) => {
-                self.input_tokens += u.input_tokens;
-                self.output_tokens += u.output_tokens;
+                self.add_usage(&u);
+                self.context_tokens = agent::context_size(&u);
             }
             AgentEvent::Error(e) => self.entries.push(Entry::Error(e)),
-            AgentEvent::Done => self.task = None,
+            AgentEvent::Done => {
+                self.task = None;
+                self.compacting = false;
+            }
         }
+    }
+
+    fn add_usage(&mut self, u: &rig_core::completion::Usage) {
+        self.input_tokens += u.input_tokens + u.cached_input_tokens + u.cache_creation_input_tokens;
+        self.cached_tokens += u.cached_input_tokens;
+        self.output_tokens += u.output_tokens;
     }
 
     // -------------------------------------------------------------- render
@@ -715,7 +825,16 @@ impl App {
         }
         if self.is_running() {
             lines.push(Line::from(
-                format!("{} Thinking…", SPINNER[self.tick % SPINNER.len()]).fg(Color::Yellow),
+                format!(
+                    "{} {}",
+                    SPINNER[self.tick % SPINNER.len()],
+                    if self.compacting {
+                        "Compacting…"
+                    } else {
+                        "Thinking…"
+                    }
+                )
+                .fg(Color::Yellow),
             ));
         }
 
@@ -764,16 +883,48 @@ impl App {
         } else {
             "enter send · alt+enter newline · /model · /help"
         };
+        let window = agent::context_window(&self.model_name);
+        let pct = self.context_tokens * 100 / window.max(1);
+        let ctx_color = match pct {
+            0..60 => Color::DarkGray,
+            60..80 => Color::Yellow,
+            _ => Color::Red,
+        };
+        let cached = if self.input_tokens > 0 {
+            format!(
+                " ({}% cached)",
+                self.cached_tokens * 100 / self.input_tokens
+            )
+        } else {
+            String::new()
+        };
         let line = Line::from(vec![
             Span::from(format!(" {} ", self.model_name)).fg(Color::Magenta),
             Span::from(format!(
-                "· {}↑ {}↓ tokens ",
-                self.input_tokens, self.output_tokens
+                "· ctx {}/{} {pct}% ",
+                fmt_tokens(self.context_tokens),
+                fmt_tokens(window)
+            ))
+            .fg(ctx_color),
+            Span::from(format!(
+                "· ↑{}{cached} ↓{} ",
+                fmt_tokens(self.input_tokens),
+                fmt_tokens(self.output_tokens)
             ))
             .fg(Color::DarkGray),
             Span::from(format!("· {hint}")).fg(Color::DarkGray),
         ]);
         frame.render_widget(Paragraph::new(line), area);
+    }
+}
+
+/// Compact token count, e.g. 950, 12.3k, 1.2M.
+fn fmt_tokens(n: u64) -> String {
+    match n {
+        0..1_000 => n.to_string(),
+        1_000..10_000 => format!("{:.1}k", n as f64 / 1e3),
+        10_000..1_000_000 => format!("{}k", n / 1_000),
+        _ => format!("{:.1}M", n as f64 / 1e6),
     }
 }
 
