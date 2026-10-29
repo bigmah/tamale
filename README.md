@@ -80,8 +80,16 @@ The agent can modify files and run any shell command in the working directory.
 - `Enter` send · `Alt/Shift+Enter` or `Ctrl+J` newline
 - `Esc` interrupt the agent
 - `PgUp/PgDn`, `Shift+↑/↓`, mouse wheel scroll (a scrollbar and "↓ N more lines" badge show while scrolled up)
-- `/mouse [on|off]` toggles mouse capture (on by default). While on, hold Shift (Option in
-  iTerm2/Terminal.app) to select text; turn it off to restore native selection.
+- Select text normally and use your terminal's copy shortcut (`Cmd+C` on macOS,
+  usually `Ctrl+Shift+C` on Linux). Mouse capture is **off by default** so selection works.
+- Paste with your terminal's shortcut (`Cmd+V` on macOS, usually `Ctrl+Shift+V` on Linux),
+  `Ctrl+V`, `Shift+Insert`, or `/paste`. Multi-line text is inserted without sending;
+  press Enter when ready.
+- `/copy` copies the latest assistant reply, preserving Markdown and code. `/copy all`
+  copies all user and assistant messages. `Ctrl+Shift+C` also copies the latest reply
+  if your terminal forwards that shortcut to the app.
+- `/mouse [on|off]` toggles mouse capture for wheel scrolling. While on, hold Shift
+  (Option in iTerm2/Terminal.app) to select text; `/mouse off` restores native selection.
 - `Ctrl+C` clear input / interrupt / quit
 - `/verbose [on|off]` toggles verbose output. Off by default: each step shows as one line
   (its description) with no output, and only the last 5 steps of a run are shown. Verbose shows
@@ -100,10 +108,15 @@ The agent can modify files and run any shell command in the working directory.
 - `/resume [n|id]` continues a saved session (see [Sessions](#sessions))
 - `/clear` resets the conversation, `/quit` (or `/exit`) quits
 
+Direct clipboard commands use `pbcopy`/`pbpaste` on macOS, PowerShell on Windows,
+or `wl-copy`/`wl-paste`, `xclip`, or `xsel` on Linux (install one of those on Linux).
+Your terminal's native copy/paste shortcuts also work without these utilities, including over SSH.
+
 ## Layout
 
 - `src/main.rs` – CLI args, terminal setup, event loop
 - `src/agent.rs` – agent loop: streams completions via rig, runs tools
 - `src/tools.rs` – tool definitions and implementations
 - `src/app.rs` – TUI state, key handling, rendering
+- `src/clipboard.rs` – system clipboard access
 - `src/session.rs` – saving, listing and loading sessions

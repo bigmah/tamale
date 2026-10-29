@@ -19,6 +19,7 @@ use tokio::task::JoinHandle;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::agent::{self, AgentEvent};
+use crate::clipboard;
 use crate::session::{self, Entry};
 
 const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -62,7 +63,15 @@ const COMMANDS: &[(&str, &str)] = &[
     ),
     (
         "/mouse [on|off]",
-        "Toggle mouse wheel scrolling (on by default; off restores native text selection)",
+        "Toggle mouse wheel scrolling (off by default to allow native text selection)",
+    ),
+    (
+        "/copy [all]",
+        "Copy the latest reply, or all user/assistant messages, to the clipboard",
+    ),
+    (
+        "/paste",
+        "Insert clipboard text into the prompt without sending",
     ),
     (
         "/resume [n|id]",
@@ -84,7 +93,11 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+U", "Delete to start of line"),
             ("Ctrl+W, Alt+Backspace", "Delete previous word"),
             ("Backspace / Delete", "Delete character"),
-            ("Paste", "Pastes multi-line text as-is"),
+            (
+                "Ctrl+V / Shift+Insert",
+                "Paste clipboard text without sending",
+            ),
+            ("Terminal paste (Cmd+V)", "Pastes multi-line text as-is"),
         ],
     ),
     (
@@ -92,10 +105,18 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("PgUp / PgDn", "Scroll chat by 10 lines"),
             ("Shift+↑ / Shift+↓", "Scroll chat by 1 line"),
-            ("Mouse wheel", "Scroll chat by 3 lines (also scrolls help and pickers)"),
+            (
+                "Mouse wheel",
+                "Scroll chat by 3 lines (also scrolls help and pickers)",
+            ),
             ("Esc", "Interrupt the agent"),
             ("Ctrl+C", "Clear input / interrupt agent / quit"),
             ("Ctrl+D", "Quit (when input is empty)"),
+            (
+                "Select + terminal copy (Cmd+C)",
+                "Copy selected text; /mouse off enables native selection",
+            ),
+            ("Ctrl+Shift+C", "Copy the latest assistant reply"),
         ],
     ),
     (
@@ -148,6 +169,8 @@ pub enum AppEvent {
     /// An agent event tagged with the turn it belongs to.
     Agent(u64, AgentEvent),
     Models(Result<Vec<ModelInfo>, String>),
+    ClipboardCopied(Result<(), String>),
+    ClipboardPasted(Result<String, String>),
 }
 
 #[derive(Clone)]
@@ -288,7 +311,7 @@ impl App {
             session_created: session::now(),
             save_error_shown: false,
             verbose: false,
-            mouse: true,
+            mouse: false,
             history: Vec::new(),
             entries: vec![Entry::Info(
                 "Welcome! Type a request and press Enter. /help for commands.".into(),
@@ -331,7 +354,7 @@ impl App {
     pub fn on_event(&mut self, event: Event) {
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
-            Event::Paste(text) => self.insert_str(&text.replace("\r\n", "\n").replace('\r', "\n")),
+            Event::Paste(text) => self.on_paste(&text),
             Event::Mouse(mouse) => match mouse.kind {
                 MouseEventKind::ScrollUp => self.on_wheel(true),
                 MouseEventKind::ScrollDown => self.on_wheel(false),
@@ -383,6 +406,17 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+
+        if (ctrl && matches!(key.code, KeyCode::Char('v' | 'V')))
+            || (shift && key.code == KeyCode::Insert)
+        {
+            self.paste_clipboard();
+            return;
+        }
+        if ctrl && shift && matches!(key.code, KeyCode::Char('c' | 'C')) {
+            self.copy_clipboard(false);
+            return;
+        }
 
         if self.picker.is_some() {
             self.on_picker_key(key, ctrl);
@@ -469,6 +503,60 @@ impl App {
     fn insert_str(&mut self, s: &str) {
         self.input.insert_str(self.cursor, s);
         self.cursor += s.len();
+    }
+
+    fn on_paste(&mut self, text: &str) {
+        let text = text.replace("\r\n", "\n").replace('\r', "\n");
+        if let Some(picker) = &mut self.picker {
+            picker.filter.push_str(&text.replace('\n', " "));
+            picker.selected = 0;
+        } else if let Some(picker) = &mut self.resume_picker {
+            picker.filter.push_str(&text.replace('\n', " "));
+            picker.selected = 0;
+        } else if self.help_scroll.is_none() && self.effort_picker.is_none() {
+            self.insert_str(&text);
+        }
+    }
+
+    fn paste_clipboard(&self) {
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            let result = clipboard::read().await.map_err(|e| e.to_string());
+            let _ = tx.send(AppEvent::ClipboardPasted(result));
+        });
+    }
+
+    fn copy_text(&self, all: bool) -> Option<String> {
+        if all {
+            let messages: Vec<_> = self
+                .entries
+                .iter()
+                .filter_map(|entry| match entry {
+                    Entry::User(text) => Some(format!("You:\n{text}")),
+                    Entry::Assistant(text) => Some(format!("Assistant:\n{text}")),
+                    _ => None,
+                })
+                .collect();
+            (!messages.is_empty()).then(|| messages.join("\n\n"))
+        } else {
+            self.entries.iter().rev().find_map(|entry| match entry {
+                Entry::Assistant(text) if !text.is_empty() => Some(text.clone()),
+                _ => None,
+            })
+        }
+    }
+
+    fn copy_clipboard(&mut self, all: bool) {
+        let Some(text) = self.copy_text(all) else {
+            self.entries
+                .push(Entry::Info("Nothing to copy yet.".into()));
+            return;
+        };
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            let result = clipboard::write(&text).await.map_err(|e| e.to_string());
+            let _ = tx.send(AppEvent::ClipboardCopied(result));
+        });
     }
 
     fn prev_boundary(&self) -> Option<usize> {
@@ -889,6 +977,12 @@ impl App {
             "/thinking" => self.set_thinking(cmd.split_whitespace().nth(1)),
             "/verbose" => self.set_verbose(cmd.split_whitespace().nth(1)),
             "/mouse" => self.set_mouse(cmd.split_whitespace().nth(1)),
+            "/copy" => match cmd.split_whitespace().nth(1) {
+                None => self.copy_clipboard(false),
+                Some("all") => self.copy_clipboard(true),
+                Some(_) => self.entries.push(Entry::Error("Usage: /copy [all]".into())),
+            },
+            "/paste" => self.paste_clipboard(),
             "/compact" => {
                 let rest = cmd["/compact".len()..].trim();
                 self.compact((!rest.is_empty()).then(|| rest.to_string()));
@@ -1098,6 +1192,14 @@ impl App {
         match event {
             AppEvent::Agent(turn, ev) => self.on_agent(turn, ev),
             AppEvent::Models(result) => self.on_models(result),
+            AppEvent::ClipboardPasted(Ok(text)) => self.on_paste(&text),
+            AppEvent::ClipboardCopied(Ok(())) => self
+                .entries
+                .push(Entry::Info("Copied to clipboard.".into())),
+            AppEvent::ClipboardPasted(Err(error)) | AppEvent::ClipboardCopied(Err(error)) => {
+                self.entries
+                    .push(Entry::Error(format!("Clipboard: {error}")));
+            }
         }
     }
 
@@ -1863,6 +1965,82 @@ mod tests {
     use super::*;
 
     #[test]
+    fn paste_inserts_multiline_unicode_at_cursor_without_submitting() {
+        let client = anthropic::Client::new("test-key").unwrap();
+        let (mut app, _rx) =
+            App::new_with_channel(client, "test-model".into(), agent::Reasoning::default());
+        assert!(!app.mouse, "native text selection is enabled by default");
+        app.input = "before after".into();
+        app.cursor = 7;
+        app.on_event(Event::Paste("café\r\n世界\r/paste\n".into()));
+        assert_eq!(app.input, "before café\n世界\n/paste\nafter");
+        assert_eq!(app.cursor, "before café\n世界\n/paste\n".len());
+        assert!(app.history.is_empty());
+        assert!(!app.is_running());
+
+        app.on_app_event(AppEvent::ClipboardPasted(Ok("more\r\n".into())));
+        assert_eq!(app.input, "before café\n世界\n/paste\nmore\nafter");
+        let input = app.input.clone();
+        app.on_app_event(AppEvent::ClipboardPasted(Err("unavailable".into())));
+        assert_eq!(app.input, input);
+        assert!(matches!(app.entries.last(), Some(Entry::Error(_))));
+    }
+
+    #[test]
+    fn paste_targets_picker_filter_and_ignores_help() {
+        let client = anthropic::Client::new("test-key").unwrap();
+        let (mut app, _rx) =
+            App::new_with_channel(client, "test-model".into(), agent::Reasoning::default());
+        app.picker = Some(ModelPicker {
+            filter: "claude-".into(),
+            selected: 3,
+        });
+        app.on_event(Event::Paste("sonnet".into()));
+        let picker = app.picker.as_ref().unwrap();
+        assert_eq!(picker.filter, "claude-sonnet");
+        assert_eq!(picker.selected, 0);
+        assert!(app.input.is_empty());
+
+        app.picker = None;
+        app.resume_picker = Some(ResumePicker {
+            sessions: vec![],
+            filter: String::new(),
+            selected: 1,
+        });
+        app.on_event(Event::Paste("fix\r\nbug".into()));
+        assert_eq!(app.resume_picker.as_ref().unwrap().filter, "fix bug");
+        assert!(app.input.is_empty());
+        app.resume_picker = None;
+        app.help_scroll = Some(0);
+        app.on_event(Event::Paste("ignored".into()));
+        assert!(app.input.is_empty());
+        app.help_scroll = None;
+        app.effort_picker = Some(0);
+        app.on_event(Event::Paste("ignored".into()));
+        assert!(app.input.is_empty());
+    }
+
+    #[test]
+    fn copy_preserves_reply_text_and_selects_conversation_messages() {
+        let client = anthropic::Client::new("test-key").unwrap();
+        let (mut app, _rx) =
+            App::new_with_channel(client, "test-model".into(), agent::Reasoning::default());
+        assert_eq!(app.copy_text(false), None);
+        assert_eq!(app.copy_text(true), None);
+        app.entries.push(Entry::User("show code".into()));
+        app.entries.push(Entry::Assistant("old reply".into()));
+        let reply = "```rust\nlet café = 1;\n```\n";
+        app.entries.push(Entry::Assistant(reply.into()));
+        app.entries.push(Entry::Info("status".into()));
+        app.entries.push(Entry::Assistant(String::new()));
+        assert_eq!(app.copy_text(false).as_deref(), Some(reply));
+        let all = app.copy_text(true).unwrap();
+        assert!(all.contains("You:\nshow code\n\nAssistant:\nold reply"));
+        assert!(all.contains(reply));
+        assert!(!all.contains("status"));
+    }
+
+    #[test]
     fn thinking_command_toggles_and_accepts_explicit_modes() {
         let client = anthropic::Client::new("test-key").unwrap();
         let (mut app, _rx) = App::new_with_channel(
@@ -2032,7 +2210,11 @@ mod tests {
         render_quiet(&entries, &mut quiet);
         let quiet = text(&quiet);
         assert!(quiet[0].contains("2 earlier steps"));
-        assert!(quiet.iter().any(|l| l.contains("Step 6") && l.contains("bash cmd 6")));
+        assert!(
+            quiet
+                .iter()
+                .any(|l| l.contains("Step 6") && l.contains("bash cmd 6"))
+        );
         assert!(
             !quiet
                 .iter()

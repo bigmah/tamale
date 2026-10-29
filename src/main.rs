@@ -1,5 +1,6 @@
 mod agent;
 mod app;
+mod clipboard;
 mod session;
 mod tools;
 
@@ -7,8 +8,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use crossterm::event::{
-    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    EventStream,
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EventStream,
 };
 use crossterm::execute;
 use futures::StreamExt;
@@ -76,14 +76,18 @@ async fn main() -> Result<()> {
         return print_mode(model, config, prompt).await;
     }
 
-    // Make sure mouse capture is turned off again if we panic.
+    // Restore terminal input modes even if we panic.
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let _ = execute!(std::io::stdout(), DisableMouseCapture);
+        let _ = execute!(
+            std::io::stdout(),
+            DisableBracketedPaste,
+            DisableMouseCapture
+        );
         hook(info);
     }));
     let mut terminal = ratatui::init();
-    execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture)?;
+    execute!(std::io::stdout(), EnableBracketedPaste, DisableMouseCapture)?;
     let (mut app, rx) = App::new_with_channel(client, model_name, reasoning);
     match resume {
         Some(Resume::Latest) => match session::list(Some(&std::env::current_dir()?)).first() {
