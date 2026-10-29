@@ -18,7 +18,7 @@ use crate::app::App;
 async fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
     let mut model_name = std::env::var("HARNESS_MODEL")
-        .unwrap_or_else(|_| anthropic::completion::CLAUDE_SONNET_4_6.into());
+        .unwrap_or_else(|_| "claude-opus-5-5".into());
     let mut effort = match std::env::var("HARNESS_EFFORT") {
         Ok(v) if !v.trim().is_empty() => parse_effort(&v)?,
         _ => None,
