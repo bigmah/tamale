@@ -19,6 +19,7 @@ use tokio::task::JoinHandle;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::agent::{self, AgentEvent};
+use crate::session::{self, Entry};
 
 const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const TOOL_PREVIEW_LINES: usize = 6;
@@ -63,6 +64,10 @@ const COMMANDS: &[(&str, &str)] = &[
         "/mouse [on|off]",
         "Toggle mouse wheel scrolling (on by default; off restores native text selection)",
     ),
+    (
+        "/resume [n|id]",
+        "Pick a saved session from this directory to continue (or resume the nth / by id)",
+    ),
     ("/clear", "Clear the conversation and start fresh"),
     ("/quit, /exit", "Quit harness"),
 ];
@@ -103,6 +108,15 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Resume picker",
+        &[
+            ("Type", "Filter sessions by title"),
+            ("↑/↓, Ctrl+P/Ctrl+N", "Move selection"),
+            ("Enter", "Resume selected session"),
+            ("Esc", "Cancel"),
+        ],
+    ),
+    (
         "Effort picker",
         &[
             ("↑/↓, j/k, Ctrl+P/Ctrl+N", "Move selection"),
@@ -129,19 +143,6 @@ const TOOLS: &[(&str, &str)] = &[
     ("edit_file", "Replace exact text in a file"),
     ("bash", "Run a shell command"),
 ];
-
-enum Entry {
-    User(String),
-    Assistant(String),
-    Tool {
-        name: String,
-        summary: String,
-        description: String,
-        output: Option<(String, bool)>,
-    },
-    Info(String),
-    Error(String),
-}
 
 pub enum AppEvent {
     /// An agent event tagged with the turn it belongs to.
@@ -193,6 +194,22 @@ struct ModelPicker {
     selected: usize,
 }
 
+struct ResumePicker {
+    sessions: Vec<session::Meta>,
+    filter: String,
+    selected: usize,
+}
+
+impl ResumePicker {
+    fn filtered(&self) -> Vec<&session::Meta> {
+        let filter = self.filter.to_lowercase();
+        self.sessions
+            .iter()
+            .filter(|s| s.title.to_lowercase().contains(&filter) || s.id.starts_with(&filter))
+            .collect()
+    }
+}
+
 pub struct App {
     client: anthropic::Client,
     model_name: String,
@@ -203,6 +220,12 @@ pub struct App {
     picker: Option<ModelPicker>,
     /// Selected row of the effort picker; `Some` while it is open.
     effort_picker: Option<usize>,
+    resume_picker: Option<ResumePicker>,
+    /// Id of the current session, used as its file name when saving.
+    session_id: String,
+    session_created: u64,
+    /// Whether a save failure has been reported (to avoid repeating it on every save).
+    save_error_shown: bool,
     /// Show every tool call with its output preview instead of a compact summary.
     verbose: bool,
     /// Whether mouse capture (wheel scrolling) is enabled.
@@ -258,6 +281,10 @@ impl App {
             models: None,
             picker: None,
             effort_picker: None,
+            resume_picker: None,
+            session_id: session::new_id(),
+            session_created: session::now(),
+            save_error_shown: false,
             verbose: false,
             mouse: true,
             history: Vec::new(),
@@ -322,6 +349,13 @@ impl App {
                     (picker.selected + 1).min(count.saturating_sub(1))
                 };
             }
+        } else if let Some(picker) = &mut self.resume_picker {
+            let count = picker.filtered().len();
+            picker.selected = if up {
+                picker.selected.saturating_sub(1)
+            } else {
+                (picker.selected + 1).min(count.saturating_sub(1))
+            };
         } else if let Some(selected) = self.effort_picker {
             self.effort_picker = Some(if up {
                 selected.saturating_sub(1)
@@ -355,6 +389,11 @@ impl App {
 
         if self.effort_picker.is_some() {
             self.on_effort_picker_key(key, ctrl);
+            return;
+        }
+
+        if self.resume_picker.is_some() {
+            self.on_resume_picker_key(key, ctrl);
             return;
         }
 
@@ -483,6 +522,7 @@ impl App {
         self.entries.push(Entry::User(text.clone()));
         // Consecutive user turns (e.g. after an interrupt) are merged into one message.
         agent::push_user_text(&mut self.history, text);
+        self.save_session();
 
         let config = agent::Config {
             context_window: agent::context_window(&self.model_name),
@@ -833,12 +873,16 @@ impl App {
                 "Can't clear while the agent is running (Esc to interrupt first).".into(),
             )),
             "/clear" => {
+                self.save_session();
                 self.history.clear();
                 self.context_tokens = 0;
                 self.entries.clear();
+                self.session_id = session::new_id();
+                self.session_created = session::now();
                 self.entries
                     .push(Entry::Info("Conversation cleared.".into()));
             }
+            "/resume" | "/continue" => self.resume_command(cmd.split_whitespace().nth(1)),
             "/help" => self.help_scroll = Some(0),
             "/thinking" => self.set_thinking(cmd.split_whitespace().nth(1)),
             "/verbose" => self.set_verbose(cmd.split_whitespace().nth(1)),
@@ -858,10 +902,193 @@ impl App {
         }
     }
 
+    // -------------------------------------------------------------- sessions
+
+    /// Writes the current conversation to disk (no-op until something has been said).
+    pub fn save_session(&mut self) {
+        if self.history.is_empty() {
+            return;
+        }
+        let title = self
+            .entries
+            .iter()
+            .find_map(|e| match e {
+                Entry::User(t) => Some(truncate_chars(t.lines().next().unwrap_or(""), 80)),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let saved = session::Session {
+            id: self.session_id.clone(),
+            cwd: std::env::current_dir().unwrap_or_default(),
+            created: self.session_created,
+            updated: session::now(),
+            model: self.model_name.clone(),
+            title,
+            context_tokens: self.context_tokens,
+            history: self.history.clone(),
+            entries: self.entries.clone(),
+        };
+        match session::save(&saved) {
+            Ok(()) => self.save_error_shown = false,
+            Err(e) if !self.save_error_shown => {
+                self.save_error_shown = true;
+                self.entries
+                    .push(Entry::Error(format!("Couldn't save session: {e:#}")));
+            }
+            Err(_) => {}
+        }
+    }
+
+    /// Saved sessions from this directory, excluding the current one.
+    fn resumable_sessions(&self) -> Vec<session::Meta> {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        session::list(Some(&cwd))
+            .into_iter()
+            .filter(|m| m.id != self.session_id)
+            .collect()
+    }
+
+    /// `/resume` opens a picker; `/resume <n>` resumes the nth most recent session from this
+    /// directory and `/resume <id>` a session by id (or unique id prefix) from anywhere.
+    pub fn resume_command(&mut self, arg: Option<&str>) {
+        if self.is_running() {
+            self.entries.push(Entry::Error(
+                "Can't resume while the agent is running (Esc to interrupt first).".into(),
+            ));
+            return;
+        }
+        let sessions = self.resumable_sessions();
+        let Some(arg) = arg else {
+            if sessions.is_empty() {
+                self.entries.push(Entry::Info(
+                    "No saved sessions for this directory yet.".into(),
+                ));
+            } else {
+                self.resume_picker = Some(ResumePicker {
+                    sessions,
+                    filter: String::new(),
+                    selected: 0,
+                });
+            }
+            return;
+        };
+        if let Ok(n) = arg.parse::<usize>() {
+            match n.checked_sub(1).and_then(|i| sessions.get(i)) {
+                Some(m) => {
+                    let id = m.id.clone();
+                    self.resume(&id);
+                }
+                None => self.entries.push(Entry::Error(format!(
+                    "No session #{n} (this directory has {} saved).",
+                    sessions.len()
+                ))),
+            }
+            return;
+        }
+        let matches: Vec<String> = session::list(None)
+            .into_iter()
+            .filter(|m| m.id.starts_with(arg))
+            .map(|m| m.id)
+            .collect();
+        match matches.as_slice() {
+            [id] => {
+                let id = id.clone();
+                self.resume(&id);
+            }
+            [] => self
+                .entries
+                .push(Entry::Error(format!("No saved session matches {arg}."))),
+            _ => self.entries.push(Entry::Error(format!(
+                "{arg} matches {} sessions; use a longer id.",
+                matches.len()
+            ))),
+        }
+    }
+
+    /// Replaces the conversation with a saved session; later saves go to that session.
+    pub fn resume(&mut self, id: &str) {
+        if self.is_running() {
+            return;
+        }
+        let saved = match session::load(id) {
+            Ok(s) => s,
+            Err(e) => {
+                self.entries
+                    .push(Entry::Error(format!("Couldn't resume session: {e:#}")));
+                return;
+            }
+        };
+        self.save_session();
+        self.turn += 1;
+        self.history = saved.history;
+        self.entries = saved.entries;
+        self.context_tokens = saved.context_tokens;
+        self.session_id = saved.id;
+        self.session_created = saved.created;
+        self.scroll_back = 0;
+        self.attempt_entry = None;
+
+        let mut note = format!(
+            "Resumed session “{}” (last active {}).",
+            saved.title,
+            session::ago(saved.updated)
+        );
+        let cwd = std::env::current_dir().unwrap_or_default();
+        if saved.cwd != cwd {
+            note.push_str(&format!(
+                " It was started in {}; tools now run in {}.",
+                saved.cwd.display(),
+                cwd.display()
+            ));
+        }
+        if saved.model != self.model_name {
+            note.push_str(&format!(
+                " It used {}; continuing with {} (/model to switch).",
+                saved.model, self.model_name
+            ));
+        }
+        self.entries.push(Entry::Info(note));
+    }
+
+    fn on_resume_picker_key(&mut self, key: KeyEvent, ctrl: bool) {
+        let Some(picker) = &mut self.resume_picker else {
+            return;
+        };
+        let count = picker.filtered().len();
+        let last = count.saturating_sub(1);
+        match key.code {
+            KeyCode::Esc => self.resume_picker = None,
+            KeyCode::Char('c') if ctrl => self.resume_picker = None,
+            KeyCode::Up => picker.selected = picker.selected.saturating_sub(1),
+            KeyCode::Char('p') if ctrl => picker.selected = picker.selected.saturating_sub(1),
+            KeyCode::Down => picker.selected = (picker.selected + 1).min(last),
+            KeyCode::Char('n') if ctrl => picker.selected = (picker.selected + 1).min(last),
+            KeyCode::Home => picker.selected = 0,
+            KeyCode::End => picker.selected = last,
+            KeyCode::Backspace => {
+                picker.filter.pop();
+                picker.selected = 0;
+            }
+            KeyCode::Char(c) if !ctrl => {
+                picker.filter.push(c);
+                picker.selected = 0;
+            }
+            KeyCode::Enter => {
+                let id = picker.filtered().get(picker.selected).map(|m| m.id.clone());
+                if let Some(id) = id {
+                    self.resume_picker = None;
+                    self.resume(&id);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn interrupt(&mut self) {
         if let Some(task) = self.task.take() {
             task.abort();
             self.entries.push(Entry::Info("Interrupted.".into()));
+            self.save_session();
         }
     }
 
@@ -880,6 +1107,7 @@ impl App {
             // Turn was interrupted; only keep consistent history snapshots.
             if let AgentEvent::History(h) = event {
                 self.history = h;
+                self.save_session();
             }
             return;
         }
@@ -952,6 +1180,7 @@ impl App {
             AgentEvent::History(h) => {
                 self.attempt_entry = None;
                 self.history = h;
+                self.save_session();
             }
             AgentEvent::Usage(u) => {
                 self.add_usage(&u);
@@ -961,6 +1190,7 @@ impl App {
             AgentEvent::Done => {
                 self.task = None;
                 self.compacting = false;
+                self.save_session();
             }
         }
     }
@@ -1002,6 +1232,74 @@ impl App {
         if self.effort_picker.is_some() {
             self.draw_effort_picker(frame, chat_area);
         }
+        if self.resume_picker.is_some() {
+            self.draw_resume_picker(frame, chat_area);
+        }
+    }
+
+    fn draw_resume_picker(&self, frame: &mut Frame, area: Rect) {
+        let Some(picker) = &self.resume_picker else {
+            return;
+        };
+        let popup = area.centered(Constraint::Percentage(80), Constraint::Max(20));
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::new().fg(Color::Cyan))
+            .title(" Resume session ".bold())
+            .title_bottom(
+                Line::from(" type to filter · ↑/↓ move · enter resume · esc cancel ")
+                    .right_aligned(),
+            );
+        let inner = block.inner(popup);
+        frame.render_widget(Clear, popup);
+        frame.render_widget(block, popup);
+
+        let [filter_area, list_area] =
+            Layout::vertical([Constraint::Length(2), Constraint::Min(1)]).areas(inner);
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::from(" Filter: ").fg(Color::DarkGray),
+                Span::from(picker.filter.as_str()),
+            ])),
+            filter_area,
+        );
+        frame.set_cursor_position(Position::new(
+            filter_area.x + 9 + picker.filter.width() as u16,
+            filter_area.y,
+        ));
+
+        let sessions = picker.filtered();
+        if sessions.is_empty() {
+            frame.render_widget(
+                Paragraph::new(" No matching sessions".fg(Color::DarkGray)),
+                list_area,
+            );
+            return;
+        }
+        let ages: Vec<String> = sessions.iter().map(|m| session::ago(m.updated)).collect();
+        let age_width = ages.iter().map(|a| a.width()).max().unwrap_or(0);
+        let items: Vec<ListItem> = sessions
+            .iter()
+            .zip(&ages)
+            .map(|(m, age)| {
+                let s = if m.prompts == 1 { "" } else { "s" };
+                ListItem::new(Line::from(vec![
+                    Span::from(format!("{age:>age_width$}  ")).fg(Color::DarkGray),
+                    Span::from(if m.title.is_empty() {
+                        "(untitled)".to_string()
+                    } else {
+                        m.title.clone()
+                    }),
+                    Span::from(format!("  {} prompt{s} · {}", m.prompts, m.model))
+                        .fg(Color::DarkGray),
+                ]))
+            })
+            .collect();
+        let list = List::new(items)
+            .highlight_style(Style::new().bg(Color::Cyan).fg(Color::Black))
+            .highlight_symbol("› ");
+        let mut state = ListState::default().with_selected(Some(picker.selected));
+        frame.render_stateful_widget(list, list_area, &mut state);
     }
 
     fn draw_effort_picker(&self, frame: &mut Frame, area: Rect) {
@@ -1236,7 +1534,7 @@ impl App {
     }
 
     fn draw_status(&self, frame: &mut Frame, area: Rect) {
-        let hint = if self.picker.is_some() {
+        let hint = if self.picker.is_some() || self.resume_picker.is_some() {
             "type to filter · ↑/↓ move · enter select · esc cancel"
         } else if self.effort_picker.is_some() {
             "↑/↓ move · 1–6 jump · enter select · esc cancel"
@@ -1352,6 +1650,11 @@ fn help_lines() -> Vec<Line<'static>> {
                 "--thinking <mode>",
                 "Thinking: adaptive|off (default: adaptive; or set HARNESS_THINKING)",
             ),
+            (
+                "-c, --continue",
+                "Resume the most recent session in this directory",
+            ),
+            ("-r, --resume", "Pick a saved session to resume on startup"),
             ("-p <prompt>", "Run one prompt non-interactively and exit"),
         ],
         Color::Cyan,
@@ -1570,6 +1873,58 @@ mod tests {
         app.command("/thinking typo");
         assert_eq!(app.reasoning.thinking, agent::Thinking::Adaptive);
         assert!(matches!(app.entries.last(), Some(Entry::Error(_))));
+    }
+
+    #[test]
+    fn sessions_are_saved_and_resumed() {
+        let dir = std::env::temp_dir().join(format!("harness-resume-test-{}", session::new_id()));
+        // Only this test saves sessions (the others never have history).
+        unsafe { std::env::set_var("HARNESS_SESSIONS_DIR", &dir) };
+        let client = anthropic::Client::new("test-key").unwrap();
+        let (mut app, _rx) = App::new_with_channel(
+            client,
+            "claude-sonnet-4-6".into(),
+            agent::Reasoning::default(),
+        );
+        app.command("/resume");
+        assert!(app.resume_picker.is_none());
+
+        app.entries.push(Entry::User("fix the bug\nmore".into()));
+        app.entries.push(Entry::Assistant("done".into()));
+        app.history = vec![Message::user("fix the bug"), Message::assistant("done")];
+        app.context_tokens = 1234;
+        app.save_session();
+        let first = app.session_id.clone();
+
+        app.command("/clear");
+        assert_ne!(app.session_id, first);
+        assert!(app.history.is_empty());
+
+        let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
+        app.command("/resume");
+        let picker = app.resume_picker.as_ref().expect("picker opens");
+        assert_eq!(picker.sessions.len(), 1);
+        assert_eq!(picker.sessions[0].title, "fix the bug");
+        app.on_event(key(KeyCode::Enter));
+        assert!(app.resume_picker.is_none());
+        assert_eq!(app.session_id, first);
+        assert_eq!(app.history.len(), 2);
+        assert_eq!(app.context_tokens, 1234);
+        assert!(
+            app.entries
+                .iter()
+                .any(|e| matches!(e, Entry::User(t) if t.starts_with("fix")))
+        );
+        assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("Resumed")));
+
+        // The current session is excluded, and numeric/id arguments work.
+        app.command("/resume 1");
+        assert!(matches!(app.entries.last(), Some(Entry::Error(_))));
+        app.command("/clear");
+        app.command(&format!("/resume {}", &first[..first.len() - 2]));
+        assert_eq!(app.session_id, first);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

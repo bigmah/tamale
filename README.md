@@ -12,6 +12,8 @@ cargo run --release -- --model claude-opus-4-8
 cargo run --release -- --effort low          # less thorough, faster, cheaper
 cargo run --release -- --thinking off        # disable adaptive thinking
 cargo run --release -- -p "summarize src/"   # one-shot, non-interactive
+cargo run --release -- --continue            # resume the latest session in this directory
+cargo run --release -- --resume              # pick a saved session to resume
 ```
 
 `HARNESS_MODEL` sets the default model (otherwise `claude-sonnet-4-6`).
@@ -36,6 +38,22 @@ thinking (e.g. Haiku 4.5). See [Anthropic's thinking documentation](https://plat
   It also runs automatically before a request once the context is 80% full (also mid-turn).
 - **Retries**: rate limits (429), overload (529), 5xx and network errors are retried up to 5 times
   with exponential backoff (honoring `Retry-After`).
+
+## Sessions
+
+Every interactive conversation is saved as JSON in `~/.local/share/harness/sessions/`
+(`$XDG_DATA_HOME/harness/sessions`, or `HARNESS_SESSIONS_DIR`) after each prompt, tool step
+and on exit. It includes the full model history (so the agent picks up with all context) and
+the visible transcript.
+
+- `/resume` opens a picker of sessions started in the current directory (most recent first,
+  type to filter). `/resume <n>` resumes the nth most recent, `/resume <id>` a session by id
+  (or unique id prefix) from any directory.
+- `-c`/`--continue` resumes the latest session in this directory on startup; `-r`/`--resume`
+  opens the picker.
+- A resumed session keeps the current model (use `/model` to switch); further messages are
+  saved to the same session. `/clear` starts a new session (the old one stays resumable).
+- `-p` runs are not saved.
 
 ## Project instructions
 
@@ -78,6 +96,7 @@ The agent can modify files and run any shell command in the working directory.
   and `/thinking off` set it explicitly. Shown in the status bar; changes during a run
   take effect on the next message.
 - `/compact [focus]` summarizes the conversation to free context
+- `/resume [n|id]` continues a saved session (see [Sessions](#sessions))
 - `/clear` resets the conversation, `/quit` (or `/exit`) quits
 
 ## Layout
@@ -86,3 +105,4 @@ The agent can modify files and run any shell command in the working directory.
 - `src/agent.rs` – agent loop: streams completions via rig, runs tools
 - `src/tools.rs` – tool definitions and implementations
 - `src/app.rs` – TUI state, key handling, rendering
+- `src/session.rs` – saving, listing and loading sessions

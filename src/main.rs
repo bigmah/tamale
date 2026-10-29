@@ -1,5 +1,6 @@
 mod agent;
 mod app;
+mod session;
 mod tools;
 
 use std::time::Duration;
@@ -31,6 +32,7 @@ async fn main() -> Result<()> {
         _ => agent::Thinking::default(),
     };
     let mut print_prompt = None;
+    let mut resume = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-m" | "--model" => model_name = args.next().context("--model needs a value")?,
@@ -40,11 +42,14 @@ async fn main() -> Result<()> {
             "--thinking" => {
                 thinking = parse_thinking(&args.next().context("--thinking needs a value")?)?
             }
+            "-c" | "--continue" => resume = Some(Resume::Latest),
+            "-r" | "--resume" => resume = Some(Resume::Pick),
             "-p" | "--print" => print_prompt = Some(args.next().context("--print needs a prompt")?),
             "-h" | "--help" => {
                 println!(
-                    "usage: harness [--model <anthropic-model-id>] [--effort <level>] [--thinking <mode>] [-p <prompt>]\n\n\
+                    "usage: harness [--model <anthropic-model-id>] [--effort <level>] [--thinking <mode>] [-c | -r] [-p <prompt>]\n\n\
                      -p runs one prompt non-interactively and exits.\n\
+                     -c/--continue resumes the most recent session in this directory; -r/--resume picks one.\n\
                      --effort is one of low, medium, high, xhigh, max (default: API default).\n\
                      --thinking is adaptive (on) or off (default: adaptive).\n\
                      Requires ANTHROPIC_API_KEY. HARNESS_MODEL, HARNESS_EFFORT and HARNESS_THINKING set defaults."
@@ -79,11 +84,16 @@ async fn main() -> Result<()> {
     }));
     let mut terminal = ratatui::init();
     execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture)?;
-    let result = run(
-        &mut terminal,
-        App::new_with_channel(client, model_name, reasoning),
-    )
-    .await;
+    let (mut app, rx) = App::new_with_channel(client, model_name, reasoning);
+    match resume {
+        Some(Resume::Latest) => match session::list(Some(&std::env::current_dir()?)).first() {
+            Some(latest) => app.resume(&latest.id),
+            None => app.resume_command(None),
+        },
+        Some(Resume::Pick) => app.resume_command(None),
+        None => {}
+    }
+    let result = run(&mut terminal, (app, rx)).await;
     let _ = execute!(
         std::io::stdout(),
         DisableBracketedPaste,
@@ -91,6 +101,11 @@ async fn main() -> Result<()> {
     );
     ratatui::restore();
     result
+}
+
+enum Resume {
+    Latest,
+    Pick,
 }
 
 fn parse_thinking(s: &str) -> Result<agent::Thinking> {
@@ -175,5 +190,6 @@ async fn run(
             _ = tick.tick(), if app.is_busy() => app.on_tick(),
         }
     }
+    app.save_session();
     Ok(())
 }
