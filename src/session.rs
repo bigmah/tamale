@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
@@ -27,7 +28,7 @@ pub enum Entry {
     Error(String),
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
     /// Working directory the session was started in.
@@ -44,7 +45,7 @@ pub struct Session {
 }
 
 /// The listing fields of a session; the (possibly large) history is skipped when parsing.
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Meta {
     pub id: String,
     pub cwd: PathBuf,
@@ -52,8 +53,138 @@ pub struct Meta {
     pub model: String,
     pub title: String,
     /// Number of user prompts in the transcript (filled in by `list`).
-    #[serde(skip)]
+    #[serde(default)]
     pub prompts: usize,
+}
+
+/// Disposable listing cache. Fingerprints ensure an edited/replaced session is
+/// reparsed; the session JSON remains the source of truth.
+#[derive(Serialize, Deserialize)]
+struct Index {
+    len: u64,
+    modified: SystemTime,
+    meta: Meta,
+}
+
+fn write_index(dir: &Path, path: &Path, meta: Meta, stat: &std::fs::Metadata) -> Result<()> {
+    let index = Index {
+        len: stat.len(),
+        modified: stat.modified()?,
+        meta,
+    };
+    let index_dir = dir.join(".index");
+    std::fs::create_dir_all(&index_dir)?;
+    let path = index_dir.join(path.file_name().context("missing session file name")?);
+    let tmp = path.with_extension(format!("json.{}.tmp", new_id()));
+    std::fs::write(&tmp, serde_json::to_vec(&index)?)?;
+    std::fs::rename(tmp, path)?;
+    Ok(())
+}
+
+/// One ordered writer owns all session writes. Pending snapshots for the same
+/// session are coalesced, and closing the queue drains it before exit.
+pub struct Writer {
+    queue: Arc<(Mutex<Pending>, Condvar)>,
+    task: Option<tokio::task::JoinHandle<()>>,
+}
+
+#[derive(Default)]
+struct Pending {
+    sessions: HashMap<String, Arc<Session>>,
+    closing: bool,
+}
+
+impl From<&Session> for Meta {
+    fn from(saved: &Session) -> Self {
+        Self {
+            id: saved.id.clone(),
+            cwd: saved.cwd.clone(),
+            updated: saved.updated,
+            model: saved.model.clone(),
+            title: saved.title.clone(),
+            prompts: saved
+                .entries
+                .iter()
+                .filter(|e| matches!(e, Entry::User(_)))
+                .count(),
+        }
+    }
+}
+
+impl Writer {
+    pub fn start(events: tokio::sync::mpsc::UnboundedSender<crate::app::AppEvent>) -> Self {
+        let queue = Arc::new((Mutex::new(Pending::default()), Condvar::new()));
+        let worker_queue = queue.clone();
+        let task = tokio::task::spawn_blocking(move || {
+            let (lock, ready) = &*worker_queue;
+            loop {
+                let saved = {
+                    let mut pending = lock.lock().unwrap();
+                    while pending.sessions.is_empty() && !pending.closing {
+                        pending = ready.wait(pending).unwrap();
+                    }
+                    let Some(saved) = pending.sessions.values().next().cloned() else {
+                        break;
+                    };
+                    saved
+                };
+                let result = save(&saved).map_err(|e| format!("{e:#}"));
+                let mut pending = lock.lock().unwrap();
+                if pending
+                    .sessions
+                    .get(&saved.id)
+                    .is_some_and(|latest| Arc::ptr_eq(latest, &saved))
+                {
+                    pending.sessions.remove(&saved.id);
+                }
+                drop(pending);
+                let _ = events.send(crate::app::AppEvent::SessionSaved(saved.id.clone(), result));
+            }
+        });
+        Self {
+            queue,
+            task: Some(task),
+        }
+    }
+
+    pub fn save(&self, saved: Session) {
+        let (lock, ready) = &*self.queue;
+        lock.lock()
+            .unwrap()
+            .sessions
+            .insert(saved.id.clone(), Arc::new(saved));
+        ready.notify_one();
+    }
+
+    /// Includes in-flight writes, so immediate clear/resume sees the newest snapshot.
+    pub fn pending(&self) -> Vec<Arc<Session>> {
+        self.queue
+            .0
+            .lock()
+            .unwrap()
+            .sessions
+            .values()
+            .cloned()
+            .collect()
+    }
+
+    pub async fn finish(mut self) {
+        self.close();
+        if let Some(task) = self.task.take() {
+            let _ = task.await;
+        }
+    }
+
+    fn close(&self) {
+        self.queue.0.lock().unwrap().closing = true;
+        self.queue.1.notify_one();
+    }
+}
+
+impl Drop for Writer {
+    fn drop(&mut self) {
+        self.close();
+    }
 }
 
 #[derive(Deserialize)]
@@ -106,6 +237,10 @@ fn save_in(dir: &Path, session: &Session) -> Result<()> {
     std::fs::write(&tmp, serde_json::to_vec(session)?)
         .with_context(|| format!("writing {}", tmp.display()))?;
     std::fs::rename(&tmp, &path).with_context(|| format!("writing {}", path.display()))?;
+    // Cache failures must never prevent saving/resuming the conversation.
+    if let Ok(stat) = std::fs::metadata(&path) {
+        let _ = write_index(dir, &path, Meta::from(session), &stat);
+    }
     Ok(())
 }
 
@@ -134,6 +269,15 @@ fn list_in(dir: &Path, cwd: Option<&Path>) -> Vec<Meta> {
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|e| e == "json"))
         .filter_map(|p| {
+            let stat = std::fs::metadata(&p).ok()?;
+            if let Ok(data) = std::fs::read(dir.join(".index").join(p.file_name()?))
+                && let Ok(index) = serde_json::from_slice::<Index>(&data)
+                && index.len == stat.len()
+                && Some(index.modified) == stat.modified().ok()
+                && Some(index.meta.id.as_str()) == p.file_stem()?.to_str()
+            {
+                return Some(index.meta);
+            }
             let data = std::fs::read(&p).ok()?;
             let parsed: MetaWithEntries = serde_json::from_slice(&data).ok()?;
             let mut meta = parsed.meta;
@@ -142,6 +286,7 @@ fn list_in(dir: &Path, cwd: Option<&Path>) -> Vec<Meta> {
                 .iter()
                 .filter(|e| e.contains_key("User"))
                 .count();
+            let _ = write_index(dir, &p, meta.clone(), &stat);
             Some(meta)
         })
         .filter(|m| cwd.is_none_or(|c| m.cwd == c))
@@ -223,5 +368,74 @@ mod tests {
         assert_eq!(list_in(&dir, None)[0].prompts, 1);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn listing_rebuilds_missing_stale_and_corrupt_indexes() {
+        let dir = std::env::temp_dir().join(format!("harness-index-test-{}", new_id()));
+        let mut saved = session("a", "/proj", 10);
+        save_in(&dir, &saved).unwrap();
+        let index = dir.join(".index/a.json");
+        std::fs::remove_file(&index).unwrap();
+        assert_eq!(list_in(&dir, None)[0].prompts, 1);
+        assert!(
+            index.exists(),
+            "legacy sessions get an index on first listing"
+        );
+        std::fs::write(&index, "broken cache").unwrap();
+        assert_eq!(list_in(&dir, None)[0].title, saved.title);
+        saved.title = "Changed outside the app".into();
+        saved.entries.push(Entry::User("another prompt".into()));
+        std::fs::write(path_in(&dir, "a"), serde_json::to_vec(&saved).unwrap()).unwrap();
+        let listed = list_in(&dir, None);
+        assert_eq!(listed[0].title, saved.title);
+        assert_eq!(listed[0].prompts, 2);
+        std::fs::write(path_in(&dir, "a"), "broken session").unwrap();
+        assert!(list_in(&dir, None).is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn index_write_failures_do_not_prevent_saving_or_listing() {
+        let dir = std::env::temp_dir().join(format!("harness-index-failure-{}", new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(".index"), "not a directory").unwrap();
+        save_in(&dir, &session("a", "/proj", 10)).unwrap();
+        assert_eq!(load_in(&dir, "a").unwrap().id, "a");
+        assert_eq!(list_in(&dir, None)[0].id, "a");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod perf_tests {
+    use super::*;
+
+    /// Run with `cargo test --release perf_session_listing -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn perf_session_listing() {
+        let dir = std::env::temp_dir().join(format!("harness-list-perf-{}", new_id()));
+        let mut saved = Session {
+            id: String::new(),
+            cwd: "/perf-project".into(),
+            created: 1,
+            updated: 1,
+            model: "test".into(),
+            title: "Performance fixture".into(),
+            context_tokens: 0,
+            history: vec![Message::user("x".repeat(1_000_000))],
+            entries: vec![Entry::User("y".repeat(1_000_000))],
+        };
+        for i in 0..30 {
+            saved.id = format!("session-{i}");
+            save_in(&dir, &saved).unwrap();
+        }
+        let start = std::time::Instant::now();
+        for _ in 0..10 {
+            assert_eq!(list_in(&dir, Some(Path::new("/perf-project"))).len(), 30);
+        }
+        println!("list 30 sessions (60 MB): {:?}/list", start.elapsed() / 10);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -93,8 +93,8 @@ fn thinking_command_toggles_and_accepts_explicit_modes() {
     assert!(matches!(app.entries.last(), Some(Entry::Error(_))));
 }
 
-#[test]
-fn sessions_are_saved_and_resumed() {
+#[tokio::test]
+async fn sessions_are_saved_and_resumed() {
     let dir = std::env::temp_dir().join(format!("harness-resume-test-{}", session::new_id()));
     // Only this test saves sessions (the others never have history).
     unsafe { std::env::set_var("HARNESS_SESSIONS_DIR", &dir) };
@@ -138,6 +138,20 @@ fn sessions_are_saved_and_resumed() {
     app.command(&format!("/resume {}", &first[..first.len() - 2]));
     assert_eq!(app.session_id, first);
 
+    app.save_session();
+    app.command("/clear");
+    let second = app.session_id.clone();
+    app.entries.push(Entry::User("another session".into()));
+    app.history = vec![Message::user("another session")];
+    for n in 0..100 {
+        app.context_tokens = n;
+        app.save_session();
+    }
+    app.finish_saves().await;
+    assert_eq!(session::load(&first).unwrap().history.len(), 2);
+    let latest = session::load(&second).unwrap();
+    assert_eq!(latest.context_tokens, 99);
+    assert_eq!(latest.history, app.history);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -298,4 +312,119 @@ fn configured_settings_reach_status_and_runtime_commands() {
     assert_eq!(turn.reasoning.thinking, agent::Thinking::Adaptive);
     assert_eq!(turn.reasoning.effort, Some(agent::Effort::High));
     assert_eq!(turn.context_window, 500_000);
+}
+
+/// Run with `cargo test --release perf_transcript -- --ignored --nocapture`.
+#[tokio::test]
+#[ignore]
+async fn perf_transcript() {
+    use std::time::Instant;
+    let client = anthropic::Client::new("test-key").unwrap();
+    let (mut app, _rx) = App::new_with_channel(client, test_settings("test-model"));
+    for i in 0..1000 {
+        app.entries.push(Entry::User(format!(
+            "Request {i}: inspect the implementation"
+        )));
+        app.entries.push(Entry::Assistant(
+            "# Findings\nThe implementation uses `cached data` and **styled text**. ".repeat(10),
+        ));
+    }
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+    let start = Instant::now();
+    terminal.draw(|f| app.draw(f)).unwrap();
+    println!("transcript cold draw: {:?}", start.elapsed());
+    let start = Instant::now();
+    for _ in 0..100 {
+        terminal.draw(|f| app.draw(f)).unwrap();
+    }
+    println!(
+        "transcript unchanged draw: {:?}/frame",
+        start.elapsed() / 100
+    );
+    let start = Instant::now();
+    for _ in 0..100 {
+        app.on_event(Event::Key(KeyEvent::new(
+            KeyCode::Char('x'),
+            KeyModifiers::NONE,
+        )));
+        terminal.draw(|f| app.draw(f)).unwrap();
+    }
+    println!("transcript typing: {:?}/frame", start.elapsed() / 100);
+    app.task = Some(tokio::spawn(std::future::pending()));
+    app.on_app_event(AppEvent::Agent(
+        app.turn,
+        AgentEvent::TextDelta("a long streamed response with `code`\n".repeat(5000)),
+    ));
+    terminal.draw(|f| app.draw(f)).unwrap();
+    let start = Instant::now();
+    for _ in 0..100 {
+        app.on_app_event(AppEvent::Agent(
+            app.turn,
+            AgentEvent::TextDelta("more streamed `code`\n".into()),
+        ));
+        terminal.draw(|f| app.draw(f)).unwrap();
+    }
+    println!("transcript streaming: {:?}/frame", start.elapsed() / 100);
+    app.task.take().unwrap().abort();
+}
+
+#[tokio::test]
+async fn agent_events_refresh_cached_text_tools_retries_and_clear() {
+    let client = anthropic::Client::new("test-key").unwrap();
+    let (mut app, _rx) = App::new_with_channel(client, test_settings("test-model"));
+    app.task = Some(tokio::spawn(std::future::pending()));
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+    let mut screen = |app: &mut App| {
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+    };
+    app.on_agent(app.turn, AgentEvent::TextDelta("partial response".into()));
+    assert!(screen(&mut app).contains("partial response"));
+    app.on_agent(
+        app.turn,
+        AgentEvent::TextDelta("\n```rust\nlet x = 1;\n```".into()),
+    );
+    assert!(screen(&mut app).contains("let x = 1;"));
+    app.on_agent(
+        app.turn,
+        AgentEvent::Retry {
+            attempt: 1,
+            delay: std::time::Duration::ZERO,
+            error: "try again".into(),
+        },
+    );
+    let retried = screen(&mut app);
+    assert!(!retried.contains("partial response"));
+    assert!(retried.contains("try again"));
+    app.on_agent(
+        app.turn,
+        AgentEvent::ToolCall {
+            name: "bash".into(),
+            summary: "test".into(),
+            description: "Run tests".into(),
+        },
+    );
+    assert!(screen(&mut app).contains("Run tests"));
+    app.on_agent(
+        app.turn,
+        AgentEvent::ToolResult {
+            output: "test output".into(),
+            is_error: true,
+        },
+    );
+    app.command("/verbose on");
+    assert!(screen(&mut app).contains("test output"));
+    app.on_agent(app.turn, AgentEvent::TextDelta("final response".into()));
+    assert!(screen(&mut app).contains("final response"));
+    app.on_agent(app.turn, AgentEvent::Done);
+    app.command("/clear");
+    let cleared = screen(&mut app);
+    assert!(!cleared.contains("final response"));
+    assert!(cleared.contains("Conversation cleared"));
 }

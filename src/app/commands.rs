@@ -292,6 +292,7 @@ impl App {
                 self.history.clear();
                 self.context_tokens = 0;
                 self.entries.clear();
+                self.transcript.invalidate_from(0);
                 self.session_id = session::new_id();
                 self.session_created = session::now();
                 self.entries

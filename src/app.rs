@@ -7,6 +7,7 @@ mod input;
 mod sessions;
 #[cfg(test)]
 mod tests;
+mod transcript;
 mod view;
 
 use rig_core::client::CompletionClient;
@@ -35,6 +36,7 @@ pub enum AppEvent {
     Models(Result<Vec<ModelInfo>, String>),
     ClipboardCopied(Result<(), String>),
     ClipboardPasted(Result<String, String>),
+    SessionSaved(String, Result<(), String>),
 }
 
 #[derive(Clone)]
@@ -116,6 +118,9 @@ pub struct App {
     save_error_shown: bool,
     history: Vec<Message>,
     entries: Vec<Entry>,
+    transcript: transcript::Transcript,
+    cwd: std::path::PathBuf,
+    session_writer: Option<session::Writer>,
     input: String,
     cursor: usize,
     scroll_back: usize,
@@ -170,6 +175,9 @@ impl App {
             entries: vec![Entry::Info(
                 "Welcome! Type a request and press Enter. /help for commands.".into(),
             )],
+            transcript: transcript::Transcript::default(),
+            cwd: std::env::current_dir().unwrap_or_default(),
+            session_writer: None,
             input: String::new(),
             cursor: 0,
             scroll_back: 0,
@@ -290,6 +298,7 @@ impl App {
         match event {
             AppEvent::Agent(turn, ev) => self.on_agent(turn, ev),
             AppEvent::Models(result) => self.on_models(result),
+            AppEvent::SessionSaved(id, result) => self.on_session_saved(&id, result),
             AppEvent::ClipboardPasted(Ok(text)) => self.on_paste(&text),
             AppEvent::ClipboardCopied(Ok(())) => self
                 .entries
@@ -315,7 +324,10 @@ impl App {
         }
         match event {
             AgentEvent::TextDelta(delta) => match self.entries.last_mut() {
-                Some(Entry::Assistant(text)) => text.push_str(&delta),
+                Some(Entry::Assistant(text)) => {
+                    text.push_str(&delta);
+                    self.transcript.append_to(self.entries.len() - 1);
+                }
                 _ => {
                     self.attempt_entry = Some(self.entries.len());
                     self.entries.push(Entry::Assistant(delta));
@@ -342,6 +354,7 @@ impl App {
                 if let Some(i) = self.attempt_entry.take()
                     && matches!(self.entries.get(i), Some(Entry::Assistant(_)))
                 {
+                    self.transcript.invalidate_from(i);
                     self.entries.remove(i);
                 }
                 self.entries.push(Entry::Info(format!(
@@ -370,13 +383,15 @@ impl App {
                 )));
             }
             AgentEvent::ToolResult { output, is_error } => {
-                if let Some(Entry::Tool { output: slot, .. }) = self
+                if let Some((i, Entry::Tool { output: slot, .. })) = self
                     .entries
                     .iter_mut()
+                    .enumerate()
                     .rev()
-                    .find(|e| matches!(e, Entry::Tool { output: None, .. }))
+                    .find(|(_, e)| matches!(e, Entry::Tool { output: None, .. }))
                 {
                     *slot = Some((output, is_error));
+                    self.transcript.invalidate_from(i);
                 }
             }
             AgentEvent::History(h) => {

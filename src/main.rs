@@ -21,13 +21,19 @@ use tokio::sync::mpsc;
 
 use crate::app::App;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let cli = cli::Cli::parse(std::env::args().skip(1))?;
     if cli.help {
         println!("{}", cli::HELP);
         return Ok(());
     }
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(start(cli))
+}
+
+async fn start(cli: cli::Cli) -> Result<()> {
     let mut settings = config::Settings::load(&std::env::current_dir()?, cli.config.as_deref())?;
     settings.apply_env(|name| std::env::var(name).ok())?;
     cli.apply(&mut settings);
@@ -135,15 +141,42 @@ async fn run(
 ) -> Result<()> {
     let mut events = EventStream::new();
     let mut tick = tokio::time::interval(Duration::from_millis(80));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut dirty = true;
+    let mut next_frame = tokio::time::Instant::now();
 
-    while !app.should_quit {
-        terminal.draw(|f| app.draw(f))?;
-        tokio::select! {
-            Some(ev) = events.next() => app.on_event(ev?),
-            Some(ev) = rx.recv() => app.on_app_event(ev),
-            _ = tick.tick(), if app.is_busy() => app.on_tick(),
+    let result = async {
+        while !app.should_quit {
+            tokio::select! {
+                Some(ev) = events.next() => {
+                    app.on_event(ev?);
+                    dirty = true;
+                }
+                Some(ev) = rx.recv() => {
+                    app.on_app_event(ev);
+                    // Preserve event order while amortizing a burst of streamed tokens
+                    // over one frame. Bound the batch so keyboard input stays responsive.
+                    for _ in 0..255 {
+                        let Ok(ev) = rx.try_recv() else { break };
+                        app.on_app_event(ev);
+                    }
+                    dirty = true;
+                }
+                _ = tick.tick(), if app.is_busy() => {
+                    app.on_tick();
+                    dirty = true;
+                }
+                _ = tokio::time::sleep_until(next_frame), if dirty => {
+                    terminal.draw(|f| app.draw(f))?;
+                    dirty = false;
+                    next_frame = tokio::time::Instant::now() + Duration::from_millis(16);
+                }
+            }
         }
+        Ok(())
     }
+    .await;
     app.save_session();
-    Ok(())
+    app.finish_saves().await;
+    result
 }

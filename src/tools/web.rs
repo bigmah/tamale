@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -47,13 +48,21 @@ pub(super) fn definitions() -> Vec<ToolDefinition> {
 }
 
 fn client(max_redirects: usize) -> Result<Client> {
-    Client::builder()
+    static SEARCH: OnceLock<Client> = OnceLock::new();
+    static FETCH: OnceLock<Client> = OnceLock::new();
+    let cache = if max_redirects == 0 { &SEARCH } else { &FETCH };
+    if let Some(client) = cache.get() {
+        return Ok(client.clone());
+    }
+    let client = Client::builder()
         .user_agent(concat!("harness/", env!("CARGO_PKG_VERSION")))
         .timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::limited(max_redirects))
         .build()
-        .context("building web client")
+        .context("building web client")?;
+    let _ = cache.set(client.clone());
+    Ok(client)
 }
 
 // Bound the body even when Content-Length is absent or the server uses compression.

@@ -261,36 +261,52 @@ impl App {
     }
 
     fn draw_chat(&mut self, frame: &mut Frame, area: Rect) {
-        let mut lines: Vec<Line> = Vec::new();
-        if self.settings.ui.verbose {
-            for entry in &self.entries {
-                render_entry(entry, true, &mut lines);
-                lines.push(Line::default());
-            }
+        if area.is_empty() {
+            return;
+        }
+        self.transcript
+            .sync(&self.entries, area.width, self.settings.ui.verbose);
+        let running = self.is_running();
+        let spinner = Line::from(
+            format!(
+                "{} {}",
+                SPINNER[self.tick % SPINNER.len()],
+                if self.compacting {
+                    "Compacting…"
+                } else {
+                    "Thinking…"
+                }
+            )
+            .fg(Color::Yellow),
+        );
+        let spinner_rows = if running {
+            Paragraph::new(spinner.clone())
+                .wrap(Wrap { trim: false })
+                .line_count(area.width)
         } else {
-            render_quiet(&self.entries, &mut lines);
-        }
-        if self.is_running() {
-            lines.push(Line::from(
-                format!(
-                    "{} {}",
-                    SPINNER[self.tick % SPINNER.len()],
-                    if self.compacting {
-                        "Compacting…"
-                    } else {
-                        "Thinking…"
-                    }
-                )
-                .fg(Color::Yellow),
-            ));
-        }
-
-        let para = Paragraph::new(lines).wrap(Wrap { trim: false });
-        let total = para.line_count(area.width);
+            0
+        };
+        let total = self.transcript.rows() + spinner_rows;
         let max_scroll = total.saturating_sub(area.height as usize);
         self.scroll_back = self.scroll_back.min(max_scroll);
         let offset = max_scroll - self.scroll_back;
-        frame.render_widget(para.scroll((offset.min(u16::MAX as usize) as u16, 0)), area);
+        let (mut lines, local_offset) = self
+            .transcript
+            .visible(offset.min(self.transcript.rows()), area.height as usize);
+        if running {
+            lines.push(spinner);
+        }
+        let local_offset = if offset > self.transcript.rows() {
+            (offset - self.transcript.rows()) as u16
+        } else {
+            local_offset
+        };
+        frame.render_widget(
+            Paragraph::new(lines)
+                .wrap(Wrap { trim: false })
+                .scroll((local_offset, 0)),
+            area,
+        );
         if self.scroll_back > 0 {
             let mut state = ScrollbarState::new(max_scroll).position(offset);
             frame.render_stateful_widget(
@@ -344,9 +360,7 @@ impl App {
     }
 
     fn draw_status(&self, frame: &mut Frame, area: Rect) {
-        let cwd = std::env::current_dir()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|_| "(unavailable)".into());
+        let cwd = self.cwd.display().to_string();
         let cwd_line = Line::from(vec![
             Span::from(" cwd: ").fg(Color::DarkGray),
             Span::from(cwd).fg(Color::Cyan),
@@ -547,8 +561,29 @@ pub(super) fn render_entry<'a>(entry: &'a Entry, verbose: bool, lines: &mut Vec<
 
 /// Very small markdown styling: code fences, headings, bullets and `inline code`.
 fn render_markdown<'a>(text: &'a str, lines: &mut Vec<Line<'a>>) {
-    let mut in_code = false;
-    for l in text.lines() {
+    render_markdown_from(text, lines, false);
+}
+
+pub(super) struct MarkdownTail {
+    pub byte: usize,
+    pub in_code: bool,
+}
+
+/// Return the start/state of the last source line, which is the only previously
+/// rendered line that can change when another streaming chunk is appended.
+pub(super) fn render_markdown_from<'a>(
+    text: &'a str,
+    lines: &mut Vec<Line<'a>>,
+    mut in_code: bool,
+) -> MarkdownTail {
+    let mut tail = MarkdownTail { byte: 0, in_code };
+    let mut byte = 0;
+    for segment in text.split_inclusive('\n') {
+        tail = MarkdownTail { byte, in_code };
+        byte += segment.len();
+        let l = segment
+            .strip_suffix('\n')
+            .map_or(segment, |line| line.strip_suffix('\r').unwrap_or(line));
         if l.trim_start().starts_with("```") {
             in_code = !in_code;
             lines.push(Line::from(l.fg(Color::DarkGray)));
@@ -577,6 +612,7 @@ fn render_markdown<'a>(text: &'a str, lines: &mut Vec<Line<'a>>) {
         }
         lines.push(Line::from(spans));
     }
+    tail
 }
 
 /// Wraps input text to `width` columns, returning visual rows and the

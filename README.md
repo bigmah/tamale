@@ -101,6 +101,31 @@ the visible transcript.
   saved to the same session. `/clear` starts a new session (the old one stays resumable).
 - `-p` runs are not saved.
 
+Session writes run on a background worker, coalesce pending updates to each session,
+and drain before exit. Resume sees pending updates immediately. A disposable `.index/`
+inside the sessions directory caches listing metadata; older sessions are indexed on
+first listing, and changed files or missing/corrupt indexes are reparsed automatically.
+
+## Performance
+
+The TUI caches styled transcript lines and wrapped row offsets, renders only the
+visible slice, and updates the unfinished Markdown line as text streams in. Token
+bursts share redraws capped near 60 fps; the idle screen does not redraw. Web tools
+reuse HTTP clients and connection pools. `--help` skips async runtime initialization.
+
+Reproduce the local CPU/I/O benchmarks without an API key or network requests:
+
+```sh
+cargo test --release perf_ -- --ignored --nocapture --test-threads=1
+```
+
+On the development Mac, a 1,000-turn transcript at 120×40 went from about 25 ms to
+0.11 ms per typing/redraw frame. Streaming into a 5,000-line response takes about
+0.09 ms per frame. Listing 30 sessions totaling 60 MB went from about 7.6 ms to
+0.5 ms with cached metadata. These measure local rendering/listing work; API and
+terminal display latency are separate. Initial layout and terminal resizing still
+process the transcript once.
+
 ## Project instructions
 
 These files are appended to the system prompt if present (duplicates skipped):

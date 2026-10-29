@@ -20,7 +20,7 @@ impl App {
             .unwrap_or_default();
         let saved = session::Session {
             id: self.session_id.clone(),
-            cwd: std::env::current_dir().unwrap_or_default(),
+            cwd: self.cwd.clone(),
             created: self.session_created,
             updated: session::now(),
             model: self.settings.model.name.clone(),
@@ -29,7 +29,16 @@ impl App {
             history: self.history.clone(),
             entries: self.entries.clone(),
         };
-        match session::save(&saved) {
+        self.session_writer
+            .get_or_insert_with(|| session::Writer::start(self.tx.clone()))
+            .save(saved);
+    }
+
+    pub(super) fn on_session_saved(&mut self, id: &str, result: Result<(), String>) {
+        if id != self.session_id {
+            return;
+        }
+        match result {
             Ok(()) => self.save_error_shown = false,
             Err(e) if !self.save_error_shown => {
                 self.save_error_shown = true;
@@ -40,13 +49,37 @@ impl App {
         }
     }
 
+    pub async fn finish_saves(&mut self) {
+        if let Some(writer) = self.session_writer.take() {
+            writer.finish().await;
+        }
+    }
+
     /// Saved sessions from this directory, excluding the current one.
     pub(super) fn resumable_sessions(&self) -> Vec<session::Meta> {
-        let cwd = std::env::current_dir().unwrap_or_default();
-        session::list(Some(&cwd))
+        self.saved_sessions(Some(&self.cwd))
             .into_iter()
             .filter(|m| m.id != self.session_id)
             .collect()
+    }
+
+    fn saved_sessions(&self, cwd: Option<&std::path::Path>) -> Vec<session::Meta> {
+        let pending = self
+            .session_writer
+            .as_ref()
+            .map(|writer| writer.pending())
+            .unwrap_or_default();
+        let mut sessions = session::list(cwd);
+        if !pending.is_empty() {
+            for saved in pending {
+                sessions.retain(|meta| meta.id != saved.id);
+                if cwd.is_none_or(|cwd| saved.cwd == cwd) {
+                    sessions.push(session::Meta::from(saved.as_ref()));
+                }
+            }
+            sessions.sort_by(|a, b| b.updated.cmp(&a.updated).then_with(|| b.id.cmp(&a.id)));
+        }
+        sessions
     }
 
     /// `/resume` opens a picker; `/resume <n>` resumes the nth most recent session from this
@@ -86,7 +119,8 @@ impl App {
             }
             return;
         }
-        let matches: Vec<String> = session::list(None)
+        let matches: Vec<String> = self
+            .saved_sessions(None)
             .into_iter()
             .filter(|m| m.id.starts_with(arg))
             .map(|m| m.id)
@@ -111,7 +145,11 @@ impl App {
         if self.is_running() {
             return;
         }
-        let saved = match session::load(id) {
+        let pending = self
+            .session_writer
+            .as_ref()
+            .and_then(|writer| writer.pending().into_iter().find(|saved| saved.id == id));
+        let saved = match pending.map_or_else(|| session::load(id), |saved| Ok((*saved).clone())) {
             Ok(s) => s,
             Err(e) => {
                 self.entries
@@ -123,6 +161,7 @@ impl App {
         self.turn += 1;
         self.history = saved.history;
         self.entries = saved.entries;
+        self.transcript.invalidate_from(0);
         self.context_tokens = saved.context_tokens;
         self.session_id = saved.id;
         self.session_created = saved.created;
