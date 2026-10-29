@@ -1,7 +1,7 @@
 //! Saved conversations, so a closed session can be picked back up with `/resume`.
 //!
-//! Each session is one JSON file in `$XDG_DATA_HOME/harness/sessions` (by default
-//! `~/.local/share/harness/sessions`), rewritten whenever the conversation changes.
+//! Each session is one JSON file in `$XDG_DATA_HOME/tamale/sessions` (by default
+//! `~/.local/share/tamale/sessions`), rewritten whenever the conversation changes.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -211,13 +211,13 @@ pub fn new_id() -> String {
 }
 
 pub fn dir() -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("HARNESS_SESSIONS_DIR") {
+    if let Some(dir) = std::env::var_os("TAMALE_SESSIONS_DIR") {
         return Some(PathBuf::from(dir));
     }
     let data = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
-    Some(data.join("harness").join("sessions"))
+    Some(data.join("tamale").join("sessions"))
 }
 
 fn path_in(dir: &Path, id: &str) -> PathBuf {
@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn save_load_and_list_round_trip() {
-        let dir = std::env::temp_dir().join(format!("harness-sessions-test-{}", new_id()));
+        let dir = std::env::temp_dir().join(format!("tamale-sessions-test-{}", new_id()));
         save_in(&dir, &session("a", "/proj", 10)).unwrap();
         save_in(&dir, &session("b", "/proj", 20)).unwrap();
         save_in(&dir, &session("c", "/other", 30)).unwrap();
@@ -372,7 +372,7 @@ mod tests {
 
     #[test]
     fn listing_rebuilds_missing_stale_and_corrupt_indexes() {
-        let dir = std::env::temp_dir().join(format!("harness-index-test-{}", new_id()));
+        let dir = std::env::temp_dir().join(format!("tamale-index-test-{}", new_id()));
         let mut saved = session("a", "/proj", 10);
         save_in(&dir, &saved).unwrap();
         let index = dir.join(".index/a.json");
@@ -397,7 +397,7 @@ mod tests {
 
     #[test]
     fn index_write_failures_do_not_prevent_saving_or_listing() {
-        let dir = std::env::temp_dir().join(format!("harness-index-failure-{}", new_id()));
+        let dir = std::env::temp_dir().join(format!("tamale-index-failure-{}", new_id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(".index"), "not a directory").unwrap();
         save_in(&dir, &session("a", "/proj", 10)).unwrap();
@@ -415,7 +415,7 @@ mod perf_tests {
     #[test]
     #[ignore]
     fn perf_session_listing() {
-        let dir = std::env::temp_dir().join(format!("harness-list-perf-{}", new_id()));
+        let dir = std::env::temp_dir().join(format!("tamale-list-perf-{}", new_id()));
         let mut saved = Session {
             id: String::new(),
             cwd: "/perf-project".into(),

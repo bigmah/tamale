@@ -5,7 +5,7 @@ struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
         let root =
-            std::env::temp_dir().join(format!("harness-config-test-{}", crate::session::new_id()));
+            std::env::temp_dir().join(format!("tamale-config-test-{}", crate::session::new_id()));
         std::fs::create_dir_all(&root).unwrap();
         Self(root)
     }
@@ -32,14 +32,14 @@ fn layers_merge_fields_from_user_project_explicit_env_and_cli() {
         "[model]\nname = 'personal'\neffort = 'high'\n[ui]\nverbose = true\nmouse = false",
     );
     // A .git file also marks worktree roots. Never read config above that root.
-    fixture.write("harness.toml", "[agent]\nmax_tokens = 99");
+    fixture.write("tamale.toml", "[agent]\nmax_tokens = 99");
     fixture.write("project/.git", "gitdir: elsewhere");
     fixture.write(
-        "project/harness.toml",
+        "project/tamale.toml",
         "[model]\nname = 'project'\n[agent]\nmax_tokens = 4096",
     );
     fixture.write(
-        "project/nested/harness.toml",
+        "project/nested/tamale.toml",
         "[model]\nname = 'nested'\neffort = 'default'\n[ui]\nverbose = false",
     );
     let cwd = fixture.0.join("project/nested");
@@ -65,10 +65,10 @@ fn layers_merge_fields_from_user_project_explicit_env_and_cli() {
 
     settings
         .apply_env(|key| match key {
-            "HARNESS_MODEL" => Some("environment".into()),
-            "HARNESS_EFFORT" => Some("medium".into()),
-            "HARNESS_THINKING" => Some("on".into()),
-            "HARNESS_CONTEXT_WINDOW" => Some("300000".into()),
+            "TAMALE_MODEL" => Some("environment".into()),
+            "TAMALE_EFFORT" => Some("medium".into()),
+            "TAMALE_THINKING" => Some("on".into()),
+            "TAMALE_CONTEXT_WINDOW" => Some("300000".into()),
             _ => None,
         })
         .unwrap();
@@ -91,10 +91,10 @@ fn layers_merge_fields_from_user_project_explicit_env_and_cli() {
 #[test]
 fn nearest_project_wins_and_non_repo_discovery_stays_in_cwd() {
     let fixture = Fixture::new();
-    fixture.write("harness.toml", "[model]\nname = 'parent'");
+    fixture.write("tamale.toml", "[model]\nname = 'parent'");
     fixture.write("project/.git", "gitdir: elsewhere");
-    fixture.write("project/harness.toml", "[model]\nname = 'root'");
-    fixture.write("project/nested/harness.toml", "[model]\nname = 'nearest'");
+    fixture.write("project/tamale.toml", "[model]\nname = 'root'");
+    fixture.write("project/nested/tamale.toml", "[model]\nname = 'nearest'");
     let cwd = fixture.0.join("project/nested/deep");
     std::fs::create_dir_all(&cwd).unwrap();
     let settings = Settings::load_from(&cwd, None, None).unwrap();
@@ -165,9 +165,9 @@ fn explicit_files_are_required_and_errors_identify_the_file() {
 #[test]
 fn invalid_environment_is_reported_and_blank_optional_modes_are_ignored() {
     for (key, value) in [
-        ("HARNESS_EFFORT", "typo"),
-        ("HARNESS_THINKING", "typo"),
-        ("HARNESS_CONTEXT_WINDOW", "bad"),
+        ("TAMALE_EFFORT", "typo"),
+        ("TAMALE_THINKING", "typo"),
+        ("TAMALE_CONTEXT_WINDOW", "bad"),
     ] {
         let error = Settings::default()
             .apply_env(|name| (name == key).then(|| value.into()))
@@ -178,12 +178,12 @@ fn invalid_environment_is_reported_and_blank_optional_modes_are_ignored() {
     settings.model.effort = Some(Effort::High);
     settings.model.thinking = Thinking::Off;
     settings
-        .apply_env(|key| matches!(key, "HARNESS_EFFORT" | "HARNESS_THINKING").then(|| " ".into()))
+        .apply_env(|key| matches!(key, "TAMALE_EFFORT" | "TAMALE_THINKING").then(|| " ".into()))
         .unwrap();
     assert_eq!(settings.model.effort, Some(Effort::High));
     assert_eq!(settings.model.thinking, Thinking::Off);
     settings
-        .apply_env(|key| (key == "HARNESS_CONTEXT_WINDOW").then(|| "0".into()))
+        .apply_env(|key| (key == "TAMALE_CONTEXT_WINDOW").then(|| "0".into()))
         .unwrap();
     assert!(settings.validate().is_err());
 }

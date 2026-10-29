@@ -81,7 +81,7 @@ impl Settings {
             read_layer(&mut layers, &dir.join("config.toml"), false)?;
         }
         for dir in project_dirs(cwd) {
-            read_layer(&mut layers, &dir.join("harness.toml"), false)?;
+            read_layer(&mut layers, &dir.join("tamale.toml"), false)?;
         }
         if let Some(path) = explicit {
             read_layer(&mut layers, path, true)?;
@@ -91,20 +91,20 @@ impl Settings {
 
     /// Inject the environment lookup so tests don't mutate process-wide variables.
     pub fn apply_env(&mut self, get: impl Fn(&str) -> Option<String>) -> Result<()> {
-        if let Some(value) = get("HARNESS_MODEL") {
+        if let Some(value) = get("TAMALE_MODEL") {
             self.model.name = value;
         }
-        if let Some(value) = get("HARNESS_EFFORT").filter(|s| !s.trim().is_empty()) {
-            self.model.effort = Effort::parse_setting(&value).context("HARNESS_EFFORT")?;
+        if let Some(value) = get("TAMALE_EFFORT").filter(|s| !s.trim().is_empty()) {
+            self.model.effort = Effort::parse_setting(&value).context("TAMALE_EFFORT")?;
         }
-        if let Some(value) = get("HARNESS_THINKING").filter(|s| !s.trim().is_empty()) {
-            self.model.thinking = Thinking::parse_setting(&value).context("HARNESS_THINKING")?;
+        if let Some(value) = get("TAMALE_THINKING").filter(|s| !s.trim().is_empty()) {
+            self.model.thinking = Thinking::parse_setting(&value).context("TAMALE_THINKING")?;
         }
-        if let Some(value) = get("HARNESS_CONTEXT_WINDOW") {
+        if let Some(value) = get("TAMALE_CONTEXT_WINDOW") {
             self.model.context_window = Some(
                 value
                     .parse()
-                    .context("HARNESS_CONTEXT_WINDOW must be a positive integer")?,
+                    .context("TAMALE_CONTEXT_WINDOW must be a positive integer")?,
             );
         }
         Ok(())
@@ -152,7 +152,7 @@ pub fn user_config_dir() -> Option<PathBuf> {
     std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-        .map(|dir| dir.join("harness"))
+        .map(|dir| dir.join("tamale"))
 }
 
 /// Project layers run from the enclosing git root down to cwd. Outside a

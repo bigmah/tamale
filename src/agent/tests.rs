@@ -27,7 +27,7 @@ impl CompletionModel for Model {
         &self,
         _: CompletionRequest,
     ) -> Result<CompletionResponse, CompletionError> {
-        panic!("the harness should stream requests")
+        panic!("tamale should stream requests")
     }
 
     async fn stream(
@@ -670,7 +670,7 @@ impl CompletionModel for FailingModel {
         &self,
         _: CompletionRequest,
     ) -> Result<CompletionResponse, CompletionError> {
-        panic!("the harness should stream requests")
+        panic!("tamale should stream requests")
     }
 
     async fn stream(

@@ -55,7 +55,7 @@ Follow them; they take precedence over the default guidelines above.\n",
 }
 
 /// Instruction files to include in the system prompt, most general first: the global
-/// `~/.config/harness/AGENTS.md`, then `AGENTS.md`/`CLAUDE.md` from the git root down to `cwd`.
+/// `~/.config/tamale/AGENTS.md`, then `AGENTS.md`/`CLAUDE.md` from the git root down to `cwd`.
 pub fn instruction_files(cwd: &Path) -> Vec<(PathBuf, String)> {
     let mut candidates = Vec::new();
     if let Some(dir) = crate::config::user_config_dir() {

@@ -8,7 +8,7 @@ impl Fixture {
     fn new() -> Self {
         static ID: AtomicUsize = AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
-            "harness-search-{}-{}",
+            "tamale-search-{}-{}",
             std::process::id(),
             ID.fetch_add(1, Ordering::Relaxed)
         ));

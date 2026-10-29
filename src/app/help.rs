@@ -48,7 +48,7 @@ const COMMANDS: &[(&str, &str)] = &[
         "Pick a saved session from this directory to continue (or resume the nth / by id)",
     ),
     ("/clear", "Clear the conversation and start fresh"),
-    ("/quit, /exit", "Quit harness"),
+    ("/quit, /exit", "Quit tamale"),
 ];
 
 const KEYS: &[(&str, &[(&str, &str)])] = &[
@@ -179,15 +179,15 @@ pub(super) fn help_lines() -> Vec<Line<'static>> {
             ),
             (
                 "--model <id>",
-                "Anthropic model to use (or set HARNESS_MODEL)",
+                "Anthropic model to use (or set TAMALE_MODEL)",
             ),
             (
                 "--effort <level>",
-                "Effort level: low|medium|high|xhigh|max (or set HARNESS_EFFORT)",
+                "Effort level: low|medium|high|xhigh|max (or set TAMALE_EFFORT)",
             ),
             (
                 "--thinking <mode>",
-                "Thinking: adaptive|off (default: adaptive; or set HARNESS_THINKING)",
+                "Thinking: adaptive|off (default: adaptive; or set TAMALE_THINKING)",
             ),
             (
                 "-c, --continue",

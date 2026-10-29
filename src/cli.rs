@@ -10,7 +10,7 @@ use crate::config::Settings;
 #[cfg(test)]
 mod tests;
 
-pub const HELP: &str = "usage: harness [--config <path>] [--model <id>] [--effort <level>] [--thinking <mode>] [-c | -r] [-p <prompt>]
+pub const HELP: &str = "usage: tamale [--config <path>] [--model <id>] [--effort <level>] [--thinking <mode>] [-c | -r] [-p <prompt>]
 
 --config <path>    Add a TOML settings file after user and project settings.
 -m, --model <id>  Anthropic model ID.
@@ -21,8 +21,8 @@ pub const HELP: &str = "usage: harness [--config <path>] [--model <id>] [--effor
 -p, --print       Run one prompt non-interactively and exit.
 -h, --help        Show this help.
 
-Settings: built-in defaults < ~/.config/harness/config.toml < project harness.toml
-          < --config < HARNESS_* environment variables < CLI flags.
+Settings: built-in defaults < ~/.config/tamale/config.toml < project tamale.toml
+          < --config < TAMALE_* environment variables < CLI flags.
 Requires ANTHROPIC_API_KEY. See config/default.toml for all settings.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -95,9 +95,9 @@ fn thinking_command_toggles_and_accepts_explicit_modes() {
 
 #[tokio::test]
 async fn sessions_are_saved_and_resumed() {
-    let dir = std::env::temp_dir().join(format!("harness-resume-test-{}", session::new_id()));
+    let dir = std::env::temp_dir().join(format!("tamale-resume-test-{}", session::new_id()));
     // Only this test saves sessions (the others never have history).
-    unsafe { std::env::set_var("HARNESS_SESSIONS_DIR", &dir) };
+    unsafe { std::env::set_var("TAMALE_SESSIONS_DIR", &dir) };
     let client = anthropic::Client::new("test-key").unwrap();
     let (mut app, _rx) = App::new_with_channel(client, test_settings("claude-sonnet-4-6"));
     app.command("/resume");

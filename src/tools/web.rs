@@ -55,7 +55,7 @@ fn client(max_redirects: usize) -> Result<Client> {
         return Ok(client.clone());
     }
     let client = Client::builder()
-        .user_agent(concat!("harness/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("tamale/", env!("CARGO_PKG_VERSION")))
         .timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::limited(max_redirects))

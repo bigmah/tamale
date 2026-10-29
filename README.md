@@ -1,4 +1,4 @@
-# harness
+# tamale
 
 A small Claude Code–style coding agent for the terminal, written in pure Rust with
 [rig](https://rig.rs) (Anthropic API only) and [ratatui](https://ratatui.rs).
@@ -44,11 +44,11 @@ mouse = true
 Settings are merged field by field, in this order (later values win):
 
 1. Built-in `config/default.toml`
-2. `~/.config/harness/config.toml` (or `$XDG_CONFIG_HOME/harness/config.toml`)
-3. `harness.toml` in each directory from the enclosing git root down to the working
+2. `~/.config/tamale/config.toml` (or `$XDG_CONFIG_HOME/tamale/config.toml`)
+3. `tamale.toml` in each directory from the enclosing git root down to the working
    directory; outside a repository, only the working directory is checked
 4. A file passed with `--config <path>` (relative to the working directory)
-5. The `HARNESS_*` environment variables below
+5. The `TAMALE_*` environment variables below
 6. `--model`, `--effort`, and `--thinking` flags
 
 All fields are optional in override files. `effort = "default"` resets an inherited
@@ -59,12 +59,12 @@ The same settings apply to interactive and `-p` runs, tool follow-ups, retries a
 manual/automatic compaction. Settings load at startup; slash commands change the
 current session's settings without rewriting TOML files.
 
-`HARNESS_MODEL` sets the default model (otherwise `claude-opus-5-5`).
-`HARNESS_EFFORT` sets the default effort level (otherwise the API default).
-`HARNESS_THINKING` sets the thinking mode (`adaptive` or `on`, the default; `off` to disable).
-`HARNESS_CONTEXT_WINDOW` overrides the context window size (default: 1M tokens for Claude 5, Opus 4.6+ and Sonnet 4.6; 200k for older models).
+`TAMALE_MODEL` sets the default model (otherwise `claude-opus-5-5`).
+`TAMALE_EFFORT` sets the default effort level (otherwise the API default).
+`TAMALE_THINKING` sets the thinking mode (`adaptive` or `on`, the default; `off` to disable).
+`TAMALE_CONTEXT_WINDOW` overrides the context window size (default: 1M tokens for Claude 5, Opus 4.6+ and Sonnet 4.6; 200k for older models).
 API keys (`ANTHROPIC_API_KEY`, `BRAVE_SEARCH_API_KEY`) and storage paths
-(`HARNESS_SESSIONS_DIR`, XDG directories) continue to use environment variables.
+(`TAMALE_SESSIONS_DIR`, XDG directories) continue to use environment variables.
 
 Adaptive thinking is **on by default**: Claude decides when and how much to reason,
 with `--effort` or `/effort` controlling thoroughness. The setting applies to tool
@@ -99,8 +99,8 @@ thinking (e.g. Haiku 4.5). See [Anthropic's thinking documentation](https://plat
 
 ## Sessions
 
-Every interactive conversation is saved as JSON in `~/.local/share/harness/sessions/`
-(`$XDG_DATA_HOME/harness/sessions`, or `HARNESS_SESSIONS_DIR`) after each prompt, tool step
+Every interactive conversation is saved as JSON in `~/.local/share/tamale/sessions/`
+(`$XDG_DATA_HOME/tamale/sessions`, or `TAMALE_SESSIONS_DIR`) after each prompt, tool step
 and on exit. It includes the full model history (so the agent picks up with all context) and
 the visible transcript.
 
@@ -142,7 +142,7 @@ process the transcript once.
 
 These files are appended to the system prompt if present (duplicates skipped):
 
-1. `~/.config/harness/AGENTS.md` (or `$XDG_CONFIG_HOME/harness/AGENTS.md`)
+1. `~/.config/tamale/AGENTS.md` (or `$XDG_CONFIG_HOME/tamale/AGENTS.md`)
 2. `AGENTS.md` and `CLAUDE.md` in every directory from the git root down to the working directory
 
 ## Tools

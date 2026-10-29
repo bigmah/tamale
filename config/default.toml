@@ -1,5 +1,5 @@
-# Built into the binary. Copy any sections to ~/.config/harness/config.toml
-# for personal defaults, or harness.toml in a project. All fields are optional
+# Built into the binary. Copy any sections to ~/.config/tamale/config.toml
+# for personal defaults, or tamale.toml in a project. All fields are optional
 # in those files; omitted fields keep the value from the previous layer.
 
 [model]
