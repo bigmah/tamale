@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use crossterm::event::{
-    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EventStream,
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    EventStream,
 };
 use crossterm::execute;
 use futures::StreamExt;
@@ -87,7 +88,7 @@ async fn main() -> Result<()> {
         hook(info);
     }));
     let mut terminal = ratatui::init();
-    execute!(std::io::stdout(), EnableBracketedPaste, DisableMouseCapture)?;
+    execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture)?;
     let (mut app, rx) = App::new_with_channel(client, model_name, reasoning);
     match resume {
         Some(Resume::Latest) => match session::list(Some(&std::env::current_dir()?)).first() {

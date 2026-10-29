@@ -63,7 +63,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ),
     (
         "/mouse [on|off]",
-        "Toggle mouse wheel scrolling (off by default to allow native text selection)",
+        "Toggle mouse wheel scrolling (on by default; hold Shift/Option to select text)",
     ),
     (
         "/copy [all]",
@@ -114,7 +114,7 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+D", "Quit (when input is empty)"),
             (
                 "Select + terminal copy (Cmd+C)",
-                "Copy selected text; /mouse off enables native selection",
+                "Hold Shift/Option while dragging to select, then copy normally",
             ),
             ("Ctrl+Shift+C", "Copy the latest assistant reply"),
         ],
@@ -315,7 +315,7 @@ impl App {
             session_created: session::now(),
             save_error_shown: false,
             verbose: false,
-            mouse: false,
+            mouse: true,
             history: Vec::new(),
             entries: vec![Entry::Info(
                 "Welcome! Type a request and press Enter. /help for commands.".into(),
@@ -1973,7 +1973,6 @@ mod tests {
         let client = anthropic::Client::new("test-key").unwrap();
         let (mut app, _rx) =
             App::new_with_channel(client, "test-model".into(), agent::Reasoning::default());
-        assert!(!app.mouse, "native text selection is enabled by default");
         app.input = "before after".into();
         app.cursor = 7;
         app.on_event(Event::Paste("café\r\n世界\r/paste\n".into()));
@@ -2127,6 +2126,7 @@ mod tests {
             "claude-sonnet-4-6".into(),
             agent::Reasoning::default(),
         );
+        assert!(app.mouse, "wheel scrolling must work without /mouse on");
         let wheel = |kind| {
             Event::Mouse(MouseEvent {
                 kind,
@@ -2140,6 +2140,18 @@ mod tests {
         assert_eq!(app.scroll_back, 2 * WHEEL_LINES);
         app.on_event(wheel(MouseEventKind::ScrollDown));
         assert_eq!(app.scroll_back, WHEEL_LINES);
+        // Pasting must leave the viewport alone and never submit the prompt; copying
+        // must still return the full reply while scrolled up.
+        app.entries
+            .push(Entry::Assistant("A reply worth copying".into()));
+        app.on_event(Event::Paste("first line\r\nsecond line".into()));
+        assert_eq!(app.input, "first line\nsecond line");
+        assert_eq!(app.scroll_back, WHEEL_LINES);
+        assert!(app.history.is_empty());
+        assert_eq!(
+            app.copy_text(false).as_deref(),
+            Some("A reply worth copying")
+        );
         app.on_event(wheel(MouseEventKind::ScrollDown));
         app.on_event(wheel(MouseEventKind::ScrollDown));
         assert_eq!(app.scroll_back, 0);

@@ -118,16 +118,19 @@ The agent can modify files and run any shell command in the working directory.
 - `Enter` send · `Alt/Shift+Enter` or `Ctrl+J` newline
 - `Esc` interrupt the agent
 - `PgUp/PgDn`, `Shift+↑/↓`, mouse wheel scroll (a scrollbar and "↓ N more lines" badge show while scrolled up)
-- Select text normally and use your terminal's copy shortcut (`Cmd+C` on macOS,
-  usually `Ctrl+Shift+C` on Linux). Mouse capture is **off by default** so selection works.
+- Mouse wheel scrolling is **on by default**, alongside copy/paste. Hold your
+  terminal's mouse override modifier while dragging to select text (usually Shift;
+  Option in iTerm2), then use its copy shortcut (`Cmd+C` on macOS, usually
+  `Ctrl+Shift+C` on Linux). `/copy` copies the latest reply without selecting it.
 - Paste with your terminal's shortcut (`Cmd+V` on macOS, usually `Ctrl+Shift+V` on Linux),
   `Ctrl+V`, `Shift+Insert`, or `/paste`. Multi-line text is inserted without sending;
   press Enter when ready.
 - `/copy` copies the latest assistant reply, preserving Markdown and code. `/copy all`
   copies all user and assistant messages. `Ctrl+Shift+C` also copies the latest reply
   if your terminal forwards that shortcut to the app.
-- `/mouse [on|off]` toggles mouse capture for wheel scrolling. While on, hold Shift
-  (Option in iTerm2/Terminal.app) to select text; `/mouse off` restores native selection.
+- `/mouse [on|off]` toggles mouse capture for wheel scrolling. `/mouse off` allows
+  selection without a modifier; `/mouse on` restores wheel scrolling. Clipboard
+  commands and bracketed paste work in either mode.
 - `Ctrl+C` clear input / interrupt / quit
 - `/verbose [on|off]` toggles verbose output. Off by default: each step shows as one line
   (its description) with no output, and only the last 5 steps of a run are shown. Verbose shows
