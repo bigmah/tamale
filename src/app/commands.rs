@@ -7,6 +7,50 @@ use crate::session::Entry;
 use crate::{agent, session};
 
 impl App {
+    /// With no argument, show the current scope. A running turn keeps its snapshot.
+    pub(super) fn add_dir(&mut self, arg: &str) {
+        if arg.is_empty() {
+            let mut scope = format!("Working directory: {}", self.workspace.cwd.display());
+            if self.workspace.additional_dirs.is_empty() {
+                scope.push_str("\nNo additional directories. Usage: /add-dir <path>");
+            } else {
+                scope.push_str("\nAdditional directories:");
+                for dir in &self.workspace.additional_dirs {
+                    scope.push_str(&format!("\n  {}", dir.display()));
+                }
+            }
+            self.entries.push(Entry::Info(scope));
+            return;
+        }
+        // The remainder is one path, so spaces work with or without enclosing quotes.
+        let path = arg
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .or_else(|| arg.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+            .unwrap_or(arg);
+        match self.workspace.add_dir(std::path::Path::new(path)) {
+            Ok(true) => {
+                let dir = self.workspace.additional_dirs.last().unwrap();
+                let note = if self.is_running() {
+                    " (takes effect on your next message)"
+                } else {
+                    ""
+                };
+                self.entries.push(Entry::Info(format!(
+                    "Added directory to scope: {}{note}.",
+                    dir.display()
+                )));
+                self.save_session();
+            }
+            Ok(false) => self.entries.push(Entry::Info(format!(
+                "Directory is already in scope: {path}"
+            ))),
+            Err(error) => self
+                .entries
+                .push(Entry::Error(format!("Couldn't add directory: {error:#}"))),
+        }
+    }
+
     pub(super) fn open_picker(&mut self) {
         let mut picker = ModelPicker::default();
         if let Some(models) = &self.models {
@@ -299,6 +343,7 @@ impl App {
                     .push(Entry::Info("Conversation cleared.".into()));
             }
             "/resume" | "/continue" => self.resume_command(cmd.split_whitespace().nth(1)),
+            "/add-dir" => self.add_dir(cmd["/add-dir".len()..].trim()),
             "/help" => self.help_scroll = Some(0),
             "/thinking" => self.set_thinking(cmd.split_whitespace().nth(1)),
             "/verbose" => self.set_verbose(cmd.split_whitespace().nth(1)),

@@ -5,6 +5,7 @@ mod clipboard;
 mod config;
 mod session;
 mod tools;
+mod workspace;
 
 use std::time::Duration;
 
@@ -34,7 +35,11 @@ fn main() -> Result<()> {
 }
 
 async fn start(cli: cli::Cli) -> Result<()> {
-    let mut settings = config::Settings::load(&std::env::current_dir()?, cli.config.as_deref())?;
+    let mut workspace = workspace::Workspace::current()?;
+    for dir in &cli.additional_dirs {
+        workspace.add_dir(dir)?;
+    }
+    let mut settings = config::Settings::load(&workspace.cwd, cli.config.as_deref())?;
     settings.apply_env(|name| std::env::var(name).ok())?;
     cli.apply(&mut settings);
     settings.validate()?;
@@ -48,7 +53,7 @@ async fn start(cli: cli::Cli) -> Result<()> {
         let model = client
             .completion_model(settings.model.name)
             .with_prompt_caching();
-        return print_mode(model, config, prompt).await;
+        return print_mode(model, config, workspace, prompt).await;
     }
 
     // Restore terminal input modes even if we panic.
@@ -66,7 +71,7 @@ async fn start(cli: cli::Cli) -> Result<()> {
     if settings.ui.mouse {
         execute!(std::io::stdout(), EnableMouseCapture)?;
     }
-    let (mut app, rx) = App::new_with_channel(client, settings);
+    let (mut app, rx) = App::new_with_channel(client, settings, workspace);
     match cli.resume {
         Some(cli::Resume::Latest) => match session::list(Some(&std::env::current_dir()?)).first() {
             Some(latest) => app.resume(&latest.id),
@@ -85,7 +90,12 @@ async fn start(cli: cli::Cli) -> Result<()> {
     result
 }
 
-async fn print_mode<M>(model: M, config: agent::TurnConfig, prompt: String) -> Result<()>
+async fn print_mode<M>(
+    model: M,
+    config: agent::TurnConfig,
+    workspace: workspace::Workspace,
+    prompt: String,
+) -> Result<()>
 where
     M: rig_core::completion::CompletionModel + Clone + Send + Sync + 'static,
 {
@@ -94,7 +104,7 @@ where
 
     let (tx, mut rx) = mpsc::unbounded_channel();
     let history = vec![rig_core::completion::Message::user(prompt)];
-    tokio::spawn(agent::run(model, history, config, tx));
+    tokio::spawn(agent::run(model, history, config, workspace, tx));
 
     let mut failed = false;
     while let Some(ev) = rx.recv().await {

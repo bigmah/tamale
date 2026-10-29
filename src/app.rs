@@ -19,6 +19,7 @@ use tokio::task::JoinHandle;
 use crate::agent::{self, AgentEvent};
 use crate::config::Settings;
 use crate::session::{self, Entry};
+use crate::workspace::Workspace;
 use view::fmt_tokens;
 
 const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -119,7 +120,9 @@ pub struct App {
     history: Vec<Message>,
     entries: Vec<Entry>,
     transcript: transcript::Transcript,
-    cwd: std::path::PathBuf,
+    workspace: Workspace,
+    /// CLI directories also apply when choosing a saved session later.
+    startup_dirs: Vec<std::path::PathBuf>,
     session_writer: Option<session::Writer>,
     input: String,
     cursor: usize,
@@ -150,14 +153,16 @@ impl App {
     pub fn new_with_channel(
         client: anthropic::Client,
         settings: Settings,
+        workspace: Workspace,
     ) -> (Self, mpsc::UnboundedReceiver<AppEvent>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        (Self::new(client, settings, tx), rx)
+        (Self::new(client, settings, workspace, tx), rx)
     }
 
     fn new(
         client: anthropic::Client,
         settings: Settings,
+        workspace: Workspace,
         tx: mpsc::UnboundedSender<AppEvent>,
     ) -> Self {
         Self {
@@ -176,7 +181,8 @@ impl App {
                 "Welcome! Type a request and press Enter. /help for commands.".into(),
             )],
             transcript: transcript::Transcript::default(),
-            cwd: std::env::current_dir().unwrap_or_default(),
+            startup_dirs: workspace.additional_dirs.clone(),
+            workspace,
             session_writer: None,
             input: String::new(),
             cursor: 0,
@@ -236,6 +242,7 @@ impl App {
             self.model(),
             self.history.clone(),
             config,
+            self.workspace.clone(),
             atx,
         )));
     }
@@ -258,6 +265,7 @@ impl App {
             self.history.clone(),
             instructions,
             self.settings.turn_config(self.context_tokens),
+            self.workspace.clone(),
             atx,
         )));
     }

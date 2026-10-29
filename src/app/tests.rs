@@ -6,7 +6,11 @@ use ratatui::text::Line;
 #[test]
 fn paste_inserts_multiline_unicode_at_cursor_without_submitting() {
     let client = anthropic::Client::new("test-key").unwrap();
-    let (mut app, _rx) = App::new_with_channel(client, test_settings("test-model"));
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
     app.input = "before after".into();
     app.cursor = 7;
     app.on_event(Event::Paste("café\r\n世界\r/paste\n".into()));
@@ -26,7 +30,11 @@ fn paste_inserts_multiline_unicode_at_cursor_without_submitting() {
 #[test]
 fn paste_targets_picker_filter_and_ignores_help() {
     let client = anthropic::Client::new("test-key").unwrap();
-    let (mut app, _rx) = App::new_with_channel(client, test_settings("test-model"));
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
     app.picker = Some(ModelPicker {
         filter: "claude-".into(),
         selected: 3,
@@ -59,7 +67,11 @@ fn paste_targets_picker_filter_and_ignores_help() {
 #[test]
 fn copy_preserves_reply_text_and_selects_conversation_messages() {
     let client = anthropic::Client::new("test-key").unwrap();
-    let (mut app, _rx) = App::new_with_channel(client, test_settings("test-model"));
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
     assert_eq!(app.copy_text(false), None);
     assert_eq!(app.copy_text(true), None);
     app.entries.push(Entry::User("show code".into()));
@@ -78,7 +90,11 @@ fn copy_preserves_reply_text_and_selects_conversation_messages() {
 #[test]
 fn thinking_command_toggles_and_accepts_explicit_modes() {
     let client = anthropic::Client::new("test-key").unwrap();
-    let (mut app, _rx) = App::new_with_channel(client, test_settings("claude-sonnet-4-6"));
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("claude-sonnet-4-6"),
+        Workspace::current().unwrap(),
+    );
     assert_eq!(app.settings.model.thinking, agent::Thinking::Adaptive);
     app.command("/thinking");
     assert_eq!(app.settings.model.thinking, agent::Thinking::Off);
@@ -94,12 +110,61 @@ fn thinking_command_toggles_and_accepts_explicit_modes() {
 }
 
 #[tokio::test]
+async fn add_dir_lists_scope_and_accepts_spaces_and_quotes_during_a_turn() {
+    let root = std::env::temp_dir().join(format!("tamale-add-dir-{}", session::new_id()));
+    std::fs::create_dir_all(root.join("project")).unwrap();
+    std::fs::create_dir_all(root.join("shared files")).unwrap();
+    std::fs::create_dir_all(root.join("other files")).unwrap();
+    let workspace = Workspace {
+        cwd: root.join("project"),
+        additional_dirs: Vec::new(),
+    };
+    let client = anthropic::Client::new("test-key").unwrap();
+    let (mut app, _rx) = App::new_with_channel(client, test_settings("test-model"), workspace);
+    app.command("/add-dir");
+    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("Usage: /add-dir")));
+    app.command("/add-dir ../shared files");
+    assert_eq!(
+        app.workspace.additional_dirs,
+        [root.join("shared files").canonicalize().unwrap()]
+    );
+    app.command("/add-dir \"../shared files\"");
+    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("already in scope")));
+    assert_eq!(app.workspace.additional_dirs.len(), 1);
+    app.command("/add-dir ../missing");
+    assert!(matches!(app.entries.last(), Some(Entry::Error(_))));
+    assert_eq!(app.workspace.additional_dirs.len(), 1);
+
+    let in_flight = app.workspace.clone();
+    app.task = Some(tokio::spawn(std::future::pending()));
+    app.command("/add-dir '../other files'");
+    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("next message")));
+    assert_eq!(in_flight.additional_dirs.len(), 1);
+    assert_eq!(app.workspace.additional_dirs.len(), 2);
+    app.interrupt();
+    app.command("/clear");
+    assert_eq!(app.workspace.additional_dirs.len(), 2);
+    app.command("/add-dir");
+    assert!(
+        matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("shared files") && t.contains("other files"))
+    );
+    assert_eq!(app.workspace.cwd, root.join("project"));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn sessions_are_saved_and_resumed() {
     let dir = std::env::temp_dir().join(format!("tamale-resume-test-{}", session::new_id()));
+    for name in ["startup", "shared", "later", "removed"] {
+        std::fs::create_dir_all(dir.join(name)).unwrap();
+    }
     // Only this test saves sessions (the others never have history).
     unsafe { std::env::set_var("TAMALE_SESSIONS_DIR", &dir) };
     let client = anthropic::Client::new("test-key").unwrap();
-    let (mut app, _rx) = App::new_with_channel(client, test_settings("claude-sonnet-4-6"));
+    let mut workspace = Workspace::current().unwrap();
+    workspace.add_dir(&dir.join("startup")).unwrap();
+    let (mut app, _rx) =
+        App::new_with_channel(client, test_settings("claude-sonnet-4-6"), workspace);
     app.command("/resume");
     assert!(app.resume_picker.is_none());
 
@@ -109,10 +174,15 @@ async fn sessions_are_saved_and_resumed() {
     app.context_tokens = 1234;
     app.save_session();
     let first = app.session_id.clone();
+    // Adding a directory after a prompt immediately updates the saved scope.
+    app.command(&format!("/add-dir {}", dir.join("shared").display()));
+    app.command(&format!("/add-dir {}", dir.join("removed").display()));
+    std::fs::remove_dir(dir.join("removed")).unwrap();
 
     app.command("/clear");
     assert_ne!(app.session_id, first);
     assert!(app.history.is_empty());
+    app.command(&format!("/add-dir {}", dir.join("later").display()));
 
     let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
     app.command("/resume");
@@ -124,6 +194,14 @@ async fn sessions_are_saved_and_resumed() {
     assert_eq!(app.session_id, first);
     assert_eq!(app.history.len(), 2);
     assert_eq!(app.context_tokens, 1234);
+    assert_eq!(
+        app.workspace.additional_dirs,
+        [
+            dir.join("startup").canonicalize().unwrap(),
+            dir.join("shared").canonicalize().unwrap()
+        ]
+    );
+    assert!(app.entries.iter().any(|e| matches!(e, Entry::Error(t) if t.contains("Couldn't restore scoped directory") && t.contains("removed"))));
     assert!(
         app.entries
             .iter()
@@ -149,6 +227,10 @@ async fn sessions_are_saved_and_resumed() {
     }
     app.finish_saves().await;
     assert_eq!(session::load(&first).unwrap().history.len(), 2);
+    assert_eq!(
+        session::load(&first).unwrap().additional_dirs,
+        app.workspace.additional_dirs
+    );
     let latest = session::load(&second).unwrap();
     assert_eq!(latest.context_tokens, 99);
     assert_eq!(latest.history, app.history);
@@ -159,7 +241,11 @@ async fn sessions_are_saved_and_resumed() {
 fn mouse_wheel_scrolls_chat_help_and_pickers() {
     use crossterm::event::MouseEvent;
     let client = anthropic::Client::new("test-key").unwrap();
-    let (mut app, _rx) = App::new_with_channel(client, test_settings("claude-sonnet-4-6"));
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("claude-sonnet-4-6"),
+        Workspace::current().unwrap(),
+    );
     assert!(
         app.settings.ui.mouse,
         "wheel scrolling must work without /mouse on"
@@ -210,7 +296,11 @@ fn mouse_wheel_scrolls_chat_help_and_pickers() {
 #[test]
 fn effort_command_opens_picker_and_arrows_select() {
     let client = anthropic::Client::new("test-key").unwrap();
-    let (mut app, _rx) = App::new_with_channel(client, test_settings("claude-sonnet-4-6"));
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("claude-sonnet-4-6"),
+        Workspace::current().unwrap(),
+    );
     let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
     app.command("/effort");
     assert_eq!(app.effort_picker, Some(0));
@@ -239,7 +329,11 @@ fn effort_command_opens_picker_and_arrows_select() {
 #[test]
 fn quiet_mode_collapses_tool_calls_and_verbose_toggles() {
     let client = anthropic::Client::new("test-key").unwrap();
-    let (mut app, _rx) = App::new_with_channel(client, test_settings("claude-sonnet-4-6"));
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("claude-sonnet-4-6"),
+        Workspace::current().unwrap(),
+    );
     assert!(!app.settings.ui.verbose);
     let tool = |n: usize| Entry::Tool {
         name: "bash".into(),
@@ -294,7 +388,7 @@ fn configured_settings_reach_status_and_runtime_commands() {
     settings.model.effort = Some(agent::Effort::Low);
     settings.ui.mouse = false;
     settings.ui.verbose = true;
-    let (mut app, _rx) = App::new_with_channel(client, settings);
+    let (mut app, _rx) = App::new_with_channel(client, settings, Workspace::current().unwrap());
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 24)).unwrap();
     terminal.draw(|frame| app.draw(frame)).unwrap();
     let buffer = terminal.backend().buffer();
@@ -320,7 +414,11 @@ fn configured_settings_reach_status_and_runtime_commands() {
 async fn perf_transcript() {
     use std::time::Instant;
     let client = anthropic::Client::new("test-key").unwrap();
-    let (mut app, _rx) = App::new_with_channel(client, test_settings("test-model"));
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
     for i in 0..1000 {
         app.entries.push(Entry::User(format!(
             "Request {i}: inspect the implementation"
@@ -371,7 +469,11 @@ async fn perf_transcript() {
 #[tokio::test]
 async fn continuation_keeps_completed_text_when_the_next_request_retries() {
     let client = anthropic::Client::new("test-key").unwrap();
-    let (mut app, _rx) = App::new_with_channel(client, test_settings("test-model"));
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
     app.task = Some(tokio::spawn(std::future::pending()));
     app.on_agent(
         app.turn,
@@ -407,7 +509,11 @@ async fn continuation_keeps_completed_text_when_the_next_request_retries() {
 #[tokio::test]
 async fn agent_events_refresh_cached_text_tools_retries_and_clear() {
     let client = anthropic::Client::new("test-key").unwrap();
-    let (mut app, _rx) = App::new_with_channel(client, test_settings("test-model"));
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
     app.task = Some(tokio::spawn(std::future::pending()));
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
     let mut screen = |app: &mut App| {

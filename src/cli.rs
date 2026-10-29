@@ -10,8 +10,9 @@ use crate::config::Settings;
 #[cfg(test)]
 mod tests;
 
-pub const HELP: &str = "usage: tamale [--config <path>] [--model <id>] [--effort <level>] [--thinking <mode>] [-c | -r] [-p <prompt>]
+pub const HELP: &str = "usage: tamale [--add-dir <path>] [--config <path>] [--model <id>] [--effort <level>] [--thinking <mode>] [-c | -r] [-p <prompt>]
 
+--add-dir <path>   Include another directory in the agent's scope (repeatable).
 --config <path>    Add a TOML settings file after user and project settings.
 -m, --model <id>  Anthropic model ID.
 -e, --effort      low, medium, high, xhigh, max, or default (API decides).
@@ -33,6 +34,7 @@ pub enum Resume {
 
 #[derive(Default, Debug)]
 pub struct Cli {
+    pub additional_dirs: Vec<PathBuf>,
     pub config: Option<PathBuf>,
     pub print_prompt: Option<String>,
     pub resume: Option<Resume>,
@@ -49,6 +51,9 @@ impl Cli {
         let mut cli = Self::default();
         while let Some(arg) = args.next() {
             match arg.as_str() {
+                "--add-dir" => cli
+                    .additional_dirs
+                    .push(args.next().context("--add-dir needs a path")?.into()),
                 "--config" => {
                     cli.config = Some(args.next().context("--config needs a path")?.into())
                 }

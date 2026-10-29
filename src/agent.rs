@@ -15,6 +15,7 @@ use rig_core::completion::{
 };
 use tokio::sync::mpsc;
 
+use crate::workspace::Workspace;
 use crate::{config::AgentSettings, tools};
 pub use models::{context_size, cost};
 use prompt::{COMPACT_PROMPT, system_prompt};
@@ -80,11 +81,12 @@ pub async fn run<M>(
     model: M,
     mut history: Vec<Message>,
     config: TurnConfig,
+    workspace: Workspace,
     tx: mpsc::UnboundedSender<AgentEvent>,
 ) where
     M: CompletionModel + Clone,
 {
-    if let Err(e) = run_inner(model, &mut history, config, &tx).await {
+    if let Err(e) = run_inner(model, &mut history, config, &workspace, &tx).await {
         let _ = tx.send(AgentEvent::Error(format!("{e:#}")));
     }
     let _ = tx.send(AgentEvent::Done);
@@ -96,6 +98,7 @@ pub async fn compact<M>(
     history: Vec<Message>,
     instructions: Option<String>,
     config: TurnConfig,
+    workspace: Workspace,
     tx: mpsc::UnboundedSender<AgentEvent>,
 ) where
     M: CompletionModel + Clone,
@@ -106,7 +109,7 @@ pub async fn compact<M>(
         }
         let history = compact_history(
             &model,
-            &system_prompt(),
+            &system_prompt(&workspace),
             &tools::definitions(),
             &history,
             instructions.as_deref(),
@@ -128,12 +131,13 @@ async fn run_inner<M>(
     model: M,
     history: &mut Vec<Message>,
     mut config: TurnConfig,
+    workspace: &Workspace,
     tx: &mpsc::UnboundedSender<AgentEvent>,
 ) -> anyhow::Result<()>
 where
     M: CompletionModel + Clone,
 {
-    let preamble = system_prompt();
+    let preamble = system_prompt(workspace);
     let tool_defs = tools::definitions();
     let mut force_compact = false;
     let mut empty_responses = 0;

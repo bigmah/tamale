@@ -360,11 +360,18 @@ impl App {
     }
 
     fn draw_status(&self, frame: &mut Frame, area: Rect) {
-        let cwd = self.cwd.display().to_string();
-        let cwd_line = Line::from(vec![
+        let cwd = self.workspace.cwd.display().to_string();
+        let mut cwd_spans = vec![
             Span::from(" cwd: ").fg(Color::DarkGray),
             Span::from(cwd).fg(Color::Cyan),
-        ]);
+        ];
+        if !self.workspace.additional_dirs.is_empty() {
+            cwd_spans.push(
+                Span::from(format!(" +{} dirs", self.workspace.additional_dirs.len()))
+                    .fg(Color::DarkGray),
+            );
+        }
+        let cwd_line = Line::from(cwd_spans);
         let hint = if self.picker.is_some() || self.resume_picker.is_some() {
             "type to filter · ↑/↓ move · enter select · esc cancel"
         } else if self.effort_picker.is_some() {

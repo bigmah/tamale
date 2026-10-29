@@ -33,6 +33,9 @@ pub struct Session {
     pub id: String,
     /// Working directory the session was started in.
     pub cwd: PathBuf,
+    /// Extra task directories. Older sessions used only cwd.
+    #[serde(default)]
+    pub additional_dirs: Vec<PathBuf>,
     /// Unix seconds.
     pub created: u64,
     pub updated: u64,
@@ -319,6 +322,7 @@ mod tests {
         Session {
             id: id.into(),
             cwd: cwd.into(),
+            additional_dirs: Vec::new(),
             created: updated,
             updated,
             model: "claude-test".into(),
@@ -371,6 +375,18 @@ mod tests {
     }
 
     #[test]
+    fn additional_directories_round_trip_and_old_sessions_default_to_empty() {
+        let mut saved = session("a", "/proj", 10);
+        saved.additional_dirs = vec![PathBuf::from("/shared"), PathBuf::from("/other project")];
+        let mut json = serde_json::to_value(&saved).unwrap();
+        let loaded: Session = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(loaded.additional_dirs, saved.additional_dirs);
+        json.as_object_mut().unwrap().remove("additional_dirs");
+        let legacy: Session = serde_json::from_value(json).unwrap();
+        assert!(legacy.additional_dirs.is_empty());
+    }
+
+    #[test]
     fn listing_rebuilds_missing_stale_and_corrupt_indexes() {
         let dir = std::env::temp_dir().join(format!("tamale-index-test-{}", new_id()));
         let mut saved = session("a", "/proj", 10);
@@ -419,6 +435,7 @@ mod perf_tests {
         let mut saved = Session {
             id: String::new(),
             cwd: "/perf-project".into(),
+            additional_dirs: Vec::new(),
             created: 1,
             updated: 1,
             model: "test".into(),

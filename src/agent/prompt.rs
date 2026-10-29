@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use crate::workspace::Workspace;
+
 /// Max bytes read from one instructions file, truncated at a UTF-8 boundary.
 const MAX_INSTRUCTIONS_CHARS: usize = 20_000;
 
@@ -14,8 +16,7 @@ the work without the original messages. Include:\n\
 Be specific (exact paths, names, snippets where essential) but concise. \
 Respond with the summary only.";
 
-pub fn system_prompt() -> String {
-    let cwd = std::env::current_dir().unwrap_or_default();
+pub fn system_prompt(workspace: &Workspace) -> String {
     let mut prompt = format!(
         "You are a coding agent running in the user's terminal. You help with software \
 engineering tasks: reading, writing and editing code, running commands, and answering questions \
@@ -33,15 +34,28 @@ Do not stop at a plan, promise to act, or partial result. Stop only when done, i
 or blocked on information or authorization only the user can provide; explain any blocker clearly.\n\
 - Don't take destructive actions (deleting files, force pushes) unless asked.\n\n\
 Environment:\n- Working directory: {}\n- Platform: {}\n",
-        cwd.display(),
+        workspace.cwd.display(),
         std::env::consts::OS
     );
 
-    let files = instruction_files(&cwd);
+    if !workspace.additional_dirs.is_empty() {
+        prompt.push_str("\nAdditional directories in scope (explicitly added by the user):\n");
+        for dir in &workspace.additional_dirs {
+            prompt.push_str(&format!("- {}\n", dir.display()));
+        }
+        prompt.push_str(
+            "You may read, edit and run commands in these directories as part of the user's task. \
+Use absolute paths to access them; relative tool paths and shell commands still start in the \
+working directory above. Include these directories when relevant to a search or task.\n",
+        );
+    }
+
+    let files = instruction_files(&workspace.cwd, &workspace.additional_dirs);
     if !files.is_empty() {
         prompt.push_str(
             "\n# Project instructions\n\nThe user provided these instruction files. \
-Follow them; they take precedence over the default guidelines above.\n",
+Follow them; they take precedence over the default guidelines above. \
+Project-specific instructions apply to files in their respective directories.\n",
         );
         for (path, text) in files {
             prompt.push_str(&format!(
@@ -55,16 +69,23 @@ Follow them; they take precedence over the default guidelines above.\n",
 }
 
 /// Instruction files to include in the system prompt, most general first: the global
-/// `~/.config/tamale/AGENTS.md`, then `AGENTS.md`/`CLAUDE.md` from the git root down to `cwd`.
-pub fn instruction_files(cwd: &Path) -> Vec<(PathBuf, String)> {
+/// `~/.config/tamale/AGENTS.md`, then `AGENTS.md`/`CLAUDE.md` from each git root
+/// down to cwd and each additional directory.
+pub fn instruction_files(cwd: &Path, additional_dirs: &[PathBuf]) -> Vec<(PathBuf, String)> {
     let mut candidates = Vec::new();
     if let Some(dir) = crate::config::user_config_dir() {
         candidates.push(dir.join("AGENTS.md"));
     }
 
-    for dir in crate::config::project_dirs(cwd) {
-        candidates.push(dir.join("AGENTS.md"));
-        candidates.push(dir.join("CLAUDE.md"));
+    for root in std::iter::once(cwd).chain(additional_dirs.iter().map(PathBuf::as_path)) {
+        for dir in crate::config::project_dirs(root) {
+            for name in ["AGENTS.md", "CLAUDE.md"] {
+                let path = dir.join(name);
+                if !candidates.contains(&path) {
+                    candidates.push(path);
+                }
+            }
+        }
     }
 
     let mut out: Vec<(PathBuf, String)> = Vec::new();
@@ -87,4 +108,49 @@ pub fn instruction_files(cwd: &Path) -> Vec<(PathBuf, String)> {
         out.push((path, text));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn added_directories_include_ancestor_instructions_without_duplicate_files() {
+        let root = std::env::temp_dir().join(format!("tamale-prompt-{}", crate::session::new_id()));
+        std::fs::create_dir_all(root.join("app")).unwrap();
+        std::fs::create_dir_all(root.join("shared/nested")).unwrap();
+        std::fs::write(root.join(".git"), "gitdir: elsewhere").unwrap();
+        for (path, text) in [
+            ("AGENTS.md", "Root instructions sentinel"),
+            ("app/CLAUDE.md", "App instructions sentinel"),
+            ("shared/AGENTS.md", "Shared instructions sentinel"),
+            ("shared/nested/CLAUDE.md", "Nested instructions sentinel"),
+        ] {
+            std::fs::write(root.join(path), text).unwrap();
+        }
+        let mut workspace = Workspace {
+            cwd: root.join("app"),
+            additional_dirs: Vec::new(),
+        };
+        let before = system_prompt(&workspace);
+        assert!(before.contains("App instructions sentinel"));
+        assert!(!before.contains("Shared instructions sentinel"));
+        workspace.add_dir(Path::new("../shared/nested")).unwrap();
+        let prompt = system_prompt(&workspace);
+        assert!(prompt.contains(&workspace.additional_dirs[0].display().to_string()));
+        assert!(prompt.contains(&format!("Working directory: {}", workspace.cwd.display())));
+        for text in [
+            "Root instructions sentinel",
+            "App instructions sentinel",
+            "Shared instructions sentinel",
+            "Nested instructions sentinel",
+        ] {
+            assert_eq!(prompt.matches(text).count(), 1, "{text}");
+        }
+        let root_pos = prompt.find("Root instructions sentinel").unwrap();
+        let shared_pos = prompt.find("Shared instructions sentinel").unwrap();
+        let nested_pos = prompt.find("Nested instructions sentinel").unwrap();
+        assert!(root_pos < shared_pos && shared_pos < nested_pos);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

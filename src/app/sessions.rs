@@ -20,7 +20,8 @@ impl App {
             .unwrap_or_default();
         let saved = session::Session {
             id: self.session_id.clone(),
-            cwd: self.cwd.clone(),
+            cwd: self.workspace.cwd.clone(),
+            additional_dirs: self.workspace.additional_dirs.clone(),
             created: self.session_created,
             updated: session::now(),
             model: self.settings.model.name.clone(),
@@ -57,7 +58,7 @@ impl App {
 
     /// Saved sessions from this directory, excluding the current one.
     pub(super) fn resumable_sessions(&self) -> Vec<session::Meta> {
-        self.saved_sessions(Some(&self.cwd))
+        self.saved_sessions(Some(&self.workspace.cwd))
             .into_iter()
             .filter(|m| m.id != self.session_id)
             .collect()
@@ -161,6 +162,20 @@ impl App {
         self.turn += 1;
         self.history = saved.history;
         self.entries = saved.entries;
+        self.workspace.additional_dirs.clear();
+        for dir in self
+            .startup_dirs
+            .clone()
+            .into_iter()
+            .chain(saved.additional_dirs)
+        {
+            if let Err(error) = self.workspace.add_dir(&dir) {
+                self.entries.push(Entry::Error(format!(
+                    "Couldn't restore scoped directory {}: {error:#}",
+                    dir.display()
+                )));
+            }
+        }
         self.transcript.invalidate_from(0);
         self.context_tokens = saved.context_tokens;
         self.session_id = saved.id;
@@ -173,12 +188,11 @@ impl App {
             saved.title,
             session::ago(saved.updated)
         );
-        let cwd = std::env::current_dir().unwrap_or_default();
-        if saved.cwd != cwd {
+        if saved.cwd != self.workspace.cwd {
             note.push_str(&format!(
                 " It was started in {}; tools now run in {}.",
                 saved.cwd.display(),
-                cwd.display()
+                self.workspace.cwd.display()
             ));
         }
         if saved.model != self.settings.model.name {

@@ -15,6 +15,7 @@ cargo run --release -- -p "summarize src/"   # one-shot, non-interactive
 cargo run --release -- --continue            # resume the latest session in this directory
 cargo run --release -- --resume              # pick a saved session to resume
 cargo run --release -- --config dev.toml    # add settings from a TOML file
+cargo run --release -- --add-dir ../shared --add-dir ~/dev/api
 ```
 
 ## Configuration
@@ -112,6 +113,9 @@ the visible transcript.
 - A resumed session keeps the current model (use `/model` to switch); further messages are
   saved to the same session. `/clear` starts a new session (the old one stays resumable).
 - `-p` runs are not saved.
+- Additional directories are saved with the session and restored on resume. Directories
+  passed with `--add-dir` also apply to resumed sessions. A directory that no longer
+  exists is skipped with an error message.
 
 Session writes run on a background worker, coalesce pending updates to each session,
 and drain before exit. Resume sees pending updates immediately. A disposable `.index/`
@@ -144,6 +148,26 @@ These files are appended to the system prompt if present (duplicates skipped):
 
 1. `~/.config/tamale/AGENTS.md` (or `$XDG_CONFIG_HOME/tamale/AGENTS.md`)
 2. `AGENTS.md` and `CLAUDE.md` in every directory from the git root down to the working directory
+3. The same instruction discovery for each additional directory added with `/add-dir`
+   or `--add-dir`; project instructions apply within their respective directories
+
+## Additional directories
+
+Use `/add-dir ../shared` to include another directory in the agent's scope, or pass
+`--add-dir <path>` at startup (repeat the flag for multiple directories). `/add-dir`
+without a path lists the working directory and all added directories.
+
+Relative paths resolve from the original working directory. Absolute paths, `~` and
+`~/...` work too; paths containing spaces can be entered as-is or enclosed in quotes
+in the slash command. Directories must exist; duplicate paths and symlinks to an
+already added directory are skipped.
+
+The agent receives the full directory list and project instructions on each turn,
+including compaction. It can read, edit, search and run commands in added directories
+using their absolute paths. The original working directory stays the base for relative
+tool paths and shell commands. Additions during a run take effect on the next message.
+`/clear` keeps the directory scope, and the footer shows the number of extra directories.
+This defines task context; tools already run without a filesystem sandbox.
 
 ## Tools
 
@@ -228,6 +252,7 @@ The agent can modify files and run any shell command in the working directory.
   and `/thinking off` set it explicitly. Shown in the status bar; changes during a run
   take effect on the next message.
 - `/compact [focus]` summarizes the conversation to free context
+- `/add-dir [path]` adds a directory to the agent's scope, or lists the current scope
 - `/resume [n|id]` continues a saved session (see [Sessions](#sessions))
 - `/clear` resets the conversation, `/quit` (or `/exit`) quits
 

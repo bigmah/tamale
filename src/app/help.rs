@@ -8,6 +8,10 @@ const COMMANDS: &[(&str, &str)] = &[
     ),
     ("/model", "Pick a model from a list (type to filter)"),
     (
+        "/add-dir [path]",
+        "Add a directory to the agent's scope; omit the path to list scoped directories",
+    ),
+    (
         "/model <id>",
         "Switch directly to a model, e.g. /model claude-opus-5-5",
     ),
@@ -173,6 +177,10 @@ pub(super) fn help_lines() -> Vec<Line<'static>> {
     rows(
         &mut lines,
         &[
+            (
+                "--add-dir <path>",
+                "Include another directory in the agent's scope (repeatable)",
+            ),
             (
                 "--config <path>",
                 "Additional TOML settings (after user and project files)",

@@ -91,6 +91,7 @@ async fn token_limits_continue_text_thinking_and_empty_responses() {
         model.clone(),
         &mut history,
         Settings::default().turn_config(0),
+        &Workspace::current().unwrap(),
         &tx,
     )
     .await
@@ -173,6 +174,7 @@ async fn truncated_tools_are_not_executed_or_replayed() {
         model.clone(),
         &mut history,
         Settings::default().turn_config(0),
+        &Workspace::current().unwrap(),
         &tx,
     )
     .await
@@ -215,6 +217,7 @@ async fn empty_truncation_after_tools_keeps_tool_results_first() {
         model.clone(),
         &mut history,
         Settings::default().turn_config(0),
+        &Workspace::current().unwrap(),
         &tx,
     )
     .await
@@ -288,6 +291,7 @@ async fn context_limit_compacts_and_resumes_the_task() {
         model.clone(),
         &mut history,
         Settings::default().turn_config(0),
+        &Workspace::current().unwrap(),
         &tx,
     )
     .await
@@ -320,6 +324,7 @@ async fn empty_end_turn_recovers_once_then_reports_failure() {
             model.clone(),
             vec![Message::user("Task")],
             Settings::default().turn_config(0),
+            Workspace::current().unwrap(),
             tx,
         )
         .await;
@@ -348,6 +353,7 @@ async fn pause_turn_replays_the_assistant_without_adding_user_input() {
         model.clone(),
         &mut history,
         Settings::default().turn_config(0),
+        &Workspace::current().unwrap(),
         &tx,
     )
     .await
@@ -379,6 +385,7 @@ async fn refusal_and_unknown_stop_reasons_report_errors_without_running_tools() 
             model.clone(),
             vec![Message::user("Task")],
             Settings::default().turn_config(0),
+            Workspace::current().unwrap(),
             tx,
         )
         .await;
@@ -405,6 +412,7 @@ async fn incomplete_streams_retry_instead_of_looking_finished() {
         model.clone(),
         vec![Message::user("Task")],
         settings.turn_config(0),
+        Workspace::current().unwrap(),
         tx,
     )
     .await;
@@ -478,6 +486,7 @@ async fn stalled_opening_and_stream_retry_and_recover() {
             model.clone(),
             vec![Message::user("Task")],
             settings.turn_config(0),
+            Workspace::current().unwrap(),
             tx,
         )
         .await;
@@ -559,9 +568,15 @@ async fn tool_followup_preserves_thinking_and_effort() {
     let mut settings = Settings::default();
     settings.agent.max_tokens = 2048;
     settings.model.effort = Some(Effort::High);
-    run_inner(model.clone(), &mut history, settings.turn_config(0), &tx)
-        .await
-        .unwrap();
+    run_inner(
+        model.clone(),
+        &mut history,
+        settings.turn_config(0),
+        &Workspace::current().unwrap(),
+        &tx,
+    )
+    .await
+    .unwrap();
 
     let requests = model.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
@@ -617,11 +632,14 @@ async fn manual_and_automatic_compaction_use_configured_limits_and_thinking() {
         settings.agent.max_tokens = 2048;
         settings.agent.compact_max_tokens = 1024;
         settings.agent.auto_compact_percent = 25;
+        let mut workspace = Workspace::current().unwrap();
+        workspace.add_dir(&std::env::temp_dir()).unwrap();
         compact(
             model.clone(),
             history.clone(),
             None,
             settings.turn_config(0),
+            workspace.clone(),
             tx.clone(),
         )
         .await;
@@ -630,15 +648,26 @@ async fn manual_and_automatic_compaction_use_configured_limits_and_thinking() {
                 .any(|e| matches!(e, AgentEvent::Compacted { .. }))
         );
         // A custom threshold forces compaction well below the default 80%.
-        run_inner(model.clone(), &mut history, settings.turn_config(250), &tx)
-            .await
-            .unwrap();
+        run_inner(
+            model.clone(),
+            &mut history,
+            settings.turn_config(250),
+            &workspace,
+            &tx,
+        )
+        .await
+        .unwrap();
         let requests = model.requests.lock().unwrap();
         assert_eq!(requests.len(), 3);
         assert_eq!(requests[0].max_tokens, Some(1024));
         assert_eq!(requests[1].max_tokens, Some(1024));
         assert_eq!(requests[2].max_tokens, Some(2048));
         for request in requests.iter() {
+            let Some(Message::System { content: preamble }) = request.chat_history.first() else {
+                panic!("missing system prompt");
+            };
+            assert!(preamble.contains("Additional directories in scope"));
+            assert!(preamble.contains(&workspace.additional_dirs[0].display().to_string()));
             assert_eq!(
                 request.additional_params,
                 Some(json!({
@@ -693,6 +722,7 @@ async fn configured_retry_limit_controls_actual_attempts() {
             model.clone(),
             vec![Message::user("Task")],
             settings.turn_config(0),
+            Workspace::current().unwrap(),
             tx,
         )
         .await;

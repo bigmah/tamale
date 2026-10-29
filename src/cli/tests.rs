@@ -51,11 +51,41 @@ fn omitted_flags_preserve_settings_and_default_resets_effort() {
 
 #[test]
 fn reports_missing_values_unknown_options_and_invalid_modes() {
-    for flag in ["--config", "--model", "--effort", "--thinking", "--print"] {
+    for flag in [
+        "--add-dir",
+        "--config",
+        "--model",
+        "--effort",
+        "--thinking",
+        "--print",
+    ] {
         assert!(parse(&[flag]).unwrap_err().to_string().contains("needs"));
     }
     assert!(parse(&["--unknown"]).is_err());
     assert!(parse(&["--effort", "typo"]).is_err());
     assert!(parse(&["--thinking", "typo"]).is_err());
     assert!(parse(&["--help"]).unwrap().help);
+}
+
+#[test]
+fn additional_directories_are_repeatable_and_work_with_print_and_resume() {
+    let cli = parse(&[
+        "--add-dir",
+        "../shared",
+        "--add-dir",
+        "/tmp/path with spaces",
+        "-c",
+        "-p",
+        "check both",
+    ])
+    .unwrap();
+    assert_eq!(
+        cli.additional_dirs,
+        [
+            PathBuf::from("../shared"),
+            PathBuf::from("/tmp/path with spaces")
+        ]
+    );
+    assert_eq!(cli.resume, Some(Resume::Latest));
+    assert_eq!(cli.print_prompt.as_deref(), Some("check both"));
 }
