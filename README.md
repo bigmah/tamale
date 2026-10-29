@@ -55,7 +55,9 @@ The agent can modify files and run any shell command in the working directory.
 
 - `Enter` send · `Alt/Shift+Enter` or `Ctrl+J` newline
 - `Esc` interrupt the agent
-- `PgUp/PgDn`, `Shift+↑/↓` scroll
+- `PgUp/PgDn`, `Shift+↑/↓`, mouse wheel scroll (a scrollbar and "↓ N more lines" badge show while scrolled up)
+- `/mouse [on|off]` toggles mouse capture (on by default). While on, hold Shift (Option in
+  iTerm2/Terminal.app) to select text; turn it off to restore native selection.
 - `Ctrl+C` clear input / interrupt / quit
 - `/verbose [on|off]` toggles verbose output. Off by default: tool calls show as one line
   each with no output, and only the last 3 calls of a run are shown. Verbose shows every call

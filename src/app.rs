@@ -1,4 +1,8 @@
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+    MouseEventKind,
+};
+use crossterm::execute;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Position, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
@@ -22,6 +26,8 @@ const TOOL_PREVIEW_LINES: usize = 6;
 const QUIET_TOOL_CALLS: usize = 3;
 /// In quiet mode, tool call summaries are truncated to this many characters.
 const QUIET_SUMMARY_CHARS: usize = 80;
+/// Lines scrolled per mouse wheel notch.
+const WHEEL_LINES: usize = 3;
 
 const COMMANDS: &[(&str, &str)] = &[
     (
@@ -53,6 +59,10 @@ const COMMANDS: &[(&str, &str)] = &[
         "/verbose [on|off]",
         "Toggle verbose output (full tool calls and their output; off by default)",
     ),
+    (
+        "/mouse [on|off]",
+        "Toggle mouse wheel scrolling (on by default; off restores native text selection)",
+    ),
     ("/clear", "Clear the conversation and start fresh"),
     ("/quit, /exit", "Quit harness"),
 ];
@@ -77,6 +87,7 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("PgUp / PgDn", "Scroll chat by 10 lines"),
             ("Shift+↑ / Shift+↓", "Scroll chat by 1 line"),
+            ("Mouse wheel", "Scroll chat by 3 lines (also scrolls help and pickers)"),
             ("Esc", "Interrupt the agent"),
             ("Ctrl+C", "Clear input / interrupt agent / quit"),
             ("Ctrl+D", "Quit (when input is empty)"),
@@ -193,6 +204,8 @@ pub struct App {
     effort_picker: Option<usize>,
     /// Show every tool call with its output preview instead of a compact summary.
     verbose: bool,
+    /// Whether mouse capture (wheel scrolling) is enabled.
+    mouse: bool,
     history: Vec<Message>,
     entries: Vec<Entry>,
     input: String,
@@ -245,6 +258,7 @@ impl App {
             picker: None,
             effort_picker: None,
             verbose: false,
+            mouse: true,
             history: Vec::new(),
             entries: vec![Entry::Info(
                 "Welcome! Type a request and press Enter. /help for commands.".into(),
@@ -288,7 +302,43 @@ impl App {
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
             Event::Paste(text) => self.insert_str(&text.replace("\r\n", "\n").replace('\r', "\n")),
+            Event::Mouse(mouse) => match mouse.kind {
+                MouseEventKind::ScrollUp => self.on_wheel(true),
+                MouseEventKind::ScrollDown => self.on_wheel(false),
+                _ => {}
+            },
             _ => {}
+        }
+    }
+
+    fn on_wheel(&mut self, up: bool) {
+        if self.picker.is_some() {
+            let count = self.filtered_models().len();
+            if let Some(picker) = &mut self.picker {
+                picker.selected = if up {
+                    picker.selected.saturating_sub(1)
+                } else {
+                    (picker.selected + 1).min(count.saturating_sub(1))
+                };
+            }
+        } else if let Some(selected) = self.effort_picker {
+            self.effort_picker = Some(if up {
+                selected.saturating_sub(1)
+            } else {
+                (selected + 1).min(EFFORT_CHOICES.len() - 1)
+            });
+        } else if let Some(scroll) = self.help_scroll {
+            // Clamped to the real maximum when drawn.
+            self.help_scroll = Some(if up {
+                scroll.saturating_sub(WHEEL_LINES)
+            } else {
+                scroll.saturating_add(WHEEL_LINES)
+            });
+        } else if up {
+            // Clamped to the real maximum when drawn.
+            self.scroll_back = self.scroll_back.saturating_add(WHEEL_LINES);
+        } else {
+            self.scroll_back = self.scroll_back.saturating_sub(WHEEL_LINES);
         }
     }
 
@@ -744,6 +794,37 @@ impl App {
         )));
     }
 
+    fn set_mouse(&mut self, arg: Option<&str>) {
+        let mouse = match arg.map(str::to_ascii_lowercase).as_deref() {
+            None => !self.mouse,
+            Some("on" | "true" | "yes" | "1") => true,
+            Some("off" | "false" | "no" | "0") => false,
+            Some(_) => {
+                self.entries.push(Entry::Error(format!(
+                    "Unknown mouse mode: {} (use on, off)",
+                    arg.unwrap_or_default()
+                )));
+                return;
+            }
+        };
+        let result = if mouse {
+            execute!(std::io::stdout(), EnableMouseCapture)
+        } else {
+            execute!(std::io::stdout(), DisableMouseCapture)
+        };
+        if let Err(e) = result {
+            self.entries
+                .push(Entry::Error(format!("Couldn't change mouse mode: {e}")));
+            return;
+        }
+        self.mouse = mouse;
+        self.entries.push(Entry::Info(if mouse {
+            "Mouse scrolling on (hold Shift/Option to select text).".into()
+        } else {
+            "Mouse scrolling off (native text selection restored).".into()
+        }));
+    }
+
     fn command(&mut self, cmd: &str) {
         match cmd.split_whitespace().next().unwrap_or("") {
             "/quit" | "/exit" => self.should_quit = true,
@@ -760,6 +841,7 @@ impl App {
             "/help" => self.help_scroll = Some(0),
             "/thinking" => self.set_thinking(cmd.split_whitespace().nth(1)),
             "/verbose" => self.set_verbose(cmd.split_whitespace().nth(1)),
+            "/mouse" => self.set_mouse(cmd.split_whitespace().nth(1)),
             "/compact" => {
                 let rest = cmd["/compact".len()..].trim();
                 self.compact((!rest.is_empty()).then(|| rest.to_string()));
@@ -1093,8 +1175,31 @@ impl App {
         let total = para.line_count(area.width);
         let max_scroll = total.saturating_sub(area.height as usize);
         self.scroll_back = self.scroll_back.min(max_scroll);
-        let offset = (max_scroll - self.scroll_back).min(u16::MAX as usize) as u16;
-        frame.render_widget(para.scroll((offset, 0)), area);
+        let offset = max_scroll - self.scroll_back;
+        frame.render_widget(para.scroll((offset.min(u16::MAX as usize) as u16, 0)), area);
+        if self.scroll_back > 0 {
+            let mut state = ScrollbarState::new(max_scroll).position(offset);
+            frame.render_stateful_widget(
+                Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(None)
+                    .end_symbol(None),
+                area,
+                &mut state,
+            );
+            let hint = format!(" ↓ {} more lines ", self.scroll_back);
+            let width = (hint.width() as u16).min(area.width);
+            let hint_area = Rect::new(
+                area.right().saturating_sub(width + 1),
+                area.bottom().saturating_sub(1),
+                width,
+                1,
+            );
+            frame.render_widget(Clear, hint_area);
+            frame.render_widget(
+                Paragraph::new(hint).style(Style::new().fg(Color::Black).bg(Color::Yellow)),
+                hint_area,
+            );
+        }
     }
 
     fn draw_input(&self, frame: &mut Frame, area: Rect, rows: Vec<String>, cursor: (usize, usize)) {
@@ -1451,6 +1556,46 @@ mod tests {
         app.command("/thinking typo");
         assert_eq!(app.reasoning.thinking, agent::Thinking::Adaptive);
         assert!(matches!(app.entries.last(), Some(Entry::Error(_))));
+    }
+
+    #[test]
+    fn mouse_wheel_scrolls_chat_help_and_pickers() {
+        use crossterm::event::MouseEvent;
+        let client = anthropic::Client::new("test-key").unwrap();
+        let (mut app, _rx) = App::new_with_channel(
+            client,
+            "claude-sonnet-4-6".into(),
+            agent::Reasoning::default(),
+        );
+        let wheel = |kind| {
+            Event::Mouse(MouseEvent {
+                kind,
+                column: 0,
+                row: 0,
+                modifiers: KeyModifiers::NONE,
+            })
+        };
+        app.on_event(wheel(MouseEventKind::ScrollUp));
+        app.on_event(wheel(MouseEventKind::ScrollUp));
+        assert_eq!(app.scroll_back, 2 * WHEEL_LINES);
+        app.on_event(wheel(MouseEventKind::ScrollDown));
+        assert_eq!(app.scroll_back, WHEEL_LINES);
+        app.on_event(wheel(MouseEventKind::ScrollDown));
+        app.on_event(wheel(MouseEventKind::ScrollDown));
+        assert_eq!(app.scroll_back, 0);
+
+        app.command("/help");
+        app.on_event(wheel(MouseEventKind::ScrollDown));
+        assert_eq!(app.help_scroll, Some(WHEEL_LINES));
+        assert_eq!(app.scroll_back, 0);
+        app.help_scroll = None;
+
+        app.command("/effort");
+        app.on_event(wheel(MouseEventKind::ScrollDown));
+        assert_eq!(app.effort_picker, Some(1));
+        app.on_event(wheel(MouseEventKind::ScrollUp));
+        app.on_event(wheel(MouseEventKind::ScrollUp));
+        assert_eq!(app.effort_picker, Some(0));
     }
 
     #[test]

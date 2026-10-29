@@ -5,7 +5,10 @@ mod tools;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste, EventStream};
+use crossterm::event::{
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    EventStream,
+};
 use crossterm::execute;
 use futures::StreamExt;
 use rig_core::client::{CompletionClient, ProviderClient};
@@ -68,14 +71,24 @@ async fn main() -> Result<()> {
         return print_mode(model, config, prompt).await;
     }
 
+    // Make sure mouse capture is turned off again if we panic.
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = execute!(std::io::stdout(), DisableMouseCapture);
+        hook(info);
+    }));
     let mut terminal = ratatui::init();
-    execute!(std::io::stdout(), EnableBracketedPaste)?;
+    execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture)?;
     let result = run(
         &mut terminal,
         App::new_with_channel(client, model_name, reasoning),
     )
     .await;
-    let _ = execute!(std::io::stdout(), DisableBracketedPaste);
+    let _ = execute!(
+        std::io::stdout(),
+        DisableBracketedPaste,
+        DisableMouseCapture
+    );
     ratatui::restore();
     result
 }
