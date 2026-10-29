@@ -7,6 +7,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::process::Command;
 
+mod search;
+mod web;
+
 const MAX_OUTPUT_CHARS: usize = 30_000;
 const DEFAULT_READ_LIMIT: usize = 2_000;
 
@@ -76,8 +79,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             name: "bash".into(),
             description: "Run a shell command with `sh -c` in the working directory. \
-                Returns combined stdout/stderr and exit code. Use for searching (rg, grep, find), \
-                building, testing, git, etc."
+                Returns combined stdout/stderr and exit code. Use for building, testing, git, \
+                etc. Prefer grep/glob for searching and web_search/web_fetch for the web."
                 .into(),
             parameters: json!({
                 "type": "object",
@@ -89,6 +92,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             }),
         },
     ];
+    defs.extend(search::definitions());
+    defs.extend(web::definitions());
     for def in &mut defs {
         def.parameters["properties"]["description"] =
             json!({ "type": "string", "description": DESCRIPTION_SCHEMA });
@@ -118,6 +123,10 @@ pub fn describe(name: &str, args: &Value) -> String {
         "write_file" => format!("Write {target}"),
         "edit_file" => format!("Edit {target}"),
         "list_dir" => format!("List {target}"),
+        "grep" => format!("Search for {target}"),
+        "glob" => format!("Find files matching {target}"),
+        "web_search" => format!("Search the web for {target}"),
+        "web_fetch" => format!("Fetch {target}"),
         "bash" => "Run a shell command".into(),
         _ => format!("Use {name}"),
     }
@@ -138,6 +147,9 @@ pub fn summarize(name: &str, args: &Value) -> String {
             if p.is_empty() { ".".into() } else { p }
         }
         "bash" => s("command"),
+        "grep" | "glob" => s("pattern"),
+        "web_search" => s("query"),
+        "web_fetch" => s("url"),
         _ => args.to_string(),
     }
 }
@@ -149,6 +161,10 @@ pub async fn execute(name: &str, args: Value) -> Result<String> {
         "edit_file" => edit_file(serde_json::from_value(args)?).await,
         "list_dir" => list_dir(serde_json::from_value(args)?).await,
         "bash" => bash(serde_json::from_value(args)?).await,
+        "grep" => search::grep(args).await,
+        "glob" => search::glob(args).await,
+        "web_search" => web::search(args).await,
+        "web_fetch" => web::fetch(args).await,
         other => bail!("unknown tool: {other}"),
     }
 }

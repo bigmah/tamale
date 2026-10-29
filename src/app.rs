@@ -162,6 +162,10 @@ const TOOLS: &[(&str, &str)] = &[
     ("list_dir", "List a directory"),
     ("write_file", "Create/overwrite a file"),
     ("edit_file", "Replace exact text in a file"),
+    ("grep", "Search file contents (regex or literal)"),
+    ("glob", "Find files by glob pattern"),
+    ("web_search", "Search the web (DuckDuckGo or Brave)"),
+    ("web_fetch", "Read a web page as text"),
     ("bash", "Run a shell command"),
 ];
 
