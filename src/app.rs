@@ -18,6 +18,10 @@ use crate::agent::{self, AgentEvent};
 
 const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const TOOL_PREVIEW_LINES: usize = 6;
+/// In quiet mode, only the last few calls of a consecutive run of tool calls are shown.
+const QUIET_TOOL_CALLS: usize = 3;
+/// In quiet mode, tool call summaries are truncated to this many characters.
+const QUIET_SUMMARY_CHARS: usize = 80;
 
 const COMMANDS: &[(&str, &str)] = &[
     (
@@ -44,6 +48,10 @@ const COMMANDS: &[(&str, &str)] = &[
     (
         "/thinking [mode]",
         "Toggle adaptive thinking (on by default); /thinking on|off to set",
+    ),
+    (
+        "/verbose [on|off]",
+        "Toggle verbose output (full tool calls and their output; off by default)",
     ),
     ("/clear", "Clear the conversation and start fresh"),
     ("/quit, /exit", "Quit harness"),
@@ -150,8 +158,14 @@ const FALLBACK_MODELS: &[(&str, &str)] = &[
 /// Choices shown in the effort picker, in order. `None` means "API default".
 const EFFORT_CHOICES: [(Option<agent::Effort>, &str); 6] = [
     (None, "Let the API decide (omit the setting)"),
-    (Some(agent::Effort::Low), "Fastest and cheapest, least thorough"),
-    (Some(agent::Effort::Medium), "Balanced speed and thoroughness"),
+    (
+        Some(agent::Effort::Low),
+        "Fastest and cheapest, least thorough",
+    ),
+    (
+        Some(agent::Effort::Medium),
+        "Balanced speed and thoroughness",
+    ),
     (Some(agent::Effort::High), "Thorough"),
     (Some(agent::Effort::XHigh), "Very thorough"),
     (Some(agent::Effort::Max), "Maximum thoroughness, slowest"),
@@ -177,6 +191,8 @@ pub struct App {
     picker: Option<ModelPicker>,
     /// Selected row of the effort picker; `Some` while it is open.
     effort_picker: Option<usize>,
+    /// Show every tool call with its output preview instead of a compact summary.
+    verbose: bool,
     history: Vec<Message>,
     entries: Vec<Entry>,
     input: String,
@@ -193,6 +209,9 @@ pub struct App {
     input_tokens: u64,
     cached_tokens: u64,
     output_tokens: u64,
+    /// Estimated session cost in USD; `cost_partial` is set if some usage had unknown pricing.
+    cost: f64,
+    cost_partial: bool,
     /// Whether the running task is currently compacting the conversation.
     compacting: bool,
     /// Assistant entry created by the in-flight request, dropped if the request is retried.
@@ -225,6 +244,7 @@ impl App {
             models: None,
             picker: None,
             effort_picker: None,
+            verbose: false,
             history: Vec::new(),
             entries: vec![Entry::Info(
                 "Welcome! Type a request and press Enter. /help for commands.".into(),
@@ -240,6 +260,8 @@ impl App {
             input_tokens: 0,
             cached_tokens: 0,
             output_tokens: 0,
+            cost: 0.0,
+            cost_partial: false,
             compacting: false,
             attempt_entry: None,
             tick: 0,
@@ -702,6 +724,26 @@ impl App {
         )));
     }
 
+    fn set_verbose(&mut self, arg: Option<&str>) {
+        let verbose = match arg.map(str::to_ascii_lowercase).as_deref() {
+            None => !self.verbose,
+            Some("on" | "true" | "yes" | "1") => true,
+            Some("off" | "false" | "no" | "0") => false,
+            Some(_) => {
+                self.entries.push(Entry::Error(format!(
+                    "Unknown verbose mode: {} (use on, off)",
+                    arg.unwrap_or_default()
+                )));
+                return;
+            }
+        };
+        self.verbose = verbose;
+        self.entries.push(Entry::Info(format!(
+            "Verbose output {}.",
+            if verbose { "on" } else { "off" }
+        )));
+    }
+
     fn command(&mut self, cmd: &str) {
         match cmd.split_whitespace().next().unwrap_or("") {
             "/quit" | "/exit" => self.should_quit = true,
@@ -717,6 +759,7 @@ impl App {
             }
             "/help" => self.help_scroll = Some(0),
             "/thinking" => self.set_thinking(cmd.split_whitespace().nth(1)),
+            "/verbose" => self.set_verbose(cmd.split_whitespace().nth(1)),
             "/compact" => {
                 let rest = cmd["/compact".len()..].trim();
                 self.compact((!rest.is_empty()).then(|| rest.to_string()));
@@ -838,6 +881,10 @@ impl App {
         self.input_tokens += u.input_tokens + u.cached_input_tokens + u.cache_creation_input_tokens;
         self.cached_tokens += u.cached_input_tokens;
         self.output_tokens += u.output_tokens;
+        match agent::cost(&self.model_name, u) {
+            Some(c) => self.cost += c,
+            None => self.cost_partial = true,
+        }
     }
 
     // -------------------------------------------------------------- render
@@ -1019,9 +1066,13 @@ impl App {
 
     fn draw_chat(&mut self, frame: &mut Frame, area: Rect) {
         let mut lines: Vec<Line> = Vec::new();
-        for entry in &self.entries {
-            render_entry(entry, &mut lines);
-            lines.push(Line::default());
+        if self.verbose {
+            for entry in &self.entries {
+                render_entry(entry, true, &mut lines);
+                lines.push(Line::default());
+            }
+        } else {
+            render_quiet(&self.entries, &mut lines);
         }
         if self.is_running() {
             lines.push(Line::from(
@@ -1102,6 +1153,7 @@ impl App {
         };
         let line = Line::from(vec![
             Span::from(format!(" {} ", self.model_name)).fg(Color::Magenta),
+            Span::from(if self.verbose { "· verbose " } else { "" }).fg(Color::Magenta),
             Span::from(format!("· thinking {} ", self.reasoning.thinking.as_str()))
                 .fg(Color::Magenta),
             Span::from(match self.reasoning.effort {
@@ -1121,6 +1173,12 @@ impl App {
                 fmt_tokens(self.output_tokens)
             ))
             .fg(Color::DarkGray),
+            Span::from(format!(
+                "· ${:.2}{} ",
+                self.cost,
+                if self.cost_partial { "+" } else { "" }
+            ))
+            .fg(Color::Green),
             Span::from(format!("· {hint}")).fg(Color::DarkGray),
         ]);
         frame.render_widget(Paragraph::new(line), area);
@@ -1190,7 +1248,44 @@ fn help_lines() -> Vec<Line<'static>> {
     lines
 }
 
-fn render_entry<'a>(entry: &'a Entry, lines: &mut Vec<Line<'a>>) {
+/// Compact chat rendering: tool calls are one line each without output, and long
+/// runs of consecutive tool calls are collapsed to the most recent few.
+fn render_quiet<'a>(entries: &'a [Entry], lines: &mut Vec<Line<'a>>) {
+    let mut i = 0;
+    while i < entries.len() {
+        if !matches!(entries[i], Entry::Tool { .. }) {
+            render_entry(&entries[i], false, lines);
+            lines.push(Line::default());
+            i += 1;
+            continue;
+        }
+        let end = entries[i..]
+            .iter()
+            .position(|e| !matches!(e, Entry::Tool { .. }))
+            .map_or(entries.len(), |n| i + n);
+        let hidden = (end - i).saturating_sub(QUIET_TOOL_CALLS);
+        if hidden > 0 {
+            let s = if hidden == 1 { "" } else { "s" };
+            lines.push(Line::from(
+                format!("  … {hidden} earlier tool call{s} (/verbose to show)").fg(Color::DarkGray),
+            ));
+        }
+        for entry in &entries[i + hidden..end] {
+            render_entry(entry, false, lines);
+        }
+        lines.push(Line::default());
+        i = end;
+    }
+}
+
+fn truncate_chars(s: &str, max: usize) -> String {
+    match s.char_indices().nth(max) {
+        Some((i, _)) => format!("{}…", &s[..i]),
+        None => s.to_string(),
+    }
+}
+
+fn render_entry<'a>(entry: &'a Entry, verbose: bool, lines: &mut Vec<Line<'a>>) {
     match entry {
         Entry::User(text) => {
             for (i, l) in text.lines().enumerate() {
@@ -1213,11 +1308,19 @@ fn render_entry<'a>(entry: &'a Entry, lines: &mut Vec<Line<'a>>) {
                 Some((_, false)) => Color::Green,
             };
             let summary = summary.lines().next().unwrap_or("");
+            let summary = if verbose {
+                summary.to_string()
+            } else {
+                truncate_chars(summary, QUIET_SUMMARY_CHARS)
+            };
             lines.push(Line::from(vec![
                 Span::from("⏺ ").fg(dot_color),
                 Span::from(name.as_str()).bold(),
                 Span::from(format!("({summary})")).fg(Color::Gray),
             ]));
+            if !verbose {
+                return;
+            }
             if let Some((out, is_error)) = output {
                 let style = if *is_error {
                     Style::new().fg(Color::Red)
@@ -1381,5 +1484,48 @@ mod tests {
 
         app.command("/effort default");
         assert_eq!(app.reasoning.effort, None);
+    }
+
+    #[test]
+    fn quiet_mode_collapses_tool_calls_and_verbose_toggles() {
+        let client = anthropic::Client::new("test-key").unwrap();
+        let (mut app, _rx) = App::new_with_channel(
+            client,
+            "claude-sonnet-4-6".into(),
+            agent::Reasoning::default(),
+        );
+        assert!(!app.verbose);
+        let tool = |n: usize| Entry::Tool {
+            name: "bash".into(),
+            summary: format!("cmd {n}"),
+            output: Some(("line a\nline b".into(), false)),
+        };
+        let entries: Vec<Entry> = (0..5).map(tool).collect();
+        let text =
+            |lines: &[Line]| -> Vec<String> { lines.iter().map(|l| l.to_string()).collect() };
+
+        let mut quiet = Vec::new();
+        render_quiet(&entries, &mut quiet);
+        let quiet = text(&quiet);
+        assert!(quiet[0].contains("2 earlier tool calls"));
+        assert!(quiet.iter().any(|l| l.contains("cmd 4")));
+        assert!(
+            !quiet
+                .iter()
+                .any(|l| l.contains("cmd 1") || l.contains("line a"))
+        );
+
+        let mut verbose = Vec::new();
+        for e in &entries {
+            render_entry(e, true, &mut verbose);
+        }
+        assert!(text(&verbose).iter().any(|l| l.contains("line a")));
+
+        app.command("/verbose");
+        assert!(app.verbose);
+        app.command("/verbose off");
+        assert!(!app.verbose);
+        app.command("/verbose on");
+        assert!(app.verbose);
     }
 }
