@@ -9,10 +9,12 @@ A small Claude Code–style coding agent for the terminal, written in pure Rust 
 export ANTHROPIC_API_KEY=sk-ant-...
 cargo run --release                          # interactive TUI
 cargo run --release -- --model claude-opus-4-8
+cargo run --release -- --effort low          # less thorough, faster, cheaper
 cargo run --release -- -p "summarize src/"   # one-shot, non-interactive
 ```
 
 `HARNESS_MODEL` sets the default model (otherwise `claude-sonnet-4-6`).
+`HARNESS_EFFORT` sets the default effort level (otherwise the API default).
 `HARNESS_CONTEXT_WINDOW` overrides the context window size (default 200k tokens).
 
 ## Context, caching and retries
@@ -49,6 +51,9 @@ The agent can modify files and run any shell command in the working directory.
 - `/help` opens a scrollable popup listing all commands, keys and tools
 - `/model` opens a model picker (live list from the Anthropic API; type to filter, Enter to switch).
   `/model <id>` switches directly. The conversation is kept when switching.
+- `/effort [level]` shows or sets the effort level (`low`, `medium`, `high`, `xhigh`, `max`,
+  or `default` to omit it). It is sent as `output_config.effort`; models that don't support it
+  (e.g. Haiku 4.5) or a given level reject the request with an error. Shown in the status bar when set.
 - `/compact [focus]` summarizes the conversation to free context
 - `/clear` resets the conversation, `/quit` (or `/exit`) quits
 

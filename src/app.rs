@@ -33,6 +33,10 @@ const COMMANDS: &[(&str, &str)] = &[
         "/compact [focus]",
         "Summarize the conversation to free up context (optional focus instructions)",
     ),
+    (
+        "/effort [level]",
+        "Show or set effort: low, medium, high, xhigh, max, or default",
+    ),
     ("/clear", "Clear the conversation and start fresh"),
     ("/quit, /exit", "Quit harness"),
 ];
@@ -135,6 +139,8 @@ struct ModelPicker {
 pub struct App {
     client: anthropic::Client,
     model_name: String,
+    /// `None` uses the API default.
+    effort: Option<agent::Effort>,
     tx: mpsc::UnboundedSender<AppEvent>,
     /// `None` until the list has been fetched.
     models: Option<Vec<ModelInfo>>,
@@ -167,19 +173,22 @@ impl App {
     pub fn new_with_channel(
         client: anthropic::Client,
         model_name: String,
+        effort: Option<agent::Effort>,
     ) -> (Self, mpsc::UnboundedReceiver<AppEvent>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        (Self::new(client, model_name, tx), rx)
+        (Self::new(client, model_name, effort, tx), rx)
     }
 
     fn new(
         client: anthropic::Client,
         model_name: String,
+        effort: Option<agent::Effort>,
         tx: mpsc::UnboundedSender<AppEvent>,
     ) -> Self {
         Self {
             client,
             model_name,
+            effort,
             tx,
             models: None,
             picker: None,
@@ -367,6 +376,7 @@ impl App {
         let config = agent::Config {
             context_window: agent::context_window(&self.model_name),
             context_tokens: self.context_tokens,
+            effort: self.effort,
         };
         let atx = self.start_turn();
         self.task = Some(tokio::spawn(agent::run(
@@ -394,6 +404,7 @@ impl App {
             self.model(),
             self.history.clone(),
             instructions,
+            self.effort,
             atx,
         )));
     }
@@ -546,6 +557,39 @@ impl App {
         self.model_name = id;
     }
 
+    fn set_effort(&mut self, arg: Option<&str>) {
+        let levels = agent::Effort::ALL.map(|e| e.as_str()).join(", ");
+        let current = self.effort.map_or("default", |e| e.as_str());
+        let Some(arg) = arg else {
+            self.entries.push(Entry::Info(format!(
+                "Effort: {current}. Set with /effort <level> ({levels}, or default)."
+            )));
+            return;
+        };
+        let effort = match arg.to_ascii_lowercase().as_str() {
+            "default" | "auto" | "none" | "reset" => None,
+            other => match agent::Effort::parse(other) {
+                Some(e) => Some(e),
+                None => {
+                    self.entries.push(Entry::Error(format!(
+                        "Unknown effort level: {arg} (use {levels}, or default)"
+                    )));
+                    return;
+                }
+            },
+        };
+        let note = if self.is_running() {
+            " (takes effect on your next message)"
+        } else {
+            ""
+        };
+        self.effort = effort;
+        self.entries.push(Entry::Info(format!(
+            "Effort set to {}{note}.",
+            effort.map_or("default", |e| e.as_str())
+        )));
+    }
+
     fn command(&mut self, cmd: &str) {
         match cmd.split_whitespace().next().unwrap_or("") {
             "/quit" | "/exit" => self.should_quit = true,
@@ -568,6 +612,7 @@ impl App {
                 Some(id) => self.set_model(id.to_string()),
                 None => self.open_picker(),
             },
+            "/effort" => self.set_effort(cmd.split_whitespace().nth(1)),
             other => self.entries.push(Entry::Error(format!(
                 "Unknown command: {other} (type /help to see all commands)"
             ))),
@@ -900,6 +945,11 @@ impl App {
         };
         let line = Line::from(vec![
             Span::from(format!(" {} ", self.model_name)).fg(Color::Magenta),
+            Span::from(match self.effort {
+                Some(e) => format!("· {} ", e.as_str()),
+                None => String::new(),
+            })
+            .fg(Color::Magenta),
             Span::from(format!(
                 "· ctx {}/{} {pct}% ",
                 fmt_tokens(self.context_tokens),
@@ -965,6 +1015,10 @@ fn help_lines() -> Vec<Line<'static>> {
             (
                 "--model <id>",
                 "Anthropic model to use (or set HARNESS_MODEL)",
+            ),
+            (
+                "--effort <level>",
+                "Effort level: low|medium|high|xhigh|max (or set HARNESS_EFFORT)",
             ),
             ("-p <prompt>", "Run one prompt non-interactively and exit"),
         ],

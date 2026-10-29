@@ -19,16 +19,24 @@ async fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
     let mut model_name = std::env::var("HARNESS_MODEL")
         .unwrap_or_else(|_| anthropic::completion::CLAUDE_SONNET_4_6.into());
+    let mut effort = match std::env::var("HARNESS_EFFORT") {
+        Ok(v) if !v.trim().is_empty() => parse_effort(&v)?,
+        _ => None,
+    };
     let mut print_prompt = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-m" | "--model" => model_name = args.next().context("--model needs a value")?,
+            "-e" | "--effort" => {
+                effort = parse_effort(&args.next().context("--effort needs a value")?)?
+            }
             "-p" | "--print" => print_prompt = Some(args.next().context("--print needs a prompt")?),
             "-h" | "--help" => {
                 println!(
-                    "usage: harness [--model <anthropic-model-id>] [-p <prompt>]\n\n\
+                    "usage: harness [--model <anthropic-model-id>] [--effort <level>] [-p <prompt>]\n\n\
                      -p runs one prompt non-interactively and exits.\n\
-                     Requires ANTHROPIC_API_KEY. HARNESS_MODEL sets the default model."
+                     --effort is one of low, medium, high, xhigh, max (default: API default).\n\
+                     Requires ANTHROPIC_API_KEY. HARNESS_MODEL and HARNESS_EFFORT set defaults."
                 );
                 return Ok(());
             }
@@ -45,6 +53,7 @@ async fn main() -> Result<()> {
         let config = agent::Config {
             context_window: agent::context_window(&model_name),
             context_tokens: 0,
+            effort,
         };
         let model = client.completion_model(model_name).with_prompt_caching();
         return print_mode(model, config, prompt).await;
@@ -52,10 +61,26 @@ async fn main() -> Result<()> {
 
     let mut terminal = ratatui::init();
     execute!(std::io::stdout(), EnableBracketedPaste)?;
-    let result = run(&mut terminal, App::new_with_channel(client, model_name)).await;
+    let result = run(
+        &mut terminal,
+        App::new_with_channel(client, model_name, effort),
+    )
+    .await;
     let _ = execute!(std::io::stdout(), DisableBracketedPaste);
     ratatui::restore();
     result
+}
+
+fn parse_effort(s: &str) -> Result<Option<agent::Effort>> {
+    if matches!(
+        s.trim().to_ascii_lowercase().as_str(),
+        "default" | "auto" | "none"
+    ) {
+        return Ok(None);
+    }
+    agent::Effort::parse(s)
+        .map(Some)
+        .with_context(|| format!("unknown effort level: {s} (use low, medium, high, xhigh, max)"))
 }
 
 async fn print_mode<M>(model: M, config: agent::Config, prompt: String) -> Result<()>

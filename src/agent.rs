@@ -63,11 +63,55 @@ pub enum AgentEvent {
     Done,
 }
 
+/// Anthropic's effort setting (`output_config.effort`): trades thoroughness for tokens and
+/// latency. Not every model supports every level; the API rejects unsupported ones.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Effort {
+    Low,
+    Medium,
+    High,
+    XHigh,
+    Max,
+}
+
+impl Effort {
+    pub const ALL: [Effort; 5] = [
+        Effort::Low,
+        Effort::Medium,
+        Effort::High,
+        Effort::XHigh,
+        Effort::Max,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Effort::Low => "low",
+            Effort::Medium => "medium",
+            Effort::High => "high",
+            Effort::XHigh => "xhigh",
+            Effort::Max => "max",
+        }
+    }
+
+    /// Parses a level name; `None` for unknown names.
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|e| e.as_str().eq_ignore_ascii_case(s.trim()))
+    }
+
+    fn params(effort: Option<Self>) -> Option<serde_json::Value> {
+        effort.map(|e| serde_json::json!({ "output_config": { "effort": e.as_str() } }))
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Config {
     pub context_window: u64,
     /// Context size of the most recent request, used to decide when to auto-compact.
     pub context_tokens: u64,
+    /// `None` leaves the API default.
+    pub effort: Option<Effort>,
 }
 
 impl Config {
@@ -186,6 +230,7 @@ pub async fn compact<M>(
     model: M,
     history: Vec<Message>,
     instructions: Option<String>,
+    effort: Option<Effort>,
     tx: mpsc::UnboundedSender<AgentEvent>,
 ) where
     M: CompletionModel + Clone,
@@ -200,6 +245,7 @@ pub async fn compact<M>(
             &tools::definitions(),
             &history,
             instructions.as_deref(),
+            effort,
             &tx,
         )
         .await?;
@@ -227,13 +273,31 @@ where
 
     loop {
         if config.should_compact() && history.len() > 1 {
-            *history = compact_history(&model, &preamble, &tool_defs, history, None, tx).await?;
+            *history = compact_history(
+                &model,
+                &preamble,
+                &tool_defs,
+                history,
+                None,
+                config.effort,
+                tx,
+            )
+            .await?;
             config.context_tokens = 0;
             let _ = tx.send(AgentEvent::History(history.clone()));
         }
 
-        let (choice, usage) =
-            request(&model, &preamble, &tool_defs, history, MAX_TOKENS, true, tx).await?;
+        let (choice, usage) = request(
+            &model,
+            &preamble,
+            &tool_defs,
+            history,
+            MAX_TOKENS,
+            config.effort,
+            true,
+            tx,
+        )
+        .await?;
         config.context_tokens = context_size(&usage);
         let _ = tx.send(AgentEvent::Usage(usage));
 
@@ -299,6 +363,7 @@ async fn compact_history<M>(
     tool_defs: &[ToolDefinition],
     history: &[Message],
     instructions: Option<&str>,
+    effort: Option<Effort>,
     tx: &mpsc::UnboundedSender<AgentEvent>,
 ) -> anyhow::Result<Vec<Message>>
 where
@@ -320,6 +385,7 @@ where
         tool_defs,
         &messages,
         COMPACT_MAX_TOKENS,
+        effort,
         false,
         tx,
     )
@@ -365,6 +431,7 @@ async fn request<M>(
     tool_defs: &[ToolDefinition],
     history: &[Message],
     max_tokens: u64,
+    effort: Option<Effort>,
     stream_text: bool,
     tx: &mpsc::UnboundedSender<AgentEvent>,
 ) -> anyhow::Result<(Vec<AssistantContent>, Usage)>
@@ -384,6 +451,7 @@ where
                 .messages(rest.to_vec())
                 .tools(tool_defs.to_vec())
                 .max_tokens(max_tokens)
+                .additional_params_opt(Effort::params(effort))
                 .stream()
                 .await?;
             while let Some(item) = stream.next().await {
