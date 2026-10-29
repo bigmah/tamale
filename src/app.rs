@@ -38,7 +38,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("/model", "Pick a model from a list (type to filter)"),
     (
         "/model <id>",
-        "Switch directly to a model, e.g. /model claude-opus-4-8",
+        "Switch directly to a model, e.g. /model claude-opus-5-5",
     ),
     (
         "/compact [focus]",
@@ -158,9 +158,11 @@ pub struct ModelInfo {
 
 /// Used when the live model list can't be fetched.
 const FALLBACK_MODELS: &[(&str, &str)] = &[
+    ("claude-opus-5-5", "Claude Opus 5.5"),
+    ("claude-sonnet-5-5", "Claude Sonnet 5.5"),
+    ("claude-haiku-5-5", "Claude Haiku 5.5"),
+    ("claude-fable-5-1", "Claude Fable 5.1"),
     (anthropic::completion::CLAUDE_OPUS_4_8, "Claude Opus 4.8"),
-    (anthropic::completion::CLAUDE_OPUS_4_7, "Claude Opus 4.7"),
-    (anthropic::completion::CLAUDE_OPUS_4_6, "Claude Opus 4.6"),
     (
         anthropic::completion::CLAUDE_SONNET_4_6,
         "Claude Sonnet 4.6",

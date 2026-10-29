@@ -8,7 +8,7 @@ A small Claude Code–style coding agent for the terminal, written in pure Rust 
 ```sh
 export ANTHROPIC_API_KEY=sk-ant-...
 cargo run --release                          # interactive TUI
-cargo run --release -- --model claude-opus-4-8
+cargo run --release -- --model claude-opus-5-5
 cargo run --release -- --effort low          # less thorough, faster, cheaper
 cargo run --release -- --thinking off        # disable adaptive thinking
 cargo run --release -- -p "summarize src/"   # one-shot, non-interactive
@@ -16,7 +16,7 @@ cargo run --release -- --continue            # resume the latest session in this
 cargo run --release -- --resume              # pick a saved session to resume
 ```
 
-`HARNESS_MODEL` sets the default model (otherwise `claude-sonnet-4-6`).
+`HARNESS_MODEL` sets the default model (otherwise `claude-opus-5-5`).
 `HARNESS_EFFORT` sets the default effort level (otherwise the API default).
 `HARNESS_THINKING` sets the thinking mode (`adaptive` or `on`, the default; `off` to disable).
 `HARNESS_CONTEXT_WINDOW` overrides the context window size (default: 1M tokens for Claude 5, Opus 4.6+ and Sonnet 4.6; 200k for older models).
