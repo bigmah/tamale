@@ -9,8 +9,10 @@ mod tests;
 
 use std::time::Duration;
 
-use rig_core::completion::message::{ToolResultContent, UserContent};
-use rig_core::completion::{AssistantContent, CompletionModel, Message, ToolDefinition, Usage};
+use rig_core::completion::message::{ReasoningContent, ToolResultContent, UserContent};
+use rig_core::completion::{
+    AssistantContent, CompletionModel, FinishReason, Message, ToolDefinition, Usage,
+};
 use tokio::sync::mpsc;
 
 use crate::{config::AgentSettings, tools};
@@ -39,6 +41,8 @@ pub enum AgentEvent {
         delay: Duration,
         error: String,
     },
+    /// The response stopped early; another request will continue the same task.
+    Continuing(String),
     Compacting,
     /// The history was replaced by a summary. `before` is the context size that was summarized,
     /// `after` the size of the summary (tokens).
@@ -71,7 +75,7 @@ impl TurnConfig {
     }
 }
 
-/// Runs the agent loop until the model stops calling tools.
+/// Runs until the model finishes, continuing truncated responses and tool steps.
 pub async fn run<M>(
     model: M,
     mut history: Vec<Message>,
@@ -131,27 +135,34 @@ where
 {
     let preamble = system_prompt();
     let tool_defs = tools::definitions();
+    let mut force_compact = false;
+    let mut empty_responses = 0;
 
     loop {
-        if config.should_compact() && history.len() > 1 {
+        if force_compact || (config.should_compact() && history.len() > 1) {
             *history =
                 compact_history(&model, &preamble, &tool_defs, history, None, config, tx).await?;
             config.context_tokens = 0;
+            force_compact = false;
             let _ = tx.send(AgentEvent::History(history.clone()));
         }
 
-        let (choice, usage) =
-            request(&model, &preamble, &tool_defs, history, config, true, tx).await?;
-        config.context_tokens = context_size(&usage);
-        let _ = tx.send(AgentEvent::Usage(usage));
+        let response = request(&model, &preamble, &tool_defs, history, config, true, tx).await?;
+        config.context_tokens = context_size(&response.usage);
+        let _ = tx.send(AgentEvent::Usage(response.usage));
+        let continuation = continuation(response.finish_reason.as_ref())?;
 
-        let content: Vec<AssistantContent> = choice
+        let content: Vec<AssistantContent> = response
+            .choice
             .into_iter()
             .filter(|c| !matches!(c, AssistantContent::Text(t) if t.text.trim().is_empty()))
             .collect();
-        if content.is_empty() {
+        if let Some(continuation) = continuation {
+            force_compact = matches!(continuation, Continuation::ContextLimit);
+            append_continuation(history, content, continuation.prompt());
             let _ = tx.send(AgentEvent::History(history.clone()));
-            return Ok(());
+            let _ = tx.send(AgentEvent::Continuing(continuation.status().into()));
+            continue;
         }
 
         let calls: Vec<_> = content
@@ -161,6 +172,31 @@ where
                 _ => None,
             })
             .collect();
+
+        if calls.is_empty()
+            && !content
+                .iter()
+                .any(|c| matches!(c, AssistantContent::Text(_)))
+        {
+            empty_responses += 1;
+            if empty_responses > 1 {
+                anyhow::bail!("the model repeatedly returned no answer or tool calls");
+            }
+            append_continuation(
+                history,
+                content,
+                Some(
+                    "Your last response contained no answer or tool call. Continue the user's \
+task using tools as needed. If the task is complete, provide the final answer.",
+                ),
+            );
+            let _ = tx.send(AgentEvent::History(history.clone()));
+            let _ = tx.send(AgentEvent::Continuing(
+                "Model returned no answer; continuing…".into(),
+            ));
+            continue;
+        }
+        empty_responses = 0;
         history.push(Message::Assistant { id: None, content });
 
         if calls.is_empty() {
@@ -224,21 +260,42 @@ where
     let mut messages = history.to_vec();
     push_user_text(&mut messages, prompt);
 
-    let (choice, usage) = request(model, preamble, tool_defs, &messages, config, false, tx).await?;
-    let summary: String = choice
-        .iter()
-        .filter_map(|c| match c {
-            AssistantContent::Text(t) => Some(t.text.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let mut usage = Usage::default();
+    let mut before = None;
+    let mut summary = String::new();
+    loop {
+        let response = request(model, preamble, tool_defs, &messages, config, false, tx).await?;
+        before.get_or_insert(context_size(&response.usage) - response.usage.output_tokens);
+        usage += response.usage;
+        for content in &response.choice {
+            if let AssistantContent::Text(t) = content {
+                summary.push_str(&t.text);
+            }
+        }
+        match continuation(response.finish_reason.as_ref())? {
+            Some(Continuation::ContextLimit) => {
+                anyhow::bail!("context window filled while compacting; original history was kept");
+            }
+            Some(reason) => {
+                append_continuation(
+                    &mut messages,
+                    response.choice,
+                    Some(
+                        "Continue the conversation summary from where it was cut off. \
+Respond with the remaining summary only; do not call tools or resume the task yet.",
+                    ),
+                );
+                let _ = tx.send(AgentEvent::Continuing(reason.status().into()));
+            }
+            None => break,
+        }
+    }
     if summary.trim().is_empty() {
         anyhow::bail!("the model returned an empty summary");
     }
 
     let _ = tx.send(AgentEvent::Compacted {
-        before: context_size(&usage) - usage.output_tokens,
+        before: before.unwrap_or_default(),
         after: usage.output_tokens,
         usage,
     });
@@ -248,6 +305,81 @@ Summary of the conversation so far:\n\n{}\n\n\
 Continue from where it left off; if a task was in progress, carry on with it.",
         summary.trim()
     ))])
+}
+
+enum Continuation {
+    TokenLimit,
+    ContextLimit,
+    Paused,
+}
+
+impl Continuation {
+    fn status(&self) -> &'static str {
+        match self {
+            Self::TokenLimit => "Response reached its token limit; continuing…",
+            Self::ContextLimit => "Context window filled; compacting and continuing…",
+            Self::Paused => "Model paused its turn; continuing…",
+        }
+    }
+
+    fn prompt(&self) -> Option<&'static str> {
+        match self {
+            Self::TokenLimit | Self::ContextLimit => Some(
+                "Your previous response was cut off at a token or context limit. Continue \
+the user's task from where you left off without repeating completed work. No tool calls \
+from the cut-off response were executed; reissue any needed calls in smaller steps. \
+Keep working until the task is complete or you encounter a concrete blocker.",
+            ),
+            // Anthropic resumes paused server tools with the assistant content as-is.
+            Self::Paused => None,
+        }
+    }
+}
+
+fn continuation(reason: Option<&FinishReason>) -> anyhow::Result<Option<Continuation>> {
+    Ok(match reason {
+        Some(FinishReason::Length) => Some(Continuation::TokenLimit),
+        Some(FinishReason::Other(reason)) if reason == "pause_turn" => Some(Continuation::Paused),
+        Some(FinishReason::Other(reason)) if reason == "model_context_window_exceeded" => {
+            Some(Continuation::ContextLimit)
+        }
+        Some(FinishReason::ContentFilter) => anyhow::bail!("the model declined this request"),
+        Some(FinishReason::Other(reason)) => {
+            anyhow::bail!("the model stopped unexpectedly: {reason}");
+        }
+        _ => None,
+    })
+}
+
+/// Keep usable output, but never replay or execute a possibly truncated tool call.
+/// Unsigned thinking can also be incomplete and is rejected by Anthropic on replay.
+fn append_continuation(
+    history: &mut Vec<Message>,
+    mut content: Vec<AssistantContent>,
+    prompt: Option<&str>,
+) {
+    content.retain_mut(|c| match c {
+        AssistantContent::ToolCall(_) => false,
+        AssistantContent::Text(t) => !t.text.trim().is_empty(),
+        AssistantContent::Reasoning(r) => {
+            r.content.retain(|block| match block {
+                ReasoningContent::Text { signature, .. } => {
+                    signature.as_ref().is_some_and(|s| !s.is_empty())
+                }
+                _ => true,
+            });
+            !r.content.is_empty()
+        }
+        _ => true,
+    });
+    if !content.is_empty() {
+        history.push(Message::Assistant { id: None, content });
+    }
+    if let Some(prompt) = prompt {
+        // When no assistant content survived, merge into the last user message.
+        // Tool results must stay first in that message for Anthropic's API.
+        push_user_text(history, prompt.into());
+    }
 }
 
 /// Appends text as a user turn, merging into a trailing user message (consecutive user

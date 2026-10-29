@@ -147,6 +147,10 @@ fn explicit_files_are_required_and_errors_identify_the_file() {
             "agent.auto_compact_percent",
         ),
         ("[agent]\nmax_retries = -1", "u32"),
+        (
+            "[agent]\nrequest_timeout_secs = 0",
+            "agent.request_timeout_secs",
+        ),
     ] {
         let path = fixture.write("invalid.toml", text);
         let error = Settings::load_from(&fixture.0, None, Some(&path)).unwrap_err();

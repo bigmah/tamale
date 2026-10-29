@@ -369,6 +369,42 @@ async fn perf_transcript() {
 }
 
 #[tokio::test]
+async fn continuation_keeps_completed_text_when_the_next_request_retries() {
+    let client = anthropic::Client::new("test-key").unwrap();
+    let (mut app, _rx) = App::new_with_channel(client, test_settings("test-model"));
+    app.task = Some(tokio::spawn(std::future::pending()));
+    app.on_agent(
+        app.turn,
+        AgentEvent::TextDelta("Completed first chunk".into()),
+    );
+    app.on_agent(app.turn, AgentEvent::Continuing("Continuing…".into()));
+    assert!(app.is_running());
+    app.on_agent(
+        app.turn,
+        AgentEvent::TextDelta("Failed second chunk".into()),
+    );
+    app.on_agent(
+        app.turn,
+        AgentEvent::Retry {
+            attempt: 1,
+            delay: std::time::Duration::ZERO,
+            error: "timeout".into(),
+        },
+    );
+    assert!(
+        app.entries
+            .iter()
+            .any(|e| matches!(e, Entry::Assistant(t) if t == "Completed first chunk"))
+    );
+    assert!(
+        !app.entries
+            .iter()
+            .any(|e| matches!(e, Entry::Assistant(t) if t == "Failed second chunk"))
+    );
+    app.task.take().unwrap().abort();
+}
+
+#[tokio::test]
 async fn agent_events_refresh_cached_text_tools_retries_and_clear() {
     let client = anthropic::Client::new("test-key").unwrap();
     let (mut app, _rx) = App::new_with_channel(client, test_settings("test-model"));

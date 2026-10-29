@@ -2,12 +2,19 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use rig_core::completion::{
-    AssistantContent, CompletionError, CompletionModel, Message, ToolDefinition, Usage,
+    AssistantContent, CompletionError, CompletionModel, FinishReason, Message, ToolDefinition,
+    Usage,
 };
 use rig_core::streaming::StreamedAssistantContent;
 use tokio::sync::mpsc;
 
 use super::{AgentEvent, TurnConfig};
+
+pub(super) struct Response {
+    pub choice: Vec<AssistantContent>,
+    pub usage: Usage,
+    pub finish_reason: Option<FinishReason>,
+}
 
 /// One completion request, retried with exponential backoff on transient errors.
 pub(super) async fn request<M>(
@@ -18,7 +25,7 @@ pub(super) async fn request<M>(
     config: TurnConfig,
     stream_text: bool,
     tx: &mpsc::UnboundedSender<AgentEvent>,
-) -> anyhow::Result<(Vec<AssistantContent>, Usage)>
+) -> anyhow::Result<Response>
 where
     M: CompletionModel + Clone,
 {
@@ -27,9 +34,10 @@ where
         .ok_or_else(|| anyhow::anyhow!("empty history"))?;
 
     let mut attempt = 0;
+    let timeout = Duration::from_secs(config.limits.request_timeout_secs);
     loop {
         let result = async {
-            let mut stream = model
+            let opening = model
                 .completion_request(prompt.clone())
                 .preamble(preamble.to_string())
                 .messages(rest.to_vec())
@@ -40,16 +48,46 @@ where
                     config.limits.compact_max_tokens
                 })
                 .additional_params(config.reasoning.params())
-                .stream()
-                .await?;
-            while let Some(item) = stream.next().await {
-                if let StreamedAssistantContent::Text(t) = item?
-                    && stream_text
-                {
-                    let _ = tx.send(AgentEvent::TextDelta(t.text));
+                .stream();
+            let mut stream = tokio::time::timeout(timeout, opening)
+                .await
+                .map_err(|_| timeout_error(timeout))??;
+            let mut content_error = None;
+            while let Some(item) = tokio::time::timeout(timeout, stream.next())
+                .await
+                .map_err(|_| timeout_error(timeout))?
+            {
+                match item {
+                    Ok(StreamedAssistantContent::Text(t)) if stream_text => {
+                        let _ = tx.send(AgentEvent::TextDelta(t.text));
+                    }
+                    // A token limit can cut a tool's JSON in half. Drain to the
+                    // terminal record before deciding whether this is truncation.
+                    Err(
+                        e @ (CompletionError::JsonError(_) | CompletionError::ResponseError(_)),
+                    ) => {
+                        content_error.get_or_insert(e);
+                    }
+                    Err(e) => return Err(e),
+                    _ => {}
                 }
             }
-            Ok::<_, CompletionError>((stream.choice.to_vec(), stream.usage()))
+            let terminal = stream.response.as_ref().ok_or_else(|| {
+                CompletionError::ProviderError(
+                    "stream ended before a final response was received".into(),
+                )
+            })?;
+            let finish_reason = terminal.finish_reason.clone();
+            if let Some(e) = content_error
+                && !matches!(finish_reason, Some(FinishReason::Length))
+            {
+                return Err(e);
+            }
+            Ok::<_, CompletionError>(Response {
+                choice: stream.choice.to_vec(),
+                usage: stream.usage(),
+                finish_reason,
+            })
         }
         .await;
 
@@ -68,6 +106,13 @@ where
             Err(e) => return Err(e.into()),
         }
     }
+}
+
+fn timeout_error(timeout: Duration) -> CompletionError {
+    CompletionError::ProviderError(format!(
+        "no response event received for {}s (request timeout)",
+        timeout.as_secs()
+    ))
 }
 
 fn is_retryable(e: &CompletionError) -> bool {

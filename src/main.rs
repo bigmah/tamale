@@ -120,6 +120,7 @@ where
                 delay.as_secs_f64()
             ),
             AgentEvent::Compacting => eprintln!("\n⏺ compacting conversation…"),
+            AgentEvent::Continuing(reason) => eprintln!("\n⟳ {reason}"),
             AgentEvent::Error(e) => {
                 eprintln!("\nerror: {e}");
                 failed = true;

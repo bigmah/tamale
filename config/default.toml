@@ -9,10 +9,11 @@ thinking = "adaptive" # adaptive (or on), off
 # context_window = 1000000 # omit to infer from the selected model
 
 [agent]
-max_tokens = 16000
+max_tokens = 16000 # per response (including thinking); truncated responses continue automatically
 compact_max_tokens = 8000
 auto_compact_percent = 80 # 1–100
 max_retries = 5 # retries after the initial attempt; 0 disables retries
+request_timeout_secs = 300 # timeout opening a stream or waiting for its next event
 
 [ui]
 verbose = false

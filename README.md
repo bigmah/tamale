@@ -34,6 +34,7 @@ max_tokens = 16000
 compact_max_tokens = 8000
 auto_compact_percent = 80
 max_retries = 5
+request_timeout_secs = 300
 
 [ui]
 verbose = false
@@ -84,6 +85,17 @@ thinking (e.g. Haiku 4.5). See [Anthropic's thinking documentation](https://plat
   `agent.auto_compact_percent` (default 80%, also mid-turn).
 - **Retries**: rate limits (429), overload (529), 5xx and network errors are retried up to
   `agent.max_retries` times (default 5) with exponential backoff (honoring `Retry-After`).
+- **Long tasks** have no fixed tool-step or total-token limit. `agent.max_tokens` is a
+  limit for each response, including thinking, rather than the whole task. Responses
+  that hit it continue automatically with the conversation preserved. Calls from a
+  cut-off response are discarded and the model is asked to reissue them in smaller
+  steps. Compaction summaries also continue if they hit their response limit.
+- **Stalled requests**: opening a stream or waiting for its next event times out after
+  `agent.request_timeout_secs` (default 300 seconds), then uses the same retry policy.
+  This is an inactivity timeout; active responses can run longer. Streams that close
+  without a final response are also retried. A blank reply gets one continuation
+  attempt before an explicit error. Continuations and retries are shown in the chat.
+  Normal final replies end the run; press `Esc` to interrupt ongoing work.
 
 ## Sessions
 

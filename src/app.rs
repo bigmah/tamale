@@ -368,6 +368,10 @@ impl App {
                 self.entries
                     .push(Entry::Info("Compacting conversation…".into()));
             }
+            AgentEvent::Continuing(reason) => {
+                self.attempt_entry = None;
+                self.entries.push(Entry::Info(reason));
+            }
             AgentEvent::Compacted {
                 usage,
                 before,

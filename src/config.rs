@@ -40,6 +40,7 @@ pub struct AgentSettings {
     pub compact_max_tokens: u64,
     pub auto_compact_percent: u8,
     pub max_retries: u32,
+    pub request_timeout_secs: u64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -125,6 +126,10 @@ impl Settings {
         ensure!(
             self.agent.compact_max_tokens > 0,
             "agent.compact_max_tokens must be positive"
+        );
+        ensure!(
+            self.agent.request_timeout_secs > 0,
+            "agent.request_timeout_secs must be positive"
         );
         ensure!(
             (1..=100).contains(&self.agent.auto_compact_percent),
