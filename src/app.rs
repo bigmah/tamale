@@ -34,8 +34,12 @@ const COMMANDS: &[(&str, &str)] = &[
         "Summarize the conversation to free up context (optional focus instructions)",
     ),
     (
-        "/effort [level]",
-        "Show or set effort: low, medium, high, xhigh, max, or default",
+        "/effort",
+        "Pick an effort level from a list (↑/↓ to choose)",
+    ),
+    (
+        "/effort <level>",
+        "Set effort directly: low, medium, high, xhigh, max, or default",
     ),
     (
         "/thinking [mode]",
@@ -77,6 +81,15 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
             ("↑/↓, Ctrl+P/Ctrl+N", "Move selection"),
             ("Enter", "Switch to selected model"),
             ("Esc", "Cancel"),
+        ],
+    ),
+    (
+        "Effort picker",
+        &[
+            ("↑/↓, j/k, Ctrl+P/Ctrl+N", "Move selection"),
+            ("1–6", "Jump to a level"),
+            ("Enter", "Apply selected level"),
+            ("Esc / q", "Cancel"),
         ],
     ),
     (
@@ -134,6 +147,20 @@ const FALLBACK_MODELS: &[(&str, &str)] = &[
     (anthropic::completion::CLAUDE_HAIKU_4_5, "Claude Haiku 4.5"),
 ];
 
+/// Choices shown in the effort picker, in order. `None` means "API default".
+const EFFORT_CHOICES: [(Option<agent::Effort>, &str); 6] = [
+    (None, "Let the API decide (omit the setting)"),
+    (Some(agent::Effort::Low), "Fastest and cheapest, least thorough"),
+    (Some(agent::Effort::Medium), "Balanced speed and thoroughness"),
+    (Some(agent::Effort::High), "Thorough"),
+    (Some(agent::Effort::XHigh), "Very thorough"),
+    (Some(agent::Effort::Max), "Maximum thoroughness, slowest"),
+];
+
+fn effort_label(effort: Option<agent::Effort>) -> &'static str {
+    effort.map_or("default", |e| e.as_str())
+}
+
 #[derive(Default)]
 struct ModelPicker {
     filter: String,
@@ -148,6 +175,8 @@ pub struct App {
     /// `None` until the list has been fetched.
     models: Option<Vec<ModelInfo>>,
     picker: Option<ModelPicker>,
+    /// Selected row of the effort picker; `Some` while it is open.
+    effort_picker: Option<usize>,
     history: Vec<Message>,
     entries: Vec<Entry>,
     input: String,
@@ -195,6 +224,7 @@ impl App {
             tx,
             models: None,
             picker: None,
+            effort_picker: None,
             history: Vec::new(),
             entries: vec![Entry::Info(
                 "Welcome! Type a request and press Enter. /help for commands.".into(),
@@ -247,6 +277,11 @@ impl App {
 
         if self.picker.is_some() {
             self.on_picker_key(key, ctrl);
+            return;
+        }
+
+        if self.effort_picker.is_some() {
+            self.on_effort_picker_key(key, ctrl);
             return;
         }
 
@@ -560,13 +595,68 @@ impl App {
         self.model_name = id;
     }
 
+    // -------------------------------------------------------- effort picker
+
+    fn open_effort_picker(&mut self) {
+        let selected = EFFORT_CHOICES
+            .iter()
+            .position(|(e, _)| *e == self.reasoning.effort)
+            .unwrap_or(0);
+        self.effort_picker = Some(selected);
+    }
+
+    fn on_effort_picker_key(&mut self, key: KeyEvent, ctrl: bool) {
+        let Some(selected) = self.effort_picker else {
+            return;
+        };
+        let last = EFFORT_CHOICES.len() - 1;
+        self.effort_picker = match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => None,
+            KeyCode::Char('c') if ctrl => None,
+            KeyCode::Up | KeyCode::Char('k') => Some(selected.saturating_sub(1)),
+            KeyCode::Char('p') if ctrl => Some(selected.saturating_sub(1)),
+            KeyCode::Down | KeyCode::Char('j') => Some((selected + 1).min(last)),
+            KeyCode::Char('n') if ctrl => Some((selected + 1).min(last)),
+            KeyCode::Home | KeyCode::Char('g') => Some(0),
+            KeyCode::End | KeyCode::Char('G') => Some(last),
+            KeyCode::Char(c @ '1'..='9') => {
+                let i = c as usize - '1' as usize;
+                if i <= last {
+                    self.effort_picker = None;
+                    self.apply_effort(EFFORT_CHOICES[i].0);
+                    return;
+                }
+                Some(selected)
+            }
+            KeyCode::Enter => {
+                self.effort_picker = None;
+                self.apply_effort(EFFORT_CHOICES[selected].0);
+                return;
+            }
+            _ => Some(selected),
+        };
+    }
+
+    fn apply_effort(&mut self, effort: Option<agent::Effort>) {
+        if effort == self.reasoning.effort {
+            return;
+        }
+        let note = if self.is_running() {
+            " (takes effect on your next message)"
+        } else {
+            ""
+        };
+        self.reasoning.effort = effort;
+        self.entries.push(Entry::Info(format!(
+            "Effort set to {}{note}.",
+            effort_label(effort)
+        )));
+    }
+
     fn set_effort(&mut self, arg: Option<&str>) {
         let levels = agent::Effort::ALL.map(|e| e.as_str()).join(", ");
-        let current = self.reasoning.effort.map_or("default", |e| e.as_str());
         let Some(arg) = arg else {
-            self.entries.push(Entry::Info(format!(
-                "Effort: {current}. Set with /effort <level> ({levels}, or default)."
-            )));
+            self.open_effort_picker();
             return;
         };
         let effort = match arg.to_ascii_lowercase().as_str() {
@@ -581,16 +671,7 @@ impl App {
                 }
             },
         };
-        let note = if self.is_running() {
-            " (takes effect on your next message)"
-        } else {
-            ""
-        };
-        self.reasoning.effort = effort;
-        self.entries.push(Entry::Info(format!(
-            "Effort set to {}{note}.",
-            effort.map_or("default", |e| e.as_str())
-        )));
+        self.apply_effort(effort);
     }
 
     fn set_thinking(&mut self, arg: Option<&str>) {
@@ -783,6 +864,48 @@ impl App {
         if self.picker.is_some() {
             self.draw_picker(frame, chat_area);
         }
+        if self.effort_picker.is_some() {
+            self.draw_effort_picker(frame, chat_area);
+        }
+    }
+
+    fn draw_effort_picker(&self, frame: &mut Frame, area: Rect) {
+        let Some(selected) = self.effort_picker else {
+            return;
+        };
+        let label_width = EFFORT_CHOICES
+            .iter()
+            .map(|(e, _)| effort_label(*e).len())
+            .max()
+            .unwrap_or(0);
+        let items: Vec<ListItem> = EFFORT_CHOICES
+            .iter()
+            .enumerate()
+            .map(|(i, (effort, desc))| {
+                let current = *effort == self.reasoning.effort;
+                ListItem::new(Line::from(vec![
+                    Span::from(if current { "● " } else { "  " }).fg(Color::Green),
+                    Span::from(format!("{} ", i + 1)).fg(Color::DarkGray),
+                    Span::from(format!("{:<label_width$}  ", effort_label(*effort))).bold(),
+                    Span::from(*desc).fg(Color::DarkGray),
+                ]))
+            })
+            .collect();
+        let width = (items.iter().map(ListItem::width).max().unwrap_or(0) + 6).max(48) as u16;
+        let height = EFFORT_CHOICES.len() as u16 + 2;
+        let popup = area.centered(Constraint::Max(width), Constraint::Length(height));
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::new().fg(Color::Cyan))
+            .title(" Select effort ".bold())
+            .title_bottom(Line::from(" ↑/↓ move · enter select · esc cancel ").right_aligned());
+        frame.render_widget(Clear, popup);
+        let list = List::new(items)
+            .block(block)
+            .highlight_style(Style::new().bg(Color::Cyan).fg(Color::Black))
+            .highlight_symbol("› ");
+        let mut state = ListState::default().with_selected(Some(selected));
+        frame.render_stateful_widget(list, popup, &mut state);
     }
 
     fn draw_picker(&self, frame: &mut Frame, area: Rect) {
@@ -953,6 +1076,8 @@ impl App {
     fn draw_status(&self, frame: &mut Frame, area: Rect) {
         let hint = if self.picker.is_some() {
             "type to filter · ↑/↓ move · enter select · esc cancel"
+        } else if self.effort_picker.is_some() {
+            "↑/↓ move · 1–6 jump · enter select · esc cancel"
         } else if self.help_scroll.is_some() {
             "↑/↓ j/k scroll · pgup/pgdn page · esc close"
         } else if self.is_running() {
@@ -1223,5 +1348,38 @@ mod tests {
         app.command("/thinking typo");
         assert_eq!(app.reasoning.thinking, agent::Thinking::Adaptive);
         assert!(matches!(app.entries.last(), Some(Entry::Error(_))));
+    }
+
+    #[test]
+    fn effort_command_opens_picker_and_arrows_select() {
+        let client = anthropic::Client::new("test-key").unwrap();
+        let (mut app, _rx) = App::new_with_channel(
+            client,
+            "claude-sonnet-4-6".into(),
+            agent::Reasoning::default(),
+        );
+        let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
+        app.command("/effort");
+        assert_eq!(app.effort_picker, Some(0));
+        app.on_event(key(KeyCode::Down));
+        app.on_event(key(KeyCode::Down));
+        app.on_event(key(KeyCode::Enter));
+        assert_eq!(app.effort_picker, None);
+        assert_eq!(app.reasoning.effort, Some(agent::Effort::Medium));
+
+        // Reopening starts on the current level; Esc cancels without changes.
+        app.command("/effort");
+        assert_eq!(app.effort_picker, Some(2));
+        app.on_event(key(KeyCode::Up));
+        app.on_event(key(KeyCode::Esc));
+        assert_eq!(app.reasoning.effort, Some(agent::Effort::Medium));
+
+        // Number keys jump straight to a level.
+        app.command("/effort");
+        app.on_event(key(KeyCode::Char('6')));
+        assert_eq!(app.reasoning.effort, Some(agent::Effort::Max));
+
+        app.command("/effort default");
+        assert_eq!(app.reasoning.effort, None);
     }
 }

@@ -60,8 +60,9 @@ The agent can modify files and run any shell command in the working directory.
 - `/help` opens a scrollable popup listing all commands, keys and tools
 - `/model` opens a model picker (live list from the Anthropic API; type to filter, Enter to switch).
   `/model <id>` switches directly. The conversation is kept when switching.
-- `/effort [level]` shows or sets the effort level (`low`, `medium`, `high`, `xhigh`, `max`,
-  or `default` to omit it). It is sent as `output_config.effort`; models that don't support it
+- `/effort` opens an effort picker (↑/↓ or j/k to move, 1–6 to jump, Enter to apply, Esc to
+  cancel; the current level is marked with ●). `/effort <level>` sets it directly (`low`,
+  `medium`, `high`, `xhigh`, `max`, or `default` to omit it). It is sent as `output_config.effort`; models that don't support it
   (e.g. Haiku 4.5) or a given level reject the request with an error. Shown in the status bar when set.
 - `/thinking` toggles adaptive thinking (on by default). `/thinking on` (or `adaptive`)
   and `/thinking off` set it explicitly. Shown in the status bar; changes during a run
