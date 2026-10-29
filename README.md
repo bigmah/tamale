@@ -32,6 +32,7 @@ thinking (e.g. Haiku 4.5). See [Anthropic's thinking documentation](https://plat
 
 - **Prompt caching** is always on: the system prompt, tool definitions and latest message are
   marked with Anthropic cache breakpoints, so each request mostly reads the conversation from cache.
+- The footer shows the **current working directory** above the status bar.
 - The status bar shows the **context usage** of the last request against the window
   (yellow at 60%, red at 80%) and session totals with the cache hit rate.
 - **Compaction**: `/compact [focus]` replaces the conversation with a model-written summary.

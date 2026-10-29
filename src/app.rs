@@ -1218,7 +1218,7 @@ impl App {
         let [chat_area, input_area, status_area] = Layout::vertical([
             Constraint::Min(1),
             Constraint::Length(input_height),
-            Constraint::Length(1),
+            Constraint::Length(2),
         ])
         .areas(area);
 
@@ -1536,6 +1536,13 @@ impl App {
     }
 
     fn draw_status(&self, frame: &mut Frame, area: Rect) {
+        let cwd = std::env::current_dir()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|_| "(unavailable)".into());
+        let cwd_line = Line::from(vec![
+            Span::from(" cwd: ").fg(Color::DarkGray),
+            Span::from(cwd).fg(Color::Cyan),
+        ]);
         let hint = if self.picker.is_some() || self.resume_picker.is_some() {
             "type to filter · ↑/↓ move · enter select · esc cancel"
         } else if self.effort_picker.is_some() {
@@ -1592,7 +1599,7 @@ impl App {
             .fg(Color::Green),
             Span::from(format!("· {hint}")).fg(Color::DarkGray),
         ]);
-        frame.render_widget(Paragraph::new(line), area);
+        frame.render_widget(Paragraph::new(vec![cwd_line, line]), area);
     }
 }
 
