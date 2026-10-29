@@ -48,6 +48,11 @@ These files are appended to the system prompt if present (duplicates skipped):
 
 `read_file`, `list_dir`, `write_file`, `edit_file`, `bash`.
 
+Every tool call carries a short model-written `description` ("Find where tool calls are
+rendered"). The chat shows that as the step's label, with the raw call dimmed after it, so a
+run of tool calls reads as a sequence of steps. Long runs are collapsed to the last 5 steps.
+`/verbose` shows every step, the full call and its output.
+
 All tools run immediately without asking for confirmation, in both the TUI and `-p` mode.
 The agent can modify files and run any shell command in the working directory.
 
@@ -59,9 +64,9 @@ The agent can modify files and run any shell command in the working directory.
 - `/mouse [on|off]` toggles mouse capture (on by default). While on, hold Shift (Option in
   iTerm2/Terminal.app) to select text; turn it off to restore native selection.
 - `Ctrl+C` clear input / interrupt / quit
-- `/verbose [on|off]` toggles verbose output. Off by default: tool calls show as one line
-  each with no output, and only the last 3 calls of a run are shown. Verbose shows every call
-  with an output preview.
+- `/verbose [on|off]` toggles verbose output. Off by default: each step shows as one line
+  (its description) with no output, and only the last 5 steps of a run are shown. Verbose shows
+  every step with the full call and an output preview.
 - `/help` opens a scrollable popup listing all commands, keys and tools
 - `/model` opens a model picker (live list from the Anthropic API; type to filter, Enter to switch).
   `/model <id>` switches directly. The conversation is kept when switching.

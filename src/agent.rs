@@ -38,7 +38,10 @@ pub enum AgentEvent {
     TextDelta(String),
     ToolCall {
         name: String,
+        /// Raw arguments, condensed (path or command).
         summary: String,
+        /// What the step is for, in words (see `tools::describe`).
+        description: String,
     },
     ToolResult {
         output: String,
@@ -418,6 +421,7 @@ where
             let _ = tx.send(AgentEvent::ToolCall {
                 name: name.clone(),
                 summary: tools::summarize(&name, &args),
+                description: tools::describe(&name, &args),
             });
 
             let (output, is_error) = match tools::execute(&name, args).await {

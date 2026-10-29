@@ -23,9 +23,9 @@ use crate::agent::{self, AgentEvent};
 const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const TOOL_PREVIEW_LINES: usize = 6;
 /// In quiet mode, only the last few calls of a consecutive run of tool calls are shown.
-const QUIET_TOOL_CALLS: usize = 3;
-/// In quiet mode, tool call summaries are truncated to this many characters.
-const QUIET_SUMMARY_CHARS: usize = 80;
+const QUIET_TOOL_CALLS: usize = 5;
+/// In quiet mode, the raw call shown after a step's description is truncated to this many characters.
+const QUIET_SUMMARY_CHARS: usize = 50;
 /// Lines scrolled per mouse wheel notch.
 const WHEEL_LINES: usize = 3;
 
@@ -136,6 +136,7 @@ enum Entry {
     Tool {
         name: String,
         summary: String,
+        description: String,
         output: Option<(String, bool)>,
     },
     Info(String),
@@ -890,11 +891,16 @@ impl App {
                     self.entries.push(Entry::Assistant(delta));
                 }
             },
-            AgentEvent::ToolCall { name, summary } => {
+            AgentEvent::ToolCall {
+                name,
+                summary,
+                description,
+            } => {
                 self.attempt_entry = None;
                 self.entries.push(Entry::Tool {
                     name,
                     summary,
+                    description,
                     output: None,
                 })
             }
@@ -1353,8 +1359,9 @@ fn help_lines() -> Vec<Line<'static>> {
     lines
 }
 
-/// Compact chat rendering: tool calls are one line each without output, and long
-/// runs of consecutive tool calls are collapsed to the most recent few.
+/// Compact chat rendering: each tool call is one line showing what the step is for (its
+/// description) without output, and long runs of consecutive steps are collapsed to the
+/// most recent few.
 fn render_quiet<'a>(entries: &'a [Entry], lines: &mut Vec<Line<'a>>) {
     let mut i = 0;
     while i < entries.len() {
@@ -1372,7 +1379,7 @@ fn render_quiet<'a>(entries: &'a [Entry], lines: &mut Vec<Line<'a>>) {
         if hidden > 0 {
             let s = if hidden == 1 { "" } else { "s" };
             lines.push(Line::from(
-                format!("  … {hidden} earlier tool call{s} (/verbose to show)").fg(Color::DarkGray),
+                format!("  … {hidden} earlier step{s} (/verbose to show)").fg(Color::DarkGray),
             ));
         }
         for entry in &entries[i + hidden..end] {
@@ -1405,6 +1412,7 @@ fn render_entry<'a>(entry: &'a Entry, verbose: bool, lines: &mut Vec<Line<'a>>) 
         Entry::Tool {
             name,
             summary,
+            description,
             output,
         } => {
             let dot_color = match output {
@@ -1413,16 +1421,22 @@ fn render_entry<'a>(entry: &'a Entry, verbose: bool, lines: &mut Vec<Line<'a>>) 
                 Some((_, false)) => Color::Green,
             };
             let summary = summary.lines().next().unwrap_or("");
-            let summary = if verbose {
-                summary.to_string()
-            } else {
-                truncate_chars(summary, QUIET_SUMMARY_CHARS)
-            };
-            lines.push(Line::from(vec![
+            let mut spans = vec![
                 Span::from("⏺ ").fg(dot_color),
-                Span::from(name.as_str()).bold(),
-                Span::from(format!("({summary})")).fg(Color::Gray),
-            ]));
+                Span::from(description.as_str()),
+            ];
+            if verbose {
+                lines.push(Line::from(spans));
+                lines.push(Line::from(vec![
+                    Span::from("  ").fg(Color::DarkGray),
+                    Span::from(name.as_str()).fg(Color::Gray).bold(),
+                    Span::from(format!("({summary})")).fg(Color::DarkGray),
+                ]));
+            } else {
+                let detail = truncate_chars(summary, QUIET_SUMMARY_CHARS);
+                spans.push(Span::from(format!("  {name} {detail}")).fg(Color::DarkGray));
+                lines.push(Line::from(spans));
+            }
             if !verbose {
                 return;
             }
@@ -1643,17 +1657,18 @@ mod tests {
         let tool = |n: usize| Entry::Tool {
             name: "bash".into(),
             summary: format!("cmd {n}"),
+            description: format!("Step {n}"),
             output: Some(("line a\nline b".into(), false)),
         };
-        let entries: Vec<Entry> = (0..5).map(tool).collect();
+        let entries: Vec<Entry> = (0..7).map(tool).collect();
         let text =
             |lines: &[Line]| -> Vec<String> { lines.iter().map(|l| l.to_string()).collect() };
 
         let mut quiet = Vec::new();
         render_quiet(&entries, &mut quiet);
         let quiet = text(&quiet);
-        assert!(quiet[0].contains("2 earlier tool calls"));
-        assert!(quiet.iter().any(|l| l.contains("cmd 4")));
+        assert!(quiet[0].contains("2 earlier steps"));
+        assert!(quiet.iter().any(|l| l.contains("Step 6") && l.contains("bash cmd 6")));
         assert!(
             !quiet
                 .iter()

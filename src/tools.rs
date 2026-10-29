@@ -10,8 +10,14 @@ use tokio::process::Command;
 const MAX_OUTPUT_CHARS: usize = 30_000;
 const DEFAULT_READ_LIMIT: usize = 2_000;
 
+/// Every tool takes a `description`: a short, model-written explanation of the step that the
+/// UI shows instead of raw arguments, so a run of tool calls reads as a narrative.
+const DESCRIPTION_SCHEMA: &str = "Short (3-10 words) description of what this step does and why, \
+    shown to the user as the step's label, e.g. \"Find where tool calls are rendered\" or \
+    \"Run tests to check the scroll fix\". Write it in the imperative mood.";
+
 pub fn definitions() -> Vec<ToolDefinition> {
-    vec![
+    let mut defs = vec![
         ToolDefinition {
             name: "read_file".into(),
             description: "Read a text file. Returns lines prefixed with 1-based line numbers. \
@@ -82,7 +88,39 @@ pub fn definitions() -> Vec<ToolDefinition> {
                 "required": ["command"]
             }),
         },
-    ]
+    ];
+    for def in &mut defs {
+        def.parameters["properties"]["description"] =
+            json!({ "type": "string", "description": DESCRIPTION_SCHEMA });
+        let required = def.parameters["required"].take();
+        let mut required = match required {
+            Value::Array(r) => r,
+            _ => Vec::new(),
+        };
+        required.insert(0, json!("description"));
+        def.parameters["required"] = Value::Array(required);
+    }
+    defs
+}
+
+/// Human-readable label for a tool call: the model's `description` if it gave one, otherwise
+/// a label derived from the arguments.
+pub fn describe(name: &str, args: &Value) -> String {
+    if let Some(d) = args.get("description").and_then(Value::as_str) {
+        let d = d.trim();
+        if !d.is_empty() {
+            return d.lines().next().unwrap_or(d).to_string();
+        }
+    }
+    let target = summarize(name, args);
+    match name {
+        "read_file" => format!("Read {target}"),
+        "write_file" => format!("Write {target}"),
+        "edit_file" => format!("Edit {target}"),
+        "list_dir" => format!("List {target}"),
+        "bash" => "Run a shell command".into(),
+        _ => format!("Use {name}"),
+    }
 }
 
 /// Short human-readable summary of a tool call for the UI.
@@ -258,4 +296,31 @@ fn truncate(mut s: String) -> String {
         s.push_str("\n... (output truncated)");
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_tool_requires_a_description() {
+        for def in definitions() {
+            assert!(def.parameters["properties"]["description"].is_object());
+            assert_eq!(def.parameters["required"][0], "description", "{}", def.name);
+        }
+    }
+
+    #[test]
+    fn describe_prefers_model_description_with_fallback() {
+        let args = json!({ "description": "  Find the render loop\nextra", "path": "src/app.rs" });
+        assert_eq!(describe("read_file", &args), "Find the render loop");
+        assert_eq!(
+            describe("edit_file", &json!({ "path": "src/app.rs" })),
+            "Edit src/app.rs"
+        );
+        assert_eq!(
+            describe("bash", &json!({ "command": "ls", "description": "" })),
+            "Run a shell command"
+        );
+    }
 }

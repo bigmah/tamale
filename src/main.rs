@@ -128,7 +128,14 @@ where
                 print!("{t}");
                 std::io::stdout().flush()?;
             }
-            AgentEvent::ToolCall { name, summary } => eprintln!("\n⏺ {name}({summary})"),
+            AgentEvent::ToolCall {
+                name,
+                summary,
+                description,
+            } => eprintln!(
+                "\n⏺ {description}  ({name}: {})",
+                summary.lines().next().unwrap_or("")
+            ),
             AgentEvent::Retry {
                 attempt,
                 delay,
