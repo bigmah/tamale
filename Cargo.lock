@@ -3022,6 +3022,7 @@ dependencies = [
  "futures",
  "globset",
  "ignore",
+ "libc",
  "ratatui",
  "regex",
  "reqwest",

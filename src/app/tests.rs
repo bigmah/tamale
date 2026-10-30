@@ -954,3 +954,144 @@ async fn backend_switches_keep_the_conversation_and_drop_the_old_thread() {
     app.command("/backend api");
     assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.starts_with("Already using")));
 }
+
+fn key(code: KeyCode) -> Event {
+    Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
+}
+
+fn type_text(app: &mut App, text: &str) {
+    app.on_event(Event::Paste(text.into()));
+}
+
+#[test]
+fn up_and_down_move_between_lines_then_recall_prompts() {
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    app.prompts.add("first");
+    app.prompts.add("multi\nline");
+    type_text(&mut app, "draft");
+
+    app.on_event(key(KeyCode::Up));
+    assert_eq!(app.input, "multi\nline");
+    assert_eq!(app.cursor, 0);
+    app.on_event(key(KeyCode::Up));
+    assert_eq!(app.input, "first");
+    app.on_event(key(KeyCode::Up));
+    assert_eq!(app.input, "first", "stays at the oldest prompt");
+    app.on_event(key(KeyCode::Down));
+    assert_eq!(app.input, "multi\nline");
+    assert_eq!(app.cursor, app.input.len());
+    // Inside a multi-line prompt, ↑ moves up a line (keeping the column) before recalling.
+    app.on_event(key(KeyCode::Up));
+    assert_eq!(app.input, "multi\nline");
+    assert_eq!(app.cursor, "line".len());
+    app.on_event(key(KeyCode::Down));
+    assert_eq!(app.cursor, "multi\nline".len());
+    app.on_event(key(KeyCode::Down));
+    assert_eq!(app.input, "draft", "the unsent draft comes back");
+}
+
+#[tokio::test]
+async fn messages_typed_during_a_turn_are_queued_delivered_and_restored() {
+    let _env = SESSIONS_ENV.lock().await;
+    let root = std::env::temp_dir().join(format!("tamale-steer-test-{}", session::new_id()));
+    unsafe { std::env::set_var("TAMALE_SESSIONS_DIR", root.join("sessions")) };
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    let _ = app.begin_turn("do the thing".into());
+    app.task = Some(tokio::spawn(std::future::pending()));
+
+    type_text(&mut app, "also check the docs");
+    app.on_event(key(KeyCode::Enter));
+    assert!(app.input.is_empty());
+    assert_eq!(app.queued_messages(), ["also check the docs"]);
+    assert!(screen(&mut app).contains("queued also check the docs"));
+
+    // The turn takes the queue with the next tool result (what `TurnCtx::call_tool` does).
+    let mut output = "tool output".to_string();
+    let delivered = std::mem::take(&mut *app.queued.lock().unwrap());
+    agent::deliver_steering(&mut output, &delivered);
+    app.on_agent(
+        app.turn,
+        AgentEvent::ToolCall {
+            name: "bash".into(),
+            summary: "ls".into(),
+            description: "List files".into(),
+        },
+    );
+    app.on_agent(app.turn, AgentEvent::Steered(delivered));
+    app.on_agent(
+        app.turn,
+        AgentEvent::ToolResult {
+            output,
+            is_error: false,
+        },
+    );
+    assert!(matches!(&app.entries[app.entries.len() - 2],
+        Entry::Tool { output: Some((out, false)), .. } if out == "tool output"));
+    assert!(matches!(app.entries.last(), Some(Entry::User(t)) if t == "also check the docs"));
+    assert_eq!(
+        app.checkpoints.last().unwrap().prompt,
+        "do the thing\n\nalso check the docs"
+    );
+    assert!(!screen(&mut app).contains("queued"));
+
+    // Undelivered messages go back to the input box on interrupt.
+    type_text(&mut app, "never mind");
+    app.on_event(key(KeyCode::Enter));
+    type_text(&mut app, "half-typed");
+    app.on_event(key(KeyCode::Esc));
+    assert!(!app.is_running());
+    assert!(app.queued_messages().is_empty());
+    assert_eq!(app.input, "never mind\n\nhalf-typed");
+    app.finish_saves().await;
+    unsafe { std::env::remove_var("TAMALE_SESSIONS_DIR") };
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn messages_left_in_the_queue_are_sent_when_the_turn_ends() {
+    let _env = SESSIONS_ENV.lock().await;
+    let root = std::env::temp_dir().join(format!("tamale-queue-test-{}", session::new_id()));
+    unsafe { std::env::set_var("TAMALE_SESSIONS_DIR", root.join("sessions")) };
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    let _ = app.begin_turn("first".into());
+    app.task = Some(tokio::spawn(std::future::pending()));
+    app.queued.lock().unwrap().push("second".into());
+    app.queued.lock().unwrap().push("third".into());
+    app.on_agent(app.turn, AgentEvent::Done);
+
+    assert!(app.is_running(), "the queued messages start the next turn");
+    assert!(app.queued_messages().is_empty());
+    assert!(matches!(app.entries.last(), Some(Entry::User(t)) if t == "second\n\nthird"));
+    assert_eq!(app.checkpoints.len(), 2);
+    app.task.take().unwrap().abort();
+    app.finish_saves().await;
+    unsafe { std::env::remove_var("TAMALE_SESSIONS_DIR") };
+    let _ = std::fs::remove_dir_all(root);
+}
+
+fn screen(app: &mut App) -> String {
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect()
+}

@@ -75,6 +75,8 @@ pub enum AgentEvent {
     /// Usage of a subagent's request: counted in the totals, not as the context size.
     SubagentUsage(Usage),
     Error(String),
+    /// Queued user messages were delivered to the model with a tool result.
+    Steered(Vec<String>),
     Done,
 }
 
@@ -87,6 +89,28 @@ pub struct TurnCtx {
     pub checkpoint: Option<Arc<Mutex<Recorder>>>,
     /// `None` refuses the `agent` tool (in subagents, so they don't nest).
     pub subagent: Option<crate::backend::Subagent>,
+    /// Messages the user typed while the turn runs. They're delivered with the next tool
+    /// result; whatever is left when the turn ends is sent as the next prompt.
+    pub steering: Option<Steering>,
+}
+
+/// Messages queued by the user during a turn, shared between the UI and the running turn.
+pub type Steering = Arc<Mutex<Vec<String>>>;
+
+/// Separates a tool's output from user messages delivered with it. The UI cuts the tool
+/// result at this marker (the messages are shown as user entries instead).
+pub const STEERING_MARKER: &str = "\n\n<user-message-during-turn>";
+
+/// Appends queued user messages to a tool result so the model sees them at the next step,
+/// on every backend (CLI backends receive tool results through MCP).
+pub fn deliver_steering(output: &mut String, messages: &[String]) {
+    output.push_str(STEERING_MARKER);
+    output.push_str(
+        "\nThe user sent the following while you were working. It takes priority over your \
+current plan: take it into account, then continue (or stop if they ask you to).\n",
+    );
+    output.push_str(&messages.join("\n\n"));
+    output.push_str("\n</user-message-during-turn>");
 }
 
 impl TurnCtx {
@@ -95,11 +119,17 @@ impl TurnCtx {
             permissions,
             checkpoint: checkpoint.map(|r| Arc::new(Mutex::new(r))),
             subagent: None,
+            steering: None,
         }
     }
 
     pub fn with_subagent(mut self, subagent: crate::backend::Subagent) -> Self {
         self.subagent = Some(subagent);
+        self
+    }
+
+    pub fn with_steering(mut self, steering: Steering) -> Self {
+        self.steering = Some(steering);
         self
     }
 
@@ -152,6 +182,26 @@ the user how to proceed."
         workspace: &Workspace,
         tx: &mpsc::UnboundedSender<AgentEvent>,
     ) -> (String, bool) {
+        let (mut output, is_error) = self.run_tool(name, args, workspace, tx).await;
+        let queued = self
+            .steering
+            .as_ref()
+            .map(|s| std::mem::take(&mut *s.lock().unwrap()))
+            .unwrap_or_default();
+        if !queued.is_empty() {
+            deliver_steering(&mut output, &queued);
+            let _ = tx.send(AgentEvent::Steered(queued));
+        }
+        (output, is_error)
+    }
+
+    async fn run_tool(
+        &mut self,
+        name: &str,
+        args: Value,
+        workspace: &Workspace,
+        tx: &mpsc::UnboundedSender<AgentEvent>,
+    ) -> (String, bool) {
         if name == tools::AGENT {
             return self.run_subagent(args, workspace, tx).await;
         }
@@ -192,6 +242,7 @@ the user how to proceed."
             permissions: self.permissions.clone(),
             checkpoint: self.checkpoint.clone(),
             subagent: None,
+            steering: None,
         };
         subagent.run(&args, ctx, workspace, tx).await
     }

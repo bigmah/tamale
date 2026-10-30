@@ -6,6 +6,7 @@ mod backends;
 mod commands;
 mod help;
 mod input;
+mod prompts;
 mod rewind;
 mod sessions;
 #[cfg(test)]
@@ -153,6 +154,10 @@ pub struct App {
     session_writer: Option<session::Writer>,
     input: String,
     cursor: usize,
+    /// Messages typed while the agent runs, shared with the running turn (see `agent::Steering`).
+    queued: agent::Steering,
+    /// Earlier prompts for ↑/↓ recall, oldest first.
+    prompts: prompts::Prompts,
     scroll_back: usize,
     turn: u64,
     task: Option<JoinHandle<()>>,
@@ -226,6 +231,8 @@ impl App {
             session_writer: None,
             input: String::new(),
             cursor: 0,
+            queued: agent::Steering::default(),
+            prompts: prompts::Prompts::default(),
             scroll_back: 0,
             turn: 0,
             task: None,
@@ -248,6 +255,11 @@ impl App {
         self.settings.ui.mouse
     }
 
+    /// Loads earlier prompts from this directory for ↑ recall, and saves new ones.
+    pub fn load_prompt_history(&mut self) {
+        self.prompts = prompts::Prompts::load(&self.workspace.cwd);
+    }
+
     pub fn is_running(&self) -> bool {
         self.task.is_some()
     }
@@ -265,9 +277,10 @@ impl App {
 
     fn submit(&mut self) {
         let text = self.input.trim().to_string();
-        if text.is_empty() || (self.is_running() && !text.starts_with('/')) {
+        if text.is_empty() {
             return;
         }
+        self.prompts.add(&text);
         self.input.clear();
         self.cursor = 0;
         self.scroll_back = 0;
@@ -276,7 +289,28 @@ impl App {
             self.command(&text);
             return;
         }
+        if self.is_running() {
+            // Delivered with the next tool result, or sent when the turn ends.
+            self.queued.lock().unwrap().push(text);
+            return;
+        }
+        self.send_prompt(text);
+    }
 
+    /// Messages still queued, oldest first.
+    fn queued_messages(&self) -> Vec<String> {
+        self.queued.lock().unwrap().clone()
+    }
+
+    /// Sends messages queued during a turn that ended before they could be delivered.
+    fn send_queued(&mut self) {
+        let queued = std::mem::take(&mut *self.queued.lock().unwrap());
+        if !queued.is_empty() {
+            self.send_prompt(queued.join("\n\n"));
+        }
+    }
+
+    fn send_prompt(&mut self, text: String) {
         let ctx = self.begin_turn(text.clone());
         let turn = self.backend_turn(text);
         let atx = self.start_turn();
@@ -313,6 +347,8 @@ impl App {
         // Consecutive user turns (e.g. after an interrupt) are merged into one message.
         agent::push_user_text(&mut self.history, text);
         self.save_session();
+        // A fresh queue per turn: an interrupted turn's task can't take later messages.
+        self.queued = agent::Steering::default();
         agent::TurnCtx::new(
             self.permissions.clone(),
             session::checkpoint_dir(&self.session_id, turn).map(Recorder::new),
@@ -322,6 +358,7 @@ impl App {
             model: self.settings.model.name.clone(),
             config: self.settings.turn_config(0),
         })
+        .with_steering(self.queued.clone())
     }
 
     fn compact(&mut self, instructions: Option<String>) {
@@ -370,6 +407,17 @@ impl App {
             self.entries.push(Entry::Info("Interrupted.".into()));
             self.save_session();
         }
+        // Undelivered messages go back to the input box rather than being lost.
+        let queued = std::mem::take(&mut *self.queued.lock().unwrap());
+        if !queued.is_empty() {
+            let mut text = queued.join("\n\n");
+            if !self.input.trim().is_empty() {
+                text.push_str("\n\n");
+                text.push_str(&self.input);
+            }
+            self.input = text;
+            self.cursor = self.input.len();
+        }
     }
 
     pub fn on_app_event(&mut self, event: AppEvent) {
@@ -402,6 +450,19 @@ impl App {
                 turn.history = None;
             }
             self.thread = None;
+        }
+        if let AgentEvent::Steered(messages) = event {
+            // Shown even if the turn was just interrupted: the model has already seen them.
+            self.attempt_entry = None;
+            let text = messages.join("\n\n");
+            if let Some(turn) = self.checkpoints.last_mut() {
+                // `/undo` puts these back in the input box with the turn's prompt.
+                turn.prompt.push_str("\n\n");
+                turn.prompt.push_str(&text);
+            }
+            self.entries.push(Entry::User(text));
+            self.save_session();
+            return;
         }
         if let AgentEvent::Thread(id) = event {
             // Kept even after an interrupt: the session holds what was said so far.
@@ -495,7 +556,11 @@ impl App {
                     fmt_tokens(after)
                 )));
             }
-            AgentEvent::ToolResult { output, is_error } => {
+            AgentEvent::ToolResult { mut output, is_error } => {
+                // Delivered user messages are shown as their own entries.
+                if let Some(i) = output.find(agent::STEERING_MARKER) {
+                    output.truncate(i);
+                }
                 if let Some((i, Entry::Tool { output: slot, .. })) = self
                     .entries
                     .iter_mut()
@@ -518,12 +583,13 @@ impl App {
             }
             AgentEvent::SubagentUsage(u) => self.add_usage(&u),
             AgentEvent::Error(e) => self.entries.push(Entry::Error(e)),
-            AgentEvent::Thread(_) => {}
+            AgentEvent::Thread(_) | AgentEvent::Steered(_) => {}
             AgentEvent::Done => {
                 self.task = None;
                 self.approval = None;
                 self.compacting = false;
                 self.save_session();
+                self.send_queued();
             }
         }
     }

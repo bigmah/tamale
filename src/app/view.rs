@@ -24,15 +24,19 @@ impl App {
         let input_width = area.width.saturating_sub(4).max(1) as usize;
         let (rows, cursor) = wrap_input(&self.input, self.cursor, input_width);
         let input_height = (rows.len() as u16).clamp(1, 10) + 2;
+        let queued = self.queued_messages();
+        let queued_height = queued.len().min(MAX_QUEUED_LINES) as u16;
 
-        let [chat_area, input_area, status_area] = Layout::vertical([
+        let [chat_area, queued_area, input_area, status_area] = Layout::vertical([
             Constraint::Min(1),
+            Constraint::Length(queued_height),
             Constraint::Length(input_height),
             Constraint::Length(2),
         ])
         .areas(area);
 
         self.draw_chat(frame, chat_area);
+        draw_queued(frame, queued_area, &queued);
         self.draw_input(frame, input_area, rows, cursor);
         self.draw_status(frame, status_area);
         if self.help_scroll.is_some() {
@@ -764,6 +768,35 @@ pub(super) fn render_markdown_from<'a>(
         lines.push(Line::from(spans));
     }
     tail
+}
+
+/// Messages typed during a turn are listed above the input until the model gets them.
+const MAX_QUEUED_LINES: usize = 3;
+
+fn draw_queued(frame: &mut Frame, area: Rect, queued: &[String]) {
+    if queued.is_empty() {
+        return;
+    }
+    let width = (area.width as usize).saturating_sub(12).max(10);
+    let mut lines: Vec<Line> = queued
+        .iter()
+        .take(MAX_QUEUED_LINES)
+        .map(|text| {
+            let first = text.lines().next().unwrap_or("");
+            Line::from(vec![
+                Span::from(" ⧗ queued ").fg(Color::Yellow),
+                Span::from(truncate_chars(first, width)).fg(Color::DarkGray),
+            ])
+        })
+        .collect();
+    if queued.len() > MAX_QUEUED_LINES
+        && let Some(last) = lines.last_mut()
+    {
+        *last = Line::from(
+            format!(" ⧗ … and {} more", queued.len() - MAX_QUEUED_LINES + 1).fg(Color::Yellow),
+        );
+    }
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 /// Wraps input text to `width` columns, returning visual rows and the

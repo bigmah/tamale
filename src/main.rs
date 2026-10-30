@@ -93,6 +93,7 @@ async fn start(cli: cli::Cli) -> Result<()> {
         execute!(std::io::stdout(), EnableMouseCapture)?;
     }
     let (mut app, rx) = App::new_with_channel(backend, settings, workspace);
+    app.load_prompt_history();
     match cli.resume {
         Some(cli::Resume::Latest) => match session::list(Some(&std::env::current_dir()?)).first() {
             Some(latest) => app.resume(&latest.id),

@@ -905,3 +905,28 @@ async fn tool_calls_wait_for_approval_and_writes_are_checkpointed() {
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "old");
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn queued_user_messages_are_delivered_with_the_next_tool_result() {
+    let steering = Steering::default();
+    let mut ctx = unrestricted().with_steering(steering.clone());
+    let workspace = Workspace::current().unwrap();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let (output, is_error) = ctx
+        .call_tool("bash", json!({"command": "echo plain"}), &workspace, &tx)
+        .await;
+    assert!(!is_error);
+    assert!(!output.contains(STEERING_MARKER));
+    assert!(rx.try_recv().is_err());
+
+    steering.lock().unwrap().push("use tabs, not spaces".into());
+    let (output, _) = ctx
+        .call_tool("bash", json!({"command": "echo again"}), &workspace, &tx)
+        .await;
+    let (tool, message) = output.split_once(STEERING_MARKER).unwrap();
+    assert_eq!(tool, "again\n\n[exit code: 0]");
+    assert!(message.contains("use tabs, not spaces"));
+    assert!(steering.lock().unwrap().is_empty());
+    assert!(matches!(rx.try_recv(), Ok(AgentEvent::Steered(m)) if m == ["use tabs, not spaces"]));
+}

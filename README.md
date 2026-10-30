@@ -349,6 +349,12 @@ rendered"). The chat shows that as the step's label, with the raw call dimmed af
 run of tool calls reads as a sequence of steps. Long runs are collapsed to the last 5 steps.
 `/verbose` shows every step, the full call and its output.
 
+`bash` runs `sh -c` in its own process group with stdout and stderr on one pipe, so their
+lines stay in order. A timeout (`timeout_secs`, default 120) stops the command and every
+process it started (SIGTERM, then SIGKILL after 2 seconds) and returns the output printed so
+far; interrupting the turn with `Esc` kills the group too. Background processes a finished
+command leaves running (`server &`) keep running; their later output isn't captured.
+
 Output over 30,000 characters keeps its first third and last two thirds (where compiler
 errors and test summaries usually are), with a marker in between. The full output is
 saved to `~/.cache/tamale/out/` (`$XDG_CACHE_HOME/tamale/out`) and the marker gives its
@@ -412,7 +418,15 @@ the fact that it didn't exist) are saved under the session's directory,
 ## Keys
 
 - `Enter` send · `Alt/Shift+Enter` or `Ctrl+J` newline
-- `Esc` interrupt the agent
+- `↑/↓` move between lines of the input; on the first/last line they recall earlier
+  prompts (past the newest, your unsent draft comes back). Prompts are remembered per
+  working directory across sessions in `sessions/.prompts.jsonl`.
+- **Typing while the agent works**: `Enter` queues the message (shown above the input as
+  `⧗ queued`). It's delivered to the model with the next tool result, on every backend,
+  and appears in the chat at that point; `/undo` puts it back in the input box with the
+  turn's prompt. Messages still queued when the turn ends are sent as the next prompt.
+  Slash commands still run immediately.
+- `Esc` interrupt the agent; queued messages that weren't delivered return to the input box
 - `Shift+Tab` cycle the permission mode (see [Permissions](#permissions))
 - `PgUp/PgDn`, `Shift+↑/↓`, mouse wheel scroll (a scrollbar and "↓ N more lines" badge show while scrolled up)
 - Mouse wheel scrolling is **on by default**, alongside copy/paste. Hold your
@@ -473,9 +487,11 @@ Your terminal's native copy/paste shortcuts also work without these utilities, i
 - `src/permissions.rs` – permission modes and allow/deny rule matching
 - `src/checkpoint.rs` – file snapshots for `/undo` and `/rewind`
 - `src/tools/search.rs`, `src/tools/web.rs` – built-in repository search and web tools
+- `src/tools/shell.rs` – running `bash` commands in a process group
 - `src/app.rs` – conversation state and agent event handling
 - `src/app/{input,commands,sessions,view,help}.rs` – key/clipboard input, commands and pickers,
   session actions, rendering and help content
 - `src/app/{approval,rewind}.rs` – the approval popup, `/undo` and the rewind picker
+- `src/app/prompts.rs` – prompt history for ↑/↓ recall
 - `src/clipboard.rs` – system clipboard access
 - `src/session.rs` – saving, listing and loading sessions

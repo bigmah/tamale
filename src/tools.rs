@@ -1,13 +1,13 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use rig_core::completion::ToolDefinition;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tokio::process::Command;
 
 mod search;
+mod shell;
 mod web;
 
 /// The tool that starts a subagent. It's run by the turn, not by [`execute`].
@@ -315,27 +315,7 @@ struct BashArgs {
 }
 
 async fn bash(a: BashArgs) -> Result<String> {
-    let timeout = Duration::from_secs(a.timeout_secs.unwrap_or(120));
-    let child = Command::new("sh")
-        .arg("-c")
-        .arg(&a.command)
-        .stdin(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .output();
-    let out = tokio::time::timeout(timeout, child)
-        .await
-        .map_err(|_| anyhow!("command timed out after {}s", timeout.as_secs()))??;
-    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    if !stderr.is_empty() {
-        if !text.is_empty() && !text.ends_with('\n') {
-            text.push('\n');
-        }
-        text.push_str(&stderr);
-    }
-    let code = out.status.code().map_or("signal".into(), |c| c.to_string());
-    text.push_str(&format!("\n[exit code: {code}]"));
-    Ok(truncate(text))
+    shell::run(&a.command, Duration::from_secs(a.timeout_secs.unwrap_or(120))).await
 }
 
 /// Bounds tool output for the model. Errors and summaries (compiler errors, failing tests)

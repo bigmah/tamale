@@ -79,8 +79,9 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
     (
         "Prompt",
         &[
-            ("Enter", "Send message"),
+            ("Enter", "Send message (while the agent runs: queue it for the next step)"),
             ("Alt+Enter / Shift+Enter", "Insert newline"),
+            ("↑ / ↓", "Move between lines; at the top/bottom, recall earlier prompts"),
             ("Ctrl+J", "Insert newline"),
             ("←/→, Home/End", "Move cursor"),
             ("Ctrl+A / Ctrl+E", "Start / end of line"),
@@ -103,7 +104,7 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
                 "Mouse wheel",
                 "Scroll chat by 3 lines (also scrolls help and pickers)",
             ),
-            ("Esc", "Interrupt the agent"),
+            ("Esc", "Interrupt the agent (unsent queued messages return to the input)"),
             (
                 "Shift+Tab",
                 "Cycle permission mode: ask → accept-edits → auto",

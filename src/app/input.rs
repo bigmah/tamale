@@ -172,8 +172,45 @@ impl App {
             KeyCode::PageDown => self.scroll_back = self.scroll_back.saturating_sub(10),
             KeyCode::Up if shift => self.scroll_back += 1,
             KeyCode::Down if shift => self.scroll_back = self.scroll_back.saturating_sub(1),
+            KeyCode::Up => self.cursor_up(),
+            KeyCode::Down => self.cursor_down(),
             _ => {}
         }
+    }
+
+    /// Moves to the line above, or recalls the previous prompt from the first line.
+    fn cursor_up(&mut self) {
+        let start = self.line_start();
+        if start > 0 {
+            self.cursor = self.column_in_line(start - 1, self.input[start..self.cursor].chars().count());
+        } else if let Some(prompt) = self.prompts.prev(&self.input) {
+            self.input = prompt;
+            // At the start, so ↑ again keeps going back through multi-line prompts.
+            self.cursor = 0;
+        }
+    }
+
+    /// Moves to the line below, or recalls the next prompt (then the draft) from the last line.
+    fn cursor_down(&mut self) {
+        let end = self.line_end();
+        if end < self.input.len() {
+            let column = self.input[self.line_start()..self.cursor].chars().count();
+            self.cursor = self.column_in_line(end + 1, column);
+        } else if let Some(prompt) = self.prompts.next() {
+            self.input = prompt;
+            self.cursor = self.input.len();
+        }
+    }
+
+    /// The byte offset of `column` (in characters) on the line containing byte `at`,
+    /// clamped to the line's end.
+    fn column_in_line(&self, at: usize, column: usize) -> usize {
+        let start = self.input[..at].rfind('\n').map_or(0, |i| i + 1);
+        let end = self.input[start..].find('\n').map_or(self.input.len(), |i| start + i);
+        self.input[start..end]
+            .char_indices()
+            .nth(column)
+            .map_or(end, |(i, _)| start + i)
     }
 
     pub(super) fn insert_str(&mut self, s: &str) {
