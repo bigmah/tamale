@@ -225,7 +225,7 @@ fn permission_rules_accumulate_across_layers_and_invalid_rules_name_the_file() {
     assert!(matches!(bash("git push"), Decision::Deny(_)));
     assert_eq!(bash("cargo test"), Decision::Allow);
     assert!(matches!(bash("make"), Decision::Ask { .. }));
-    assert_eq!(Settings::default().permissions.mode, Mode::Ask);
+    assert_eq!(Settings::default().permissions.mode, Mode::Auto);
 
     for (text, expected) in [
         ("[permissions]\nmode = 'yolo'", "unknown permission mode"),

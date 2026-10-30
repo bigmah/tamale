@@ -749,6 +749,11 @@ async fn approval_prompt_answers_and_mode_cycles() {
     );
     app.approval = None;
 
+    assert!(screen(&mut app, &mut terminal).contains(" auto "));
+    app.on_event(Event::Key(KeyEvent::new(
+        KeyCode::BackTab,
+        KeyModifiers::SHIFT,
+    )));
     assert!(screen(&mut app, &mut terminal).contains(" ask "));
     app.on_event(Event::Key(KeyEvent::new(
         KeyCode::BackTab,

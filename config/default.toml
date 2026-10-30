@@ -23,7 +23,7 @@ mouse = true
 # ask: prompt before edits and shell commands. accept-edits: prompt before shell
 # commands only. auto: never prompt. Shift+Tab cycles modes in the TUI; -p denies
 # anything that would prompt unless --yes is passed.
-mode = "ask"
+mode = "auto"
 # Rules are "tool" or "tool:glob", matched on the command (bash), path (file tools),
 # URL (web_fetch) or query (web_search); `*` also matches `/`. Every part of a compound
 # bash command must be allowed. Deny rules are checked first and apply in every mode.

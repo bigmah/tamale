@@ -234,9 +234,9 @@ The permission mode decides which tool calls wait for your approval:
 
 | Mode | Asks before |
 | --- | --- |
-| `ask` (default) | `write_file`, `edit_file` and `bash` |
+| `ask` | `write_file`, `edit_file` and `bash` |
 | `accept-edits` | `bash` |
-| `auto` | nothing |
+| `auto` (default) | nothing |
 
 Reading, searching and web tools never ask. `Shift+Tab` cycles the modes, the status bar
 shows the current one, and `/permissions [mode]` shows the rules or sets the mode.
