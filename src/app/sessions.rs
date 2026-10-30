@@ -162,6 +162,7 @@ impl App {
         self.save_session();
         self.turn += 1;
         self.history = saved.history;
+        self.thread = None;
         self.entries = saved.entries;
         self.checkpoints = saved.checkpoints;
         self.permissions.lock().unwrap().clear_session();

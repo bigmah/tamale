@@ -5,7 +5,7 @@ use crate::workspace::Workspace;
 /// Max bytes read from one instructions file, truncated at a UTF-8 boundary.
 const MAX_INSTRUCTIONS_CHARS: usize = 20_000;
 
-pub(super) const COMPACT_PROMPT: &str = "The conversation is getting long and will be replaced by a summary. \
+pub(crate) const COMPACT_PROMPT: &str = "The conversation is getting long and will be replaced by a summary. \
 Do not call any tools. Write a detailed summary of the conversation so far that lets you continue \
 the work without the original messages. Include:\n\
 1. The user's requests and goals, including any constraints or preferences they stated.\n\

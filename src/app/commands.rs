@@ -1,10 +1,9 @@
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyEvent};
 use crossterm::execute;
-use rig_core::client::ModelListingClient;
 
 use super::{App, AppEvent, EFFORT_CHOICES, FALLBACK_MODELS, ModelInfo, ModelPicker, effort_label};
 use crate::session::Entry;
-use crate::{agent, permissions, session};
+use crate::{agent, backend, permissions, session};
 
 impl App {
     /// With no argument, show the current scope. A running turn keeps its snapshot.
@@ -59,22 +58,14 @@ impl App {
                 .position(|m| m.id == self.settings.model.name)
                 .unwrap_or(0);
         } else {
-            let client = self.client.clone();
+            let backend = self.backend.clone();
             let tx = self.tx.clone();
             tokio::spawn(async move {
-                let result = client
-                    .list_models()
-                    .await
-                    .map(|list| {
-                        list.data
-                            .into_iter()
-                            .map(|m| ModelInfo {
-                                name: m.name.unwrap_or_else(|| m.id.clone()),
-                                id: m.id,
-                            })
-                            .collect()
-                    })
-                    .map_err(|e| e.to_string());
+                let result = backend.list_models().await.map(|list| {
+                    list.into_iter()
+                        .map(|(id, name)| ModelInfo { id, name })
+                        .collect()
+                });
                 let _ = tx.send(AppEvent::Models(result));
             });
         }
@@ -171,6 +162,47 @@ impl App {
         self.entries
             .push(Entry::Info(format!("Switched model to {id}{note}.")));
         self.settings.model.name = id;
+    }
+
+    // -------------------------------------------------------- backend picker
+
+    pub(super) fn open_backend_picker(&mut self) {
+        let current = self.backend.kind();
+        let selected = backend::Kind::ALL
+            .iter()
+            .position(|k| *k == current)
+            .unwrap_or(0);
+        self.backend_picker = Some(selected);
+    }
+
+    pub(super) fn on_backend_picker_key(&mut self, key: KeyEvent, ctrl: bool) {
+        let Some(selected) = self.backend_picker else {
+            return;
+        };
+        let last = backend::Kind::ALL.len() - 1;
+        let choose = |app: &mut Self, i: usize| {
+            app.backend_picker = None;
+            app.switch_backend(Some(backend::Kind::ALL[i].as_str()));
+        };
+        self.backend_picker = match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => None,
+            KeyCode::Char('c') if ctrl => None,
+            KeyCode::Up | KeyCode::Char('k') => Some(selected.saturating_sub(1)),
+            KeyCode::Char('p') if ctrl => Some(selected.saturating_sub(1)),
+            KeyCode::Down | KeyCode::Char('j') => Some((selected + 1).min(last)),
+            KeyCode::Char('n') if ctrl => Some((selected + 1).min(last)),
+            KeyCode::Home | KeyCode::Char('g') => Some(0),
+            KeyCode::End | KeyCode::Char('G') => Some(last),
+            KeyCode::Char(c @ '1'..='9') if (c as usize - '1' as usize) <= last => {
+                choose(self, c as usize - '1' as usize);
+                return;
+            }
+            KeyCode::Enter => {
+                choose(self, selected);
+                return;
+            }
+            _ => Some(selected),
+        };
     }
 
     // -------------------------------------------------------- effort picker
@@ -358,6 +390,7 @@ impl App {
             "/clear" => {
                 self.save_session();
                 self.history.clear();
+                self.thread = None;
                 self.checkpoints.clear();
                 self.permissions.lock().unwrap().clear_session();
                 self.context_tokens = 0;
@@ -390,6 +423,8 @@ impl App {
             },
             "/effort" => self.set_effort(cmd.split_whitespace().nth(1)),
             "/undo" => self.undo(),
+            "/login" => self.login(),
+            "/backend" => self.switch_backend(cmd.split_whitespace().nth(1)),
             "/rewind" => self.open_rewind_picker(),
             "/permissions" => self.set_permission_mode(cmd.split_whitespace().nth(1)),
             other => self.entries.push(Entry::Error(format!(

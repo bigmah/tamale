@@ -63,6 +63,14 @@ const COMMANDS: &[(&str, &str)] = &[
         "/permissions [mode]",
         "Show the permission mode and rules, or set ask, accept-edits or auto",
     ),
+    (
+        "/backend [kind]",
+        "Pick where inference comes from (or /backend api|claude-code), keeping the conversation",
+    ),
+    (
+        "/login",
+        "Sign in to Claude Code (claude-code backend; the footer shows where inference comes from)",
+    ),
     ("/clear", "Clear the conversation and start fresh"),
     ("/quit, /exit", "Quit tamale"),
 ];

@@ -5,7 +5,7 @@ use ratatui::text::Line;
 
 #[test]
 fn paste_inserts_multiline_unicode_at_cursor_without_submitting() {
-    let client = anthropic::Client::new("test-key").unwrap();
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
     let (mut app, _rx) = App::new_with_channel(
         client,
         test_settings("test-model"),
@@ -29,7 +29,7 @@ fn paste_inserts_multiline_unicode_at_cursor_without_submitting() {
 
 #[test]
 fn paste_targets_picker_filter_and_ignores_help() {
-    let client = anthropic::Client::new("test-key").unwrap();
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
     let (mut app, _rx) = App::new_with_channel(
         client,
         test_settings("test-model"),
@@ -66,7 +66,7 @@ fn paste_targets_picker_filter_and_ignores_help() {
 
 #[test]
 fn copy_preserves_reply_text_and_selects_conversation_messages() {
-    let client = anthropic::Client::new("test-key").unwrap();
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
     let (mut app, _rx) = App::new_with_channel(
         client,
         test_settings("test-model"),
@@ -89,7 +89,7 @@ fn copy_preserves_reply_text_and_selects_conversation_messages() {
 
 #[test]
 fn thinking_command_toggles_and_accepts_explicit_modes() {
-    let client = anthropic::Client::new("test-key").unwrap();
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
     let (mut app, _rx) = App::new_with_channel(
         client,
         test_settings("claude-sonnet-4-6"),
@@ -119,7 +119,7 @@ async fn add_dir_lists_scope_and_accepts_spaces_and_quotes_during_a_turn() {
         cwd: root.join("project"),
         additional_dirs: Vec::new(),
     };
-    let client = anthropic::Client::new("test-key").unwrap();
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
     let (mut app, _rx) = App::new_with_channel(client, test_settings("test-model"), workspace);
     app.command("/add-dir");
     assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("Usage: /add-dir")));
@@ -164,7 +164,7 @@ async fn sessions_are_saved_and_resumed() {
         std::fs::create_dir_all(dir.join(name)).unwrap();
     }
     unsafe { std::env::set_var("TAMALE_SESSIONS_DIR", &dir) };
-    let client = anthropic::Client::new("test-key").unwrap();
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
     let mut workspace = Workspace::current().unwrap();
     workspace.add_dir(&dir.join("startup")).unwrap();
     let (mut app, _rx) =
@@ -244,7 +244,7 @@ async fn sessions_are_saved_and_resumed() {
 #[test]
 fn mouse_wheel_scrolls_chat_help_and_pickers() {
     use crossterm::event::MouseEvent;
-    let client = anthropic::Client::new("test-key").unwrap();
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
     let (mut app, _rx) = App::new_with_channel(
         client,
         test_settings("claude-sonnet-4-6"),
@@ -299,7 +299,7 @@ fn mouse_wheel_scrolls_chat_help_and_pickers() {
 
 #[test]
 fn effort_command_opens_picker_and_arrows_select() {
-    let client = anthropic::Client::new("test-key").unwrap();
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
     let (mut app, _rx) = App::new_with_channel(
         client,
         test_settings("claude-sonnet-4-6"),
@@ -332,7 +332,7 @@ fn effort_command_opens_picker_and_arrows_select() {
 
 #[test]
 fn quiet_mode_collapses_tool_calls_and_verbose_toggles() {
-    let client = anthropic::Client::new("test-key").unwrap();
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
     let (mut app, _rx) = App::new_with_channel(
         client,
         test_settings("claude-sonnet-4-6"),
@@ -385,7 +385,7 @@ fn test_settings(model: &str) -> Settings {
 
 #[test]
 fn configured_settings_reach_status_and_runtime_commands() {
-    let client = anthropic::Client::new("test-key").unwrap();
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
     let mut settings = test_settings("configured-model");
     settings.model.context_window = Some(500_000);
     settings.model.thinking = agent::Thinking::Off;
@@ -417,7 +417,7 @@ fn configured_settings_reach_status_and_runtime_commands() {
 #[ignore]
 async fn perf_transcript() {
     use std::time::Instant;
-    let client = anthropic::Client::new("test-key").unwrap();
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
     let (mut app, _rx) = App::new_with_channel(
         client,
         test_settings("test-model"),
@@ -472,7 +472,7 @@ async fn perf_transcript() {
 
 #[tokio::test]
 async fn continuation_keeps_completed_text_when_the_next_request_retries() {
-    let client = anthropic::Client::new("test-key").unwrap();
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
     let (mut app, _rx) = App::new_with_channel(
         client,
         test_settings("test-model"),
@@ -512,7 +512,7 @@ async fn continuation_keeps_completed_text_when_the_next_request_retries() {
 
 #[tokio::test]
 async fn agent_events_refresh_cached_text_tools_retries_and_clear() {
-    let client = anthropic::Client::new("test-key").unwrap();
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
     let (mut app, _rx) = App::new_with_channel(
         client,
         test_settings("test-model"),
@@ -582,7 +582,7 @@ async fn undo_and_rewind_restore_files_and_conversation() {
     let work = root.join("work");
     std::fs::create_dir_all(&work).unwrap();
     unsafe { std::env::set_var("TAMALE_SESSIONS_DIR", root.join("sessions")) };
-    let client = anthropic::Client::new("test-key").unwrap();
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
     let workspace = Workspace {
         cwd: work.clone(),
         additional_dirs: Vec::new(),
@@ -669,7 +669,7 @@ async fn undo_and_rewind_restore_files_and_conversation() {
 
 #[tokio::test]
 async fn approval_prompt_answers_and_mode_cycles() {
-    let client = anthropic::Client::new("test-key").unwrap();
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
     let (mut app, _rx) = App::new_with_channel(
         client,
         test_settings("test-model"),
@@ -769,4 +769,72 @@ async fn approval_prompt_answers_and_mode_cycles() {
     assert!(
         matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("Permission mode: auto"))
     );
+}
+
+#[test]
+fn status_shows_where_inference_comes_from_even_with_a_long_cwd() {
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let mut workspace = Workspace::current().unwrap();
+    workspace.cwd = std::path::PathBuf::from(format!("/{}", "deep/".repeat(40)));
+    let (mut app, _rx) = App::new_with_channel(client, test_settings("test-model"), workspace);
+    let backend = ratatui::backend::TestBackend::new(80, 12);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    terminal.draw(|f| app.draw(f)).unwrap();
+    let buffer = terminal.backend().buffer();
+    let row: String = (0..80)
+        .map(|x| buffer[(x, 10)].symbol().to_string())
+        .collect();
+    assert!(row.contains(" cwd: …"), "{row}");
+    assert!(row.trim_end().ends_with("· via Anthropic API"), "{row}");
+}
+
+#[test]
+fn backend_switches_keep_the_conversation_and_drop_the_old_thread() {
+    let client = anthropic::Client::new("test-key").unwrap();
+    let (mut app, _rx) = App::new_with_channel(
+        Backend::Api(client.clone()),
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    // The picker opens on the current backend and scrolls between them.
+    app.command("/backend");
+    assert_eq!(app.backend_picker, Some(0));
+    let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(app.backend_picker, Some(1));
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(app.backend_picker, Some(1), "stops at the last backend");
+    app.on_key(key(KeyCode::Up));
+    app.on_key(key(KeyCode::Char('x')));
+    assert!(app.input.is_empty(), "keys don't reach the prompt");
+    app.on_key(key(KeyCode::Esc));
+    assert_eq!(app.backend_picker, None);
+    app.command("/backend");
+    app.on_key(key(KeyCode::Enter));
+    assert_eq!(app.backend_picker, None);
+    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.starts_with("Already using")));
+
+    app.command("/backend api");
+    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.starts_with("Already using")));
+    app.command("/backend gpt");
+    assert!(matches!(app.entries.last(), Some(Entry::Error(_))));
+
+    app.history = vec![Message::user("earlier")];
+    app.thread = Some("old-session".into());
+    app.models = Some(vec![]);
+    app.on_app_event(AppEvent::Backend(
+        Err("ANTHROPIC_API_KEY is not set".into()),
+    ));
+    assert!(matches!(app.entries.last(), Some(Entry::Error(e)) if e.contains("Couldn't switch")));
+    assert_eq!(app.thread.as_deref(), Some("old-session"));
+
+    app.on_app_event(AppEvent::Backend(Ok(Backend::Api(client))));
+    assert_eq!(app.settings.backend.kind, backend::Kind::Api);
+    assert!(app.thread.is_none());
+    assert!(app.models.is_none());
+    assert_eq!(app.history.len(), 1);
+    assert!(
+        matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("conversation continues"))
+    );
+    assert!(app.take_login_request().is_none());
 }

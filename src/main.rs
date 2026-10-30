@@ -1,5 +1,6 @@
 mod agent;
 mod app;
+mod backend;
 mod checkpoint;
 mod cli;
 mod clipboard;
@@ -11,18 +12,17 @@ mod workspace;
 
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
     EventStream,
 };
 use crossterm::execute;
 use futures::StreamExt;
-use rig_core::client::{CompletionClient, ProviderClient};
-use rig_core::providers::anthropic;
 use tokio::sync::mpsc;
 
 use crate::app::App;
+use crate::backend::Backend;
 
 fn main() -> Result<()> {
     let cli = cli::Cli::parse(std::env::args().skip(1))?;
@@ -46,21 +46,34 @@ async fn start(cli: cli::Cli) -> Result<()> {
     cli.apply(&mut settings);
     settings.validate()?;
 
-    if std::env::var("ANTHROPIC_API_KEY").is_err() {
-        bail!("ANTHROPIC_API_KEY is not set");
+    let mut backend = Backend::connect(&settings.backend).await?;
+    if let Backend::ClaudeCode(cc) = &mut backend
+        && !cc.account.logged_in
+    {
+        if cli.print_prompt.is_some() {
+            bail!(
+                "Claude Code isn't signed in. Run `claude auth login` (or start tamale \
+without -p to sign in)."
+            );
+        }
+        eprintln!("Claude Code isn't signed in; starting `claude auth login`…");
+        cc.login().await?;
     }
-    let client = anthropic::Client::from_env().context("creating Anthropic client")?;
     if let Some(prompt) = cli.print_prompt {
-        let config = settings.turn_config(0);
-        let model = client
-            .completion_model(settings.model.name)
-            .with_prompt_caching();
         let permissions = permissions::Policy::new(&settings.permissions, workspace.cwd.clone());
         let ctx = agent::TurnCtx {
             permissions: permissions.shared(),
             checkpoint: None,
         };
-        return print_mode(model, config, workspace, ctx, cli.yes, prompt).await;
+        let turn = backend::Turn {
+            model: settings.model.name.clone(),
+            history: vec![rig_core::completion::Message::user(prompt.clone())],
+            prompt,
+            thread: None,
+            config: settings.turn_config(0),
+            workspace,
+        };
+        return print_mode(backend, turn, ctx, cli.yes).await;
     }
 
     // Restore terminal input modes even if we panic.
@@ -78,7 +91,7 @@ async fn start(cli: cli::Cli) -> Result<()> {
     if settings.ui.mouse {
         execute!(std::io::stdout(), EnableMouseCapture)?;
     }
-    let (mut app, rx) = App::new_with_channel(client, settings, workspace);
+    let (mut app, rx) = App::new_with_channel(backend, settings, workspace);
     match cli.resume {
         Some(cli::Resume::Latest) => match session::list(Some(&std::env::current_dir()?)).first() {
             Some(latest) => app.resume(&latest.id),
@@ -97,23 +110,17 @@ async fn start(cli: cli::Cli) -> Result<()> {
     result
 }
 
-async fn print_mode<M>(
-    model: M,
-    config: agent::TurnConfig,
-    workspace: workspace::Workspace,
+async fn print_mode(
+    backend: Backend,
+    turn: backend::Turn,
     ctx: agent::TurnCtx,
     yes: bool,
-    prompt: String,
-) -> Result<()>
-where
-    M: rig_core::completion::CompletionModel + Clone + Send + Sync + 'static,
-{
+) -> Result<()> {
     use agent::AgentEvent;
     use std::io::Write;
 
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let history = vec![rig_core::completion::Message::user(prompt)];
-    tokio::spawn(agent::run(model, history, config, workspace, ctx, tx));
+    tokio::spawn(backend.run(turn, ctx, tx));
 
     let mut failed = false;
     while let Some(ev) = rx.recv().await {
@@ -172,6 +179,24 @@ where
     Ok(())
 }
 
+fn suspend_terminal() {
+    let _ = execute!(
+        std::io::stdout(),
+        DisableBracketedPaste,
+        DisableMouseCapture
+    );
+    ratatui::restore();
+}
+
+fn resume_terminal(mouse: bool) -> Result<ratatui::DefaultTerminal> {
+    let terminal = ratatui::init();
+    execute!(std::io::stdout(), EnableBracketedPaste)?;
+    if mouse {
+        execute!(std::io::stdout(), EnableMouseCapture)?;
+    }
+    Ok(terminal)
+}
+
 async fn run(
     terminal: &mut ratatui::DefaultTerminal,
     (mut app, mut rx): (App, mpsc::UnboundedReceiver<app::AppEvent>),
@@ -184,6 +209,17 @@ async fn run(
 
     let result = async {
         while !app.should_quit {
+            if let Some(mut cc) = app.take_login_request() {
+                // The sign-in prompt needs the real terminal (and its keyboard input).
+                drop(events);
+                let mouse = app.mouse_enabled();
+                suspend_terminal();
+                let result = cc.login().await;
+                *terminal = resume_terminal(mouse)?;
+                events = EventStream::new();
+                app.on_login(cc, result);
+                dirty = true;
+            }
             tokio::select! {
                 Some(ev) = events.next() => {
                     app.on_event(ev?);

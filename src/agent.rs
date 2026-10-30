@@ -21,7 +21,8 @@ use crate::permissions::{self, Approval, Decision};
 use crate::workspace::Workspace;
 use crate::{config::AgentSettings, tools};
 pub use models::{context_size, cost};
-use prompt::{COMPACT_PROMPT, system_prompt};
+pub(crate) use prompt::COMPACT_PROMPT;
+pub(crate) use prompt::system_prompt;
 pub use reasoning::{Effort, Reasoning, Thinking};
 use request::request;
 
@@ -66,6 +67,9 @@ pub enum AgentEvent {
     },
     /// A consistent snapshot of the conversation, safe to resume from.
     History(Vec<Message>),
+    /// The backend's own conversation id for the history (a Claude Code session), so the
+    /// next turn can continue it instead of resending the history.
+    Thread(String),
     Usage(Usage),
     Error(String),
     Done,
@@ -119,6 +123,32 @@ the user how to proceed."
         }
     }
 
+    /// Authorizes, checkpoints and runs one tool call. Returns the output and whether it is
+    /// an error, either of which goes back to the model as the tool result.
+    pub(crate) async fn call_tool(
+        &mut self,
+        name: &str,
+        args: Value,
+        workspace: &Workspace,
+        tx: &mpsc::UnboundedSender<AgentEvent>,
+    ) -> (String, bool) {
+        let result = match self.authorize(name, &args, tx).await {
+            Err(denied) => Err(denied),
+            Ok(()) => match self.before_execute(name, &args, workspace) {
+                Err(e) => Err(format!(
+                    "Error: couldn't save a checkpoint, so the call was not run: {e:#}"
+                )),
+                Ok(()) => tools::execute(name, args)
+                    .await
+                    .map_err(|e| format!("Error: {e:#}")),
+            },
+        };
+        match result {
+            Ok(out) => (out, false),
+            Err(out) => (out, true),
+        }
+    }
+
     /// Snapshots files a call is about to change.
     fn before_execute(
         &mut self,
@@ -149,7 +179,7 @@ pub struct TurnConfig {
 }
 
 impl TurnConfig {
-    fn should_compact(&self) -> bool {
+    pub(crate) fn should_compact(&self) -> bool {
         // Widen before multiplying so large context-window overrides can't overflow.
         self.context_tokens as u128 * 100
             >= self.context_window as u128 * self.limits.auto_compact_percent as u128
@@ -300,21 +330,7 @@ task using tools as needed. If the task is complete, provide the final answer.",
                 description: tools::describe(&name, &args),
             });
 
-            let result = match ctx.authorize(&name, &args, tx).await {
-                Err(denied) => Err(denied),
-                Ok(()) => match ctx.before_execute(&name, &args, workspace) {
-                    Err(e) => Err(format!(
-                        "Error: couldn't save a checkpoint, so the call was not run: {e:#}"
-                    )),
-                    Ok(()) => tools::execute(&name, args)
-                        .await
-                        .map_err(|e| format!("Error: {e:#}")),
-                },
-            };
-            let (output, is_error) = match result {
-                Ok(out) => (out, false),
-                Err(out) => (out, true),
-            };
+            let (output, is_error) = ctx.call_tool(&name, args, workspace, tx).await;
             let _ = tx.send(AgentEvent::ToolResult {
                 output: output.clone(),
                 is_error,
@@ -396,12 +412,17 @@ Respond with the remaining summary only; do not call tools or resume the task ye
         after: usage.output_tokens,
         usage,
     });
-    Ok(vec![Message::user(format!(
+    Ok(summary_history(&summary))
+}
+
+/// The history that replaces a compacted conversation.
+pub(crate) fn summary_history(summary: &str) -> Vec<Message> {
+    vec![Message::user(format!(
         "This session continues a previous conversation that was compacted to save context. \
 Summary of the conversation so far:\n\n{}\n\n\
 Continue from where it left off; if a task was in progress, carry on with it.",
         summary.trim()
-    ))])
+    ))]
 }
 
 enum Continuation {

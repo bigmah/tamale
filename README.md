@@ -1,13 +1,15 @@
 # tamale
 
 A small Claude Code–style coding agent for the terminal, written in pure Rust with
-[rig](https://rig.rs) (Anthropic API only) and [ratatui](https://ratatui.rs).
+[rig](https://rig.rs) and [ratatui](https://ratatui.rs). Inference comes from the Anthropic
+API or from your Claude Code sign-in (see [Backends](#backends)).
 
 ## Usage
 
 ```sh
 export ANTHROPIC_API_KEY=sk-ant-...
 cargo run --release                          # interactive TUI
+cargo run --release -- --backend claude-code # use your Claude Code sign-in instead of an API key
 cargo run --release -- --model claude-opus-5-5
 cargo run --release -- --effort low          # less thorough, faster, cheaper
 cargo run --release -- --thinking off        # disable adaptive thinking
@@ -19,12 +21,61 @@ cargo run --release -- --config dev.toml    # add settings from a TOML file
 cargo run --release -- --add-dir ../shared --add-dir ~/dev/api
 ```
 
+## Backends
+
+The backend decides where inference comes from; everything else is the same. Tools,
+permission prompts, checkpoints and `/undo`, sessions, compaction and usage totals work
+identically, and the footer shows the backend next to the working directory
+(`cwd: ~/dev/app · via Claude Code · Max`).
+
+| Backend | Selected with | Authenticates with |
+| --- | --- | --- |
+| `api` (default) | `kind = "api"` | `ANTHROPIC_API_KEY` |
+| `claude-code` | `kind = "claude-code"`, `--backend claude-code`, `TAMALE_BACKEND` | The Claude Code CLI's sign-in (Claude subscription or Console account) |
+
+`/backend` opens a picker to switch mid-session (↑/↓ or j/k to move, 1–2 to jump, Enter to
+switch, Esc to cancel; the current backend is marked with ●). `/backend api` and
+`/backend claude-code` switch directly.
+The conversation carries over in both directions: Claude Code turns are recorded in the
+same history the API backend uses, and a switch to Claude Code replays the conversation
+to a new Claude Code session. Switching to Claude Code while signed out starts the sign-in;
+switching to the API needs `ANTHROPIC_API_KEY`. Resumed sessions keep the current backend.
+
+The `claude-code` backend runs `claude -p` headlessly for each turn, so it needs the
+[Claude Code CLI](https://docs.claude.com/en/docs/claude-code) installed (set
+`backend.claude_path` if `claude` isn't on `PATH`).
+
+- **Signing in**: at startup tamale checks `claude auth status`. If you're signed out, it
+  runs `claude auth login` in the terminal before opening the TUI (`-p` runs exit with
+  instructions instead). `/login` signs in again or switches accounts from inside the TUI.
+  `ANTHROPIC_API_KEY` is removed from Claude Code's environment so the sign-in is used;
+  use the `api` backend for API keys.
+- **Tools**: Claude Code's built-in tools, settings files, hooks, skills, plugins' MCP
+  servers and CLAUDE.md loading are turned off. tamale passes its own system prompt and
+  serves its own tools to Claude Code over a local MCP server (127.0.0.1, random URL
+  token, one per turn). Every call therefore goes through tamale's permission rules,
+  approval popup and checkpoints.
+- **Conversations**: each tamale session keeps a Claude Code session and continues it
+  with `--resume`. After `/undo`, `/rewind`, `/resume`, `/clear`, compaction or a backend
+  switch a fresh
+  Claude Code session starts, and the earlier conversation is replayed to it as a
+  transcript (long tool results shortened). These sessions also appear in Claude Code's
+  own `/resume` list.
+- **Settings**: `--model`/`/model`, `--effort`/`/effort` and `agent.max_tokens` are passed
+  through; `/thinking off` sets `MAX_THINKING_TOKENS=0`. Claude Code handles its own
+  retries and in-run context management; tamale still auto-compacts between turns.
+  The model picker shows the built-in model list (Claude Code has no model listing).
+
 ## Configuration
 
 Defaults live in [`config/default.toml`](config/default.toml) and are embedded in the
 binary. Override just the fields you need in a personal or project TOML file:
 
 ```toml
+[backend]
+kind = "api" # or "claude-code"
+claude_path = "claude"
+
 [model]
 name = "claude-opus-5-5"
 effort = "high"
@@ -56,7 +107,7 @@ Settings are merged field by field, in this order (later values win):
    directory; outside a repository, only the working directory is checked
 4. A file passed with `--config <path>` (relative to the working directory)
 5. The `TAMALE_*` environment variables below
-6. `--model`, `--effort`, and `--thinking` flags
+6. `--backend`, `--model`, `--effort`, and `--thinking` flags
 
 All fields are optional in override files. `permissions.allow` and `permissions.deny`
 lists are combined across layers rather than replaced. `effort = "default"` resets an inherited
@@ -67,6 +118,7 @@ The same settings apply to interactive and `-p` runs, tool follow-ups, retries a
 manual/automatic compaction. Settings load at startup; slash commands change the
 current session's settings without rewriting TOML files.
 
+`TAMALE_BACKEND` sets the backend (`api` or `claude-code`).
 `TAMALE_MODEL` sets the default model (otherwise `claude-opus-5-5`).
 `TAMALE_EFFORT` sets the default effort level (otherwise the API default).
 `TAMALE_THINKING` sets the thinking mode (`adaptive` or `on`, the default; `off` to disable).
@@ -317,6 +369,8 @@ the fact that it didn't exist) are saved under the session's directory,
   and `/thinking off` set it explicitly. Shown in the status bar; changes during a run
   take effect on the next message.
 - `/compact [focus]` summarizes the conversation to free context
+- `/backend` opens a backend picker; `/backend api|claude-code` switches directly, keeping the conversation
+- `/login` signs in to Claude Code (with the `claude-code` backend; see [Backends](#backends))
 - `/add-dir [path]` adds a directory to the agent's scope, or lists the current scope
 - `/resume [n|id]` continues a saved session (see [Sessions](#sessions))
 - `/undo` and `/rewind` restore files and rewind the conversation (see [Checkpoints](#checkpoints-and-undo))
@@ -332,6 +386,9 @@ Your terminal's native copy/paste shortcuts also work without these utilities, i
 - `src/main.rs` – startup, terminal setup, event loop and one-shot output
 - `src/cli.rs` – command-line parsing and overrides
 - `src/config.rs`, `config/default.toml` – typed settings, defaults, file discovery and merging
+- `src/backend.rs` – backend selection (API or Claude Code) and dispatch
+- `src/backend/claude_code.rs` – running `claude -p`, sign-in, stream translation and replay
+- `src/backend/mcp.rs` – the local MCP server that offers tamale's tools to Claude Code
 - `src/agent.rs` – agent turns, tool execution and compaction
 - `src/agent/{request,reasoning,prompt,models}.rs` – streaming/retries, reasoning settings,
   instruction loading and model metadata/cost estimates

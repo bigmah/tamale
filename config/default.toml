@@ -2,6 +2,15 @@
 # for personal defaults, or tamale.toml in a project. All fields are optional
 # in those files; omitted fields keep the value from the previous layer.
 
+[backend]
+# Where inference comes from:
+#   api          the Anthropic API, using ANTHROPIC_API_KEY
+#   claude-code  your Claude Code sign-in (subscription or Console), by running the
+#                `claude` CLI headlessly; sign in with `claude auth login` or /login
+# Tools, permissions, undo and sessions work the same with either.
+kind = "api"
+claude_path = "claude" # the Claude Code executable (searched on PATH)
+
 [model]
 name = "claude-opus-5-5"
 effort = "default" # low, medium, high, xhigh, max, or default (API decides)

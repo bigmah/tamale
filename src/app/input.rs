@@ -35,6 +35,12 @@ impl App {
             } else {
                 (picker.selected + 1).min(count.saturating_sub(1))
             };
+        } else if let Some(selected) = self.backend_picker {
+            self.backend_picker = Some(if up {
+                selected.saturating_sub(1)
+            } else {
+                (selected + 1).min(crate::backend::Kind::ALL.len() - 1)
+            });
         } else if let Some(selected) = self.effort_picker {
             self.effort_picker = Some(if up {
                 selected.saturating_sub(1)
@@ -90,6 +96,11 @@ impl App {
 
         if self.effort_picker.is_some() {
             self.on_effort_picker_key(key, ctrl);
+            return;
+        }
+
+        if self.backend_picker.is_some() {
+            self.on_backend_picker_key(key, ctrl);
             return;
         }
 
@@ -188,6 +199,7 @@ impl App {
             picker.selected = 0;
         } else if self.help_scroll.is_none()
             && self.effort_picker.is_none()
+            && self.backend_picker.is_none()
             && self.rewind_picker.is_none()
         {
             self.insert_str(&text);

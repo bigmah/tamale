@@ -5,13 +5,15 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, bail};
 
 use crate::agent::{Effort, Thinking};
+use crate::backend;
 use crate::config::Settings;
 
 #[cfg(test)]
 mod tests;
 
-pub const HELP: &str = "usage: tamale [--add-dir <path>] [--config <path>] [--model <id>] [--effort <level>] [--thinking <mode>] [-c | -r] [-p <prompt> [--yes]]
+pub const HELP: &str = "usage: tamale [--backend <kind>] [--add-dir <path>] [--config <path>] [--model <id>] [--effort <level>] [--thinking <mode>] [-c | -r] [-p <prompt> [--yes]]
 
+-b, --backend      api (ANTHROPIC_API_KEY) or claude-code (your Claude Code sign-in).
 --add-dir <path>   Include another directory in the agent's scope (repeatable).
 --config <path>    Add a TOML settings file after user and project settings.
 -m, --model <id>  Anthropic model ID.
@@ -25,7 +27,8 @@ pub const HELP: &str = "usage: tamale [--add-dir <path>] [--config <path>] [--mo
 
 Settings: built-in defaults < ~/.config/tamale/config.toml < project tamale.toml
           < --config < TAMALE_* environment variables < CLI flags.
-Requires ANTHROPIC_API_KEY. See config/default.toml for all settings.";
+The api backend requires ANTHROPIC_API_KEY; claude-code requires the `claude` CLI
+(tamale offers to sign in when it isn't). See config/default.toml for all settings.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Resume {
@@ -42,6 +45,7 @@ pub struct Cli {
     /// Approve every call that would prompt in `-p` mode (deny rules still apply).
     pub yes: bool,
     pub help: bool,
+    backend: Option<backend::Kind>,
     model: Option<String>,
     // Outer None means no flag; Some(None) explicitly resets the API default.
     effort: Option<Option<Effort>>,
@@ -59,6 +63,11 @@ impl Cli {
                     .push(args.next().context("--add-dir needs a path")?.into()),
                 "--config" => {
                     cli.config = Some(args.next().context("--config needs a path")?.into())
+                }
+                "-b" | "--backend" => {
+                    cli.backend = Some(backend::Kind::parse_setting(
+                        &args.next().context("--backend needs a value")?,
+                    )?)
                 }
                 "-m" | "--model" => cli.model = Some(args.next().context("--model needs a value")?),
                 "-e" | "--effort" => {
@@ -88,6 +97,9 @@ impl Cli {
     }
 
     pub fn apply(&self, settings: &mut Settings) {
+        if let Some(kind) = self.backend {
+            settings.backend.kind = kind;
+        }
         if let Some(model) = &self.model {
             settings.model.name = model.clone();
         }

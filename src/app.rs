@@ -12,13 +12,13 @@ mod tests;
 mod transcript;
 mod view;
 
-use rig_core::client::CompletionClient;
 use rig_core::completion::Message;
 use rig_core::providers::anthropic;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::agent::{self, AgentEvent};
+use crate::backend::{self, Backend};
 use crate::checkpoint::{self, HistoryMark, Recorder};
 use crate::config::Settings;
 use crate::permissions::{self, Policy};
@@ -42,6 +42,8 @@ pub enum AppEvent {
     ClipboardCopied(Result<(), String>),
     ClipboardPasted(Result<String, String>),
     SessionSaved(String, Result<(), String>),
+    /// A backend requested with `/backend` is ready (or couldn't be set up).
+    Backend(Result<Backend, String>),
 }
 
 #[derive(Clone)]
@@ -107,7 +109,12 @@ impl ResumePicker {
 }
 
 pub struct App {
-    client: anthropic::Client,
+    backend: Backend,
+    /// The backend's own conversation for `history` (a Claude Code session), cleared
+    /// whenever `history` is rewritten so the next turn starts a fresh one.
+    thread: Option<String>,
+    /// Set by `/login`; the event loop suspends the TUI to run the sign-in.
+    login_requested: bool,
     settings: Settings,
     tx: mpsc::UnboundedSender<AppEvent>,
     /// `None` until the list has been fetched.
@@ -115,6 +122,8 @@ pub struct App {
     picker: Option<ModelPicker>,
     /// Selected row of the effort picker; `Some` while it is open.
     effort_picker: Option<usize>,
+    /// Selected row of the backend picker (an index into `backend::Kind::ALL`).
+    backend_picker: Option<usize>,
     resume_picker: Option<ResumePicker>,
     rewind_picker: Option<rewind::Picker>,
     /// The tool call waiting for the user's approval.
@@ -162,28 +171,31 @@ pub struct App {
 
 impl App {
     pub fn new_with_channel(
-        client: anthropic::Client,
+        backend: Backend,
         settings: Settings,
         workspace: Workspace,
     ) -> (Self, mpsc::UnboundedReceiver<AppEvent>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        (Self::new(client, settings, workspace, tx), rx)
+        (Self::new(backend, settings, workspace, tx), rx)
     }
 
     fn new(
-        client: anthropic::Client,
+        backend: Backend,
         settings: Settings,
         workspace: Workspace,
         tx: mpsc::UnboundedSender<AppEvent>,
     ) -> Self {
         let permissions = Policy::new(&settings.permissions, workspace.cwd.clone()).shared();
         Self {
-            client,
+            backend,
+            thread: None,
+            login_requested: false,
             settings,
             tx,
             models: None,
             picker: None,
             effort_picker: None,
+            backend_picker: None,
             resume_picker: None,
             rewind_picker: None,
             approval: None,
@@ -220,6 +232,10 @@ impl App {
         }
     }
 
+    pub fn mouse_enabled(&self) -> bool {
+        self.settings.ui.mouse
+    }
+
     pub fn is_running(&self) -> bool {
         self.task.is_some()
     }
@@ -247,17 +263,21 @@ impl App {
             return;
         }
 
-        let ctx = self.begin_turn(text);
-        let config = self.settings.turn_config(self.context_tokens);
+        let ctx = self.begin_turn(text.clone());
+        let turn = self.backend_turn(text);
         let atx = self.start_turn();
-        self.task = Some(tokio::spawn(agent::run(
-            self.model(),
-            self.history.clone(),
-            config,
-            self.workspace.clone(),
-            ctx,
-            atx,
-        )));
+        self.task = Some(tokio::spawn(self.backend.clone().run(turn, ctx, atx)));
+    }
+
+    fn backend_turn(&self, prompt: String) -> backend::Turn {
+        backend::Turn {
+            model: self.settings.model.name.clone(),
+            history: self.history.clone(),
+            prompt,
+            thread: self.thread.clone(),
+            config: self.settings.turn_config(self.context_tokens),
+            workspace: self.workspace.clone(),
+        }
     }
 
     /// Adds the prompt to the conversation and starts a checkpoint for the turn.
@@ -297,21 +317,125 @@ impl App {
                 .push(Entry::Info("Nothing to compact yet.".into()));
             return;
         }
+        let turn = self.backend_turn(String::new());
         let atx = self.start_turn();
-        self.task = Some(tokio::spawn(agent::compact(
-            self.model(),
-            self.history.clone(),
+        self.task = Some(tokio::spawn(self.backend.clone().compact(
+            turn,
             instructions,
-            self.settings.turn_config(self.context_tokens),
-            self.workspace.clone(),
             atx,
         )));
     }
 
-    fn model(&self) -> anthropic::completion::CompletionModel {
-        self.client
-            .completion_model(self.settings.model.name.clone())
-            .with_prompt_caching()
+    /// `/login`: signing in to Claude Code needs the terminal, so the event loop does it.
+    fn login(&mut self) {
+        match &self.backend {
+            Backend::Api(_) => self.entries.push(Entry::Info(
+                "This session uses the Anthropic API with ANTHROPIC_API_KEY. To use your Claude \
+Code sign-in instead, run /backend claude-code."
+                    .into(),
+            )),
+            Backend::ClaudeCode(_) if self.is_running() => self.entries.push(Entry::Error(
+                "Can't sign in while the agent is running (Esc to interrupt first).".into(),
+            )),
+            Backend::ClaudeCode(_) => self.login_requested = true,
+        }
+    }
+
+    /// `/backend <kind>` switches where inference comes from; the conversation carries
+    /// over. Without an argument, opens the picker.
+    fn switch_backend(&mut self, arg: Option<&str>) {
+        let current = self.backend.kind();
+        let Some(arg) = arg else {
+            self.open_backend_picker();
+            return;
+        };
+        let kind = match backend::Kind::parse_setting(arg) {
+            Ok(kind) => kind,
+            Err(e) => {
+                self.entries.push(Entry::Error(e.to_string()));
+                return;
+            }
+        };
+        if self.is_running() {
+            self.entries.push(Entry::Error(
+                "Can't switch backends while the agent is running (Esc to interrupt first).".into(),
+            ));
+            return;
+        }
+        if kind == current {
+            self.entries.push(Entry::Info(format!(
+                "Already using {}.",
+                self.backend.label()
+            )));
+            return;
+        }
+        let mut settings = self.settings.backend.clone();
+        settings.kind = kind;
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            let result = Backend::connect(&settings)
+                .await
+                .map_err(|e| format!("{e:#}"));
+            let _ = tx.send(AppEvent::Backend(result));
+        });
+    }
+
+    fn on_backend(&mut self, result: Result<Backend, String>) {
+        let backend = match result {
+            Ok(backend) => backend,
+            Err(e) => {
+                self.entries
+                    .push(Entry::Error(format!("Couldn't switch backends: {e}")));
+                return;
+            }
+        };
+        self.settings.backend.kind = backend.kind();
+        self.backend = backend;
+        // A Claude Code session from before doesn't hold the turns made since.
+        self.thread = None;
+        self.models = None;
+        let note = if self.is_running() {
+            " (takes effect on your next message)"
+        } else {
+            ""
+        };
+        self.entries.push(Entry::Info(format!(
+            "Switched to {}{note}. The conversation continues.",
+            self.backend.label()
+        )));
+        if !self.backend.signed_in() {
+            self.entries.push(Entry::Info(
+                "Claude Code isn't signed in; starting sign-in…".into(),
+            ));
+            self.login_requested = true;
+        }
+    }
+
+    /// The Claude Code backend to sign in with, if `/login` asked for it.
+    pub fn take_login_request(&mut self) -> Option<backend::ClaudeCode> {
+        match (std::mem::take(&mut self.login_requested), &self.backend) {
+            (true, Backend::ClaudeCode(cc)) => Some(cc.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn on_login(&mut self, cc: backend::ClaudeCode, result: anyhow::Result<()>) {
+        match result {
+            Ok(()) => {
+                let who = cc
+                    .account
+                    .email
+                    .as_deref()
+                    .map(|email| format!(" as {email}"))
+                    .unwrap_or_default();
+                self.entries.push(Entry::Info(format!(
+                    "Signed in to Claude Code{who} ({}).",
+                    cc.label()
+                )));
+            }
+            Err(e) => self.entries.push(Entry::Error(format!("{e:#}"))),
+        }
+        self.backend = Backend::ClaudeCode(cc);
     }
 
     /// Starts a new turn and returns the sender the agent task should report to.
@@ -345,6 +469,7 @@ impl App {
         match event {
             AppEvent::Agent(turn, ev) => self.on_agent(turn, ev),
             AppEvent::Models(result) => self.on_models(result),
+            AppEvent::Backend(result) => self.on_backend(result),
             AppEvent::SessionSaved(id, result) => self.on_session_saved(&id, result),
             AppEvent::ClipboardPasted(Ok(text)) => self.on_paste(&text),
             AppEvent::ClipboardCopied(Ok(())) => self
@@ -367,6 +492,12 @@ impl App {
             for turn in &mut self.checkpoints {
                 turn.history = None;
             }
+            self.thread = None;
+        }
+        if let AgentEvent::Thread(id) = event {
+            // Kept even after an interrupt: the session holds what was said so far.
+            self.thread = Some(id);
+            return;
         }
         if !self.is_running() {
             // Turn was interrupted; only keep consistent history snapshots.
@@ -477,6 +608,7 @@ impl App {
                 self.context_tokens = agent::context_size(&u);
             }
             AgentEvent::Error(e) => self.entries.push(Entry::Error(e)),
+            AgentEvent::Thread(_) => {}
             AgentEvent::Done => {
                 self.task = None;
                 self.approval = None;

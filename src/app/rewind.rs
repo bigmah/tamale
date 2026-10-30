@@ -108,6 +108,7 @@ impl App {
         let mut note = match first.history {
             Some(mark) => {
                 self.history.truncate(mark.len);
+                self.thread = None;
                 if let Some(n) = mark.merged
                     && let Some(Message::User { content }) = self.history.last_mut()
                 {

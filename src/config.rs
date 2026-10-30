@@ -8,6 +8,7 @@ use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Deserializer};
 
 use crate::agent::{self, Effort, Reasoning, Thinking};
+use crate::backend::{self, BackendSettings};
 use crate::permissions::PermissionSettings;
 
 #[cfg(test)]
@@ -18,6 +19,7 @@ pub const DEFAULT_TOML: &str = include_str!("../config/default.toml");
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Settings {
+    pub backend: BackendSettings,
     pub model: ModelSettings,
     pub agent: AgentSettings,
     pub ui: UiSettings,
@@ -93,6 +95,9 @@ impl Settings {
 
     /// Inject the environment lookup so tests don't mutate process-wide variables.
     pub fn apply_env(&mut self, get: impl Fn(&str) -> Option<String>) -> Result<()> {
+        if let Some(value) = get("TAMALE_BACKEND").filter(|s| !s.trim().is_empty()) {
+            self.backend.kind = backend::Kind::parse_setting(&value).context("TAMALE_BACKEND")?;
+        }
         if let Some(value) = get("TAMALE_MODEL") {
             self.model.name = value;
         }
@@ -113,6 +118,10 @@ impl Settings {
     }
 
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            !self.backend.claude_path.as_os_str().is_empty(),
+            "backend.claude_path must not be empty"
+        );
         ensure!(
             !self.model.name.trim().is_empty(),
             "model.name must not be empty"

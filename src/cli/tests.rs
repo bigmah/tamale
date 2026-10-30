@@ -92,3 +92,18 @@ fn additional_directories_are_repeatable_and_work_with_print_and_resume() {
     assert!(parse(&["-p", "go", "--yes"]).unwrap().yes);
     assert!(parse(&["-y"]).unwrap().yes);
 }
+
+#[test]
+fn backend_flag_selects_where_inference_comes_from() {
+    let mut settings = Settings::default();
+    parse(&["--backend", "claude-code"])
+        .unwrap()
+        .apply(&mut settings);
+    assert_eq!(settings.backend.kind, backend::Kind::ClaudeCode);
+    parse(&["-b", "api"]).unwrap().apply(&mut settings);
+    assert_eq!(settings.backend.kind, backend::Kind::Api);
+    parse(&[]).unwrap().apply(&mut settings);
+    assert_eq!(settings.backend.kind, backend::Kind::Api);
+    assert!(parse(&["--backend"]).is_err());
+    assert!(parse(&["--backend", "gpt"]).is_err());
+}

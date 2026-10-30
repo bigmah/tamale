@@ -13,9 +13,9 @@ use super::{
     App, EFFORT_CHOICES, QUIET_SUMMARY_CHARS, QUIET_TOOL_CALLS, SPINNER, TOOL_PREVIEW_LINES,
     effort_label,
 };
-use crate::permissions;
 use crate::session;
 use crate::session::Entry;
+use crate::{backend, permissions};
 
 impl App {
     pub fn draw(&mut self, frame: &mut Frame) {
@@ -42,6 +42,9 @@ impl App {
         }
         if self.effort_picker.is_some() {
             self.draw_effort_picker(frame, chat_area);
+        }
+        if self.backend_picker.is_some() {
+            self.draw_backend_picker(frame, chat_area);
         }
         if self.resume_picker.is_some() {
             self.draw_resume_picker(frame, chat_area);
@@ -117,6 +120,50 @@ impl App {
             .highlight_symbol("› ");
         let mut state = ListState::default().with_selected(Some(picker.selected));
         frame.render_stateful_widget(list, list_area, &mut state);
+    }
+
+    fn draw_backend_picker(&self, frame: &mut Frame, area: Rect) {
+        let Some(selected) = self.backend_picker else {
+            return;
+        };
+        let current = self.backend.kind();
+        let label_width = backend::Kind::ALL
+            .iter()
+            .map(|k| k.as_str().len())
+            .max()
+            .unwrap_or(0);
+        let items: Vec<ListItem> = backend::Kind::ALL
+            .iter()
+            .enumerate()
+            .map(|(i, kind)| {
+                let detail = if *kind == current {
+                    format!("{} (current: {})", kind.describe(), self.backend.label())
+                } else {
+                    kind.describe().to_string()
+                };
+                ListItem::new(Line::from(vec![
+                    Span::from(if *kind == current { "● " } else { "  " }).fg(Color::Green),
+                    Span::from(format!("{} ", i + 1)).fg(Color::DarkGray),
+                    Span::from(format!("{:<label_width$}  ", kind.as_str())).bold(),
+                    Span::from(detail).fg(Color::DarkGray),
+                ]))
+            })
+            .collect();
+        let width = (items.iter().map(ListItem::width).max().unwrap_or(0) + 6).max(48) as u16;
+        let height = backend::Kind::ALL.len() as u16 + 2;
+        let popup = area.centered(Constraint::Max(width), Constraint::Length(height));
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::new().fg(Color::Cyan))
+            .title(" Select backend ".bold())
+            .title_bottom(Line::from(" ↑/↓ move · enter select · esc cancel ").right_aligned());
+        frame.render_widget(Clear, popup);
+        let list = List::new(items)
+            .block(block)
+            .highlight_style(Style::new().bg(Color::Cyan).fg(Color::Black))
+            .highlight_symbol("› ");
+        let mut state = ListState::default().with_selected(Some(selected));
+        frame.render_stateful_widget(list, popup, &mut state);
     }
 
     fn draw_effort_picker(&self, frame: &mut Frame, area: Rect) {
@@ -369,17 +416,30 @@ impl App {
     }
 
     fn draw_status(&self, frame: &mut Frame, area: Rect) {
-        let cwd = self.workspace.cwd.display().to_string();
-        let mut cwd_spans = vec![
+        // Where inference comes from stays visible; a long cwd loses its start instead.
+        let backend = self.backend.label();
+        let dirs = match self.workspace.additional_dirs.len() {
+            0 => String::new(),
+            n => format!(" +{n} dirs"),
+        };
+        let fixed = " cwd: ".len() + dirs.width() + " · via ".len() + backend.width();
+        let cwd = truncate_start(
+            &self.workspace.cwd.display().to_string(),
+            (area.width as usize).saturating_sub(fixed).max(10),
+        );
+        let cwd_spans = vec![
             Span::from(" cwd: ").fg(Color::DarkGray),
             Span::from(cwd).fg(Color::Cyan),
+            Span::from(dirs).fg(Color::DarkGray),
+            Span::from(" · via ").fg(Color::DarkGray),
+            Span::from(backend)
+                .fg(if self.backend.signed_in() {
+                    Color::Blue
+                } else {
+                    Color::Red
+                })
+                .bold(),
         ];
-        if !self.workspace.additional_dirs.is_empty() {
-            cwd_spans.push(
-                Span::from(format!(" +{} dirs", self.workspace.additional_dirs.len()))
-                    .fg(Color::DarkGray),
-            );
-        }
         let cwd_line = Line::from(cwd_spans);
         let hint = if self.approval.is_some() {
             "approve the tool call · esc to interrupt"
@@ -389,6 +449,8 @@ impl App {
             "type to filter · ↑/↓ move · enter select · esc cancel"
         } else if self.effort_picker.is_some() {
             "↑/↓ move · 1–6 jump · enter select · esc cancel"
+        } else if self.backend_picker.is_some() {
+            "↑/↓ move · 1–2 jump · enter select · esc cancel"
         } else if self.help_scroll.is_some() {
             "↑/↓ j/k scroll · pgup/pgdn page · esc close"
         } else if self.is_running() {
@@ -501,6 +563,23 @@ pub(super) fn render_quiet<'a>(entries: &'a [Entry], lines: &mut Vec<Line<'a>>) 
         lines.push(Line::default());
         i = end;
     }
+}
+
+/// Keeps the end of `s` within `max` columns, e.g. "…/dev/tamale".
+fn truncate_start(s: &str, max: usize) -> String {
+    if s.width() <= max {
+        return s.to_string();
+    }
+    let mut width = 1;
+    let mut start = s.len();
+    for (i, c) in s.char_indices().rev() {
+        width += c.width().unwrap_or(0);
+        if width > max {
+            break;
+        }
+        start = i;
+    }
+    format!("…{}", &s[start..])
 }
 
 pub(super) fn truncate_chars(s: &str, max: usize) -> String {

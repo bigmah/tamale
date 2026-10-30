@@ -243,3 +243,30 @@ fn permission_rules_accumulate_across_layers_and_invalid_rules_name_the_file() {
         );
     }
 }
+
+#[test]
+fn backend_comes_from_files_and_environment() {
+    use crate::backend::Kind;
+    let dir = Fixture::new();
+    let explicit = dir.write(
+        "backend.toml",
+        "[backend]\nkind = \"claude-code\"\nclaude_path = \"/opt/claude\"\n",
+    );
+    let settings = Settings::load_from(&dir.0, None, Some(&explicit)).unwrap();
+    assert_eq!(settings.backend.kind, Kind::ClaudeCode);
+    assert_eq!(settings.backend.claude_path, PathBuf::from("/opt/claude"));
+    assert_eq!(Settings::default().backend.kind, Kind::Api);
+
+    let mut settings = Settings::default();
+    settings
+        .apply_env(|key| (key == "TAMALE_BACKEND").then(|| "claude-code".into()))
+        .unwrap();
+    assert_eq!(settings.backend.kind, Kind::ClaudeCode);
+    let error = Settings::default()
+        .apply_env(|key| (key == "TAMALE_BACKEND").then(|| "openai".into()))
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("TAMALE_BACKEND"));
+
+    let bad = dir.write("bad.toml", "[backend]\nkind = \"local\"\n");
+    assert!(Settings::load_from(&dir.0, None, Some(&bad)).is_err());
+}
