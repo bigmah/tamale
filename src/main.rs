@@ -209,15 +209,15 @@ async fn run(
 
     let result = async {
         while !app.should_quit {
-            if let Some(mut cc) = app.take_login_request() {
+            if let Some(mut request) = app.take_login_request() {
                 // The sign-in prompt needs the real terminal (and its keyboard input).
                 drop(events);
                 let mouse = app.mouse_enabled();
                 suspend_terminal();
-                let result = cc.login().await;
+                let result = request.cc.login().await;
                 *terminal = resume_terminal(mouse)?;
                 events = EventStream::new();
-                app.on_login(cc, result);
+                app.on_login(request, result);
                 dirty = true;
             }
             tokio::select! {

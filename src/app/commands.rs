@@ -3,7 +3,7 @@ use crossterm::execute;
 
 use super::{App, AppEvent, EFFORT_CHOICES, FALLBACK_MODELS, ModelInfo, ModelPicker, effort_label};
 use crate::session::Entry;
-use crate::{agent, backend, permissions, session};
+use crate::{agent, permissions, session};
 
 impl App {
     /// With no argument, show the current scope. A running turn keeps its snapshot.
@@ -162,47 +162,6 @@ impl App {
         self.entries
             .push(Entry::Info(format!("Switched model to {id}{note}.")));
         self.settings.model.name = id;
-    }
-
-    // -------------------------------------------------------- backend picker
-
-    pub(super) fn open_backend_picker(&mut self) {
-        let current = self.backend.kind();
-        let selected = backend::Kind::ALL
-            .iter()
-            .position(|k| *k == current)
-            .unwrap_or(0);
-        self.backend_picker = Some(selected);
-    }
-
-    pub(super) fn on_backend_picker_key(&mut self, key: KeyEvent, ctrl: bool) {
-        let Some(selected) = self.backend_picker else {
-            return;
-        };
-        let last = backend::Kind::ALL.len() - 1;
-        let choose = |app: &mut Self, i: usize| {
-            app.backend_picker = None;
-            app.switch_backend(Some(backend::Kind::ALL[i].as_str()));
-        };
-        self.backend_picker = match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => None,
-            KeyCode::Char('c') if ctrl => None,
-            KeyCode::Up | KeyCode::Char('k') => Some(selected.saturating_sub(1)),
-            KeyCode::Char('p') if ctrl => Some(selected.saturating_sub(1)),
-            KeyCode::Down | KeyCode::Char('j') => Some((selected + 1).min(last)),
-            KeyCode::Char('n') if ctrl => Some((selected + 1).min(last)),
-            KeyCode::Home | KeyCode::Char('g') => Some(0),
-            KeyCode::End | KeyCode::Char('G') => Some(last),
-            KeyCode::Char(c @ '1'..='9') if (c as usize - '1' as usize) <= last => {
-                choose(self, c as usize - '1' as usize);
-                return;
-            }
-            KeyCode::Enter => {
-                choose(self, selected);
-                return;
-            }
-            _ => Some(selected),
-        };
     }
 
     // -------------------------------------------------------- effort picker

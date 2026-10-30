@@ -198,15 +198,18 @@ fn replays_earlier_conversation_without_the_new_prompt() {
 
 #[test]
 fn labels_describe_the_account() {
-    let mut cc = ClaudeCode {
-        program: "claude".into(),
-        account: Account::default(),
-    };
+    let mut cc = ClaudeCode::signed_out("claude".into(), None);
     assert_eq!(cc.label(), "Claude Code (signed out)");
+    assert_eq!(cc.label_with_account(), "Claude Code (signed out)");
     cc.account = serde_json::from_value(json!({"loggedIn": true, "authMethod": "claude.ai",
         "subscriptionType": "max", "email": "a@b.c"}))
     .unwrap();
     assert_eq!(cc.label(), "Claude Code · Max");
+    assert_eq!(cc.label_with_account(), "Claude Code · Max · a@b.c");
+    let mut other = cc.clone();
+    assert!(cc.same_account(&other));
+    other.account.org_id = Some("another-org".into());
+    assert!(!cc.same_account(&other));
     cc.account.subscription_type = None;
     cc.account.auth_method = Some("api_key".into());
     assert_eq!(cc.label(), "Claude Code · API key");
@@ -349,7 +352,7 @@ async fn bridge_refuses_calls_without_a_turn() {
 #[tokio::test]
 #[ignore]
 async fn live_claude_code_continues_and_compacts() {
-    let cc = ClaudeCode::connect("claude".into()).await.unwrap();
+    let cc = ClaudeCode::connect("claude".into(), None).await.unwrap();
     assert!(
         cc.account.logged_in,
         "sign in with `claude auth login` first"

@@ -7,6 +7,7 @@
 //!   calls tamale's tools through a local MCP bridge.
 
 pub mod claude_code;
+pub mod logins;
 mod mcp;
 
 use std::path::PathBuf;
@@ -38,19 +39,10 @@ impl Kind {
         }
     }
 
-    pub const ALL: [Kind; 2] = [Kind::Api, Kind::ClaudeCode];
-
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Api => "api",
             Self::ClaudeCode => "claude-code",
-        }
-    }
-
-    pub fn describe(self) -> &'static str {
-        match self {
-            Self::Api => "the Anthropic API with ANTHROPIC_API_KEY",
-            Self::ClaudeCode => "your Claude Code sign-in, through the `claude` CLI",
         }
     }
 
@@ -65,6 +57,9 @@ pub struct BackendSettings {
     pub kind: Kind,
     /// The Claude Code executable, for the `claude-code` backend.
     pub claude_path: PathBuf,
+    /// More Claude Code config directories (`CLAUDE_CONFIG_DIR`), each with its own
+    /// login, offered in the backend picker when signed in.
+    pub claude_config_dirs: Vec<PathBuf>,
 }
 
 /// Everything a turn needs; the API backend ignores `prompt` and `thread`.
@@ -103,7 +98,7 @@ the claude-code backend)"
                 ))
             }
             Kind::ClaudeCode => Ok(Self::ClaudeCode(
-                ClaudeCode::connect(settings.claude_path.clone()).await?,
+                ClaudeCode::connect(settings.claude_path.clone(), None).await?,
             )),
         }
     }

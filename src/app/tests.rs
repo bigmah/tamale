@@ -788,53 +788,118 @@ fn status_shows_where_inference_comes_from_even_with_a_long_cwd() {
     assert!(row.trim_end().ends_with("· via Anthropic API"), "{row}");
 }
 
-#[test]
-fn backend_switches_keep_the_conversation_and_drop_the_old_thread() {
+fn login(email: &str, dir: Option<&str>) -> backend::ClaudeCode {
+    let mut cc = backend::ClaudeCode::signed_out("claude".into(), dir.map(Into::into));
+    cc.account = serde_json::from_value(serde_json::json!({
+        "loggedIn": true, "authMethod": "claude.ai", "subscriptionType": "max",
+        "email": email, "orgId": format!("org-{email}"),
+    }))
+    .unwrap();
+    cc
+}
+
+#[tokio::test]
+async fn backend_switches_keep_the_conversation_and_drop_the_old_thread() {
+    use backends::{Choice, LoginRequest};
     let client = anthropic::Client::new("test-key").unwrap();
     let (mut app, _rx) = App::new_with_channel(
         Backend::Api(client.clone()),
         test_settings("test-model"),
         Workspace::current().unwrap(),
     );
-    // The picker opens on the current backend and scrolls between them.
-    app.command("/backend");
-    assert_eq!(app.backend_picker, Some(0));
     let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
-    app.on_key(key(KeyCode::Down));
-    assert_eq!(app.backend_picker, Some(1));
-    app.on_key(key(KeyCode::Down));
-    assert_eq!(app.backend_picker, Some(1), "stops at the last backend");
-    app.on_key(key(KeyCode::Up));
+    let personal = login("me@home.dev", None);
+    let work = login("me@work.dev", Some("/tmp/tamale-test-work"));
+
+    // The picker opens on the current backend while logins are checked.
+    app.command("/backend");
+    assert!(app.backend_picker.as_ref().unwrap().loading);
+    assert_eq!(app.backend_choices(), [Choice::Api, Choice::AddLogin]);
+    app.on_app_event(AppEvent::Logins(Ok(vec![personal.clone(), work.clone()])));
+    let picker = app.backend_picker.as_ref().unwrap();
+    assert!(!picker.loading);
+    assert_eq!(picker.selected, 0);
+    assert_eq!(
+        app.backend_choices(),
+        [
+            Choice::Api,
+            Choice::Login(0),
+            Choice::Login(1),
+            Choice::AddLogin
+        ]
+    );
     app.on_key(key(KeyCode::Char('x')));
     assert!(app.input.is_empty(), "keys don't reach the prompt");
-    app.on_key(key(KeyCode::Esc));
-    assert_eq!(app.backend_picker, None);
-    app.command("/backend");
-    app.on_key(key(KeyCode::Enter));
-    assert_eq!(app.backend_picker, None);
-    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.starts_with("Already using")));
+    app.on_key(key(KeyCode::End));
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(
+        app.backend_picker.as_ref().unwrap().selected,
+        3,
+        "stops at the last row"
+    );
 
-    app.command("/backend api");
-    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.starts_with("Already using")));
-    app.command("/backend gpt");
-    assert!(matches!(app.entries.last(), Some(Entry::Error(_))));
-
+    // Each login is its own backend; the footer names the account.
     app.history = vec![Message::user("earlier")];
     app.thread = Some("old-session".into());
     app.models = Some(vec![]);
+    app.on_key(key(KeyCode::Up));
+    app.on_key(key(KeyCode::Up));
+    app.on_key(key(KeyCode::Enter));
+    assert!(app.backend_picker.is_none());
+    assert!(app.is_current(Choice::Login(0)));
+    assert!(app.thread.is_none() && app.models.is_none());
+    assert_eq!(app.history.len(), 1);
+    assert_eq!(app.backend_label(), "Claude Code · Max · me@home.dev");
+    assert!(
+        matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("conversation continues"))
+    );
+
+    // Logins tamale didn't add can't be removed from the picker.
+    app.command("/backend");
+    app.on_app_event(AppEvent::Logins(Ok(vec![personal.clone(), work.clone()])));
+    assert_eq!(app.backend_picker.as_ref().unwrap().selected, 1);
+    app.on_key(key(KeyCode::Down));
+    app.on_key(key(KeyCode::Char('d')));
+    assert!(
+        matches!(app.entries.last(), Some(Entry::Error(e)) if e.contains("claude auth logout"))
+    );
+    assert_eq!(app.logins.len(), 2);
+    app.on_key(key(KeyCode::Char('3')));
+    assert!(app.is_current(Choice::Login(1)));
+
+    // Adding an account that's already known switches to it instead of duplicating it.
+    let request = LoginRequest {
+        cc: login("me@home.dev", Some("/tmp/tamale-test-new")),
+        adding: true,
+    };
+    app.on_login(request, Ok(()));
+    assert!(
+        matches!(&app.entries[app.entries.len() - 2], Entry::Info(t) if t.contains("already signed in"))
+    );
+    assert!(app.is_current(Choice::Login(0)));
+    assert_eq!(app.logins.len(), 2);
+
+    // A new account is added and used.
+    let request = LoginRequest {
+        cc: login("me@side.dev", Some("/tmp/tamale-test-side")),
+        adding: true,
+    };
+    app.on_login(request, Ok(()));
+    assert_eq!(app.logins.len(), 3);
+    assert!(app.is_current(Choice::Login(2)));
+    assert!(app.take_login_request().is_none());
+
+    // Direct switches.
+    app.command("/backend gpt");
+    assert!(matches!(app.entries.last(), Some(Entry::Error(_))));
     app.on_app_event(AppEvent::Backend(
         Err("ANTHROPIC_API_KEY is not set".into()),
     ));
     assert!(matches!(app.entries.last(), Some(Entry::Error(e)) if e.contains("Couldn't switch")));
-    assert_eq!(app.thread.as_deref(), Some("old-session"));
-
+    assert!(app.is_current(Choice::Login(2)));
     app.on_app_event(AppEvent::Backend(Ok(Backend::Api(client))));
     assert_eq!(app.settings.backend.kind, backend::Kind::Api);
-    assert!(app.thread.is_none());
-    assert!(app.models.is_none());
-    assert_eq!(app.history.len(), 1);
-    assert!(
-        matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("conversation continues"))
-    );
-    assert!(app.take_login_request().is_none());
+    assert_eq!(app.backend_label(), "Anthropic API");
+    app.command("/backend api");
+    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.starts_with("Already using")));
 }

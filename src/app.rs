@@ -2,6 +2,7 @@
 //! live in child modules so each responsibility can be changed independently.
 
 mod approval;
+mod backends;
 mod commands;
 mod help;
 mod input;
@@ -44,6 +45,10 @@ pub enum AppEvent {
     SessionSaved(String, Result<(), String>),
     /// A backend requested with `/backend` is ready (or couldn't be set up).
     Backend(Result<Backend, String>),
+    /// Claude Code logins found for the backend picker.
+    Logins(Result<Vec<backend::ClaudeCode>, String>),
+    /// An added Claude Code account was removed (its label), or why it couldn't be.
+    LoginRemoved(Result<String, String>),
 }
 
 #[derive(Clone)]
@@ -113,8 +118,10 @@ pub struct App {
     /// The backend's own conversation for `history` (a Claude Code session), cleared
     /// whenever `history` is rewritten so the next turn starts a fresh one.
     thread: Option<String>,
-    /// Set by `/login`; the event loop suspends the TUI to run the sign-in.
-    login_requested: bool,
+    /// Claude Code logins known so far (the backend picker refreshes them).
+    logins: Vec<backend::ClaudeCode>,
+    /// Set by `/login` and the picker; the event loop suspends the TUI to run the sign-in.
+    login_request: Option<backends::LoginRequest>,
     settings: Settings,
     tx: mpsc::UnboundedSender<AppEvent>,
     /// `None` until the list has been fetched.
@@ -122,8 +129,7 @@ pub struct App {
     picker: Option<ModelPicker>,
     /// Selected row of the effort picker; `Some` while it is open.
     effort_picker: Option<usize>,
-    /// Selected row of the backend picker (an index into `backend::Kind::ALL`).
-    backend_picker: Option<usize>,
+    backend_picker: Option<backends::Picker>,
     resume_picker: Option<ResumePicker>,
     rewind_picker: Option<rewind::Picker>,
     /// The tool call waiting for the user's approval.
@@ -186,10 +192,15 @@ impl App {
         tx: mpsc::UnboundedSender<AppEvent>,
     ) -> Self {
         let permissions = Policy::new(&settings.permissions, workspace.cwd.clone()).shared();
+        let logins = match &backend {
+            Backend::ClaudeCode(cc) => vec![cc.clone()],
+            Backend::Api(_) => Vec::new(),
+        };
         Self {
             backend,
             thread: None,
-            login_requested: false,
+            logins,
+            login_request: None,
             settings,
             tx,
             models: None,
@@ -242,7 +253,9 @@ impl App {
 
     /// Whether something on screen is animating (spinners).
     pub fn is_busy(&self) -> bool {
-        self.is_running() || (self.picker.is_some() && self.models.is_none())
+        self.is_running()
+            || (self.picker.is_some() && self.models.is_none())
+            || self.backend_picker.as_ref().is_some_and(|p| p.loading)
     }
 
     pub fn on_tick(&mut self) {
@@ -326,118 +339,6 @@ impl App {
         )));
     }
 
-    /// `/login`: signing in to Claude Code needs the terminal, so the event loop does it.
-    fn login(&mut self) {
-        match &self.backend {
-            Backend::Api(_) => self.entries.push(Entry::Info(
-                "This session uses the Anthropic API with ANTHROPIC_API_KEY. To use your Claude \
-Code sign-in instead, run /backend claude-code."
-                    .into(),
-            )),
-            Backend::ClaudeCode(_) if self.is_running() => self.entries.push(Entry::Error(
-                "Can't sign in while the agent is running (Esc to interrupt first).".into(),
-            )),
-            Backend::ClaudeCode(_) => self.login_requested = true,
-        }
-    }
-
-    /// `/backend <kind>` switches where inference comes from; the conversation carries
-    /// over. Without an argument, opens the picker.
-    fn switch_backend(&mut self, arg: Option<&str>) {
-        let current = self.backend.kind();
-        let Some(arg) = arg else {
-            self.open_backend_picker();
-            return;
-        };
-        let kind = match backend::Kind::parse_setting(arg) {
-            Ok(kind) => kind,
-            Err(e) => {
-                self.entries.push(Entry::Error(e.to_string()));
-                return;
-            }
-        };
-        if self.is_running() {
-            self.entries.push(Entry::Error(
-                "Can't switch backends while the agent is running (Esc to interrupt first).".into(),
-            ));
-            return;
-        }
-        if kind == current {
-            self.entries.push(Entry::Info(format!(
-                "Already using {}.",
-                self.backend.label()
-            )));
-            return;
-        }
-        let mut settings = self.settings.backend.clone();
-        settings.kind = kind;
-        let tx = self.tx.clone();
-        tokio::spawn(async move {
-            let result = Backend::connect(&settings)
-                .await
-                .map_err(|e| format!("{e:#}"));
-            let _ = tx.send(AppEvent::Backend(result));
-        });
-    }
-
-    fn on_backend(&mut self, result: Result<Backend, String>) {
-        let backend = match result {
-            Ok(backend) => backend,
-            Err(e) => {
-                self.entries
-                    .push(Entry::Error(format!("Couldn't switch backends: {e}")));
-                return;
-            }
-        };
-        self.settings.backend.kind = backend.kind();
-        self.backend = backend;
-        // A Claude Code session from before doesn't hold the turns made since.
-        self.thread = None;
-        self.models = None;
-        let note = if self.is_running() {
-            " (takes effect on your next message)"
-        } else {
-            ""
-        };
-        self.entries.push(Entry::Info(format!(
-            "Switched to {}{note}. The conversation continues.",
-            self.backend.label()
-        )));
-        if !self.backend.signed_in() {
-            self.entries.push(Entry::Info(
-                "Claude Code isn't signed in; starting sign-in…".into(),
-            ));
-            self.login_requested = true;
-        }
-    }
-
-    /// The Claude Code backend to sign in with, if `/login` asked for it.
-    pub fn take_login_request(&mut self) -> Option<backend::ClaudeCode> {
-        match (std::mem::take(&mut self.login_requested), &self.backend) {
-            (true, Backend::ClaudeCode(cc)) => Some(cc.clone()),
-            _ => None,
-        }
-    }
-
-    pub fn on_login(&mut self, cc: backend::ClaudeCode, result: anyhow::Result<()>) {
-        match result {
-            Ok(()) => {
-                let who = cc
-                    .account
-                    .email
-                    .as_deref()
-                    .map(|email| format!(" as {email}"))
-                    .unwrap_or_default();
-                self.entries.push(Entry::Info(format!(
-                    "Signed in to Claude Code{who} ({}).",
-                    cc.label()
-                )));
-            }
-            Err(e) => self.entries.push(Entry::Error(format!("{e:#}"))),
-        }
-        self.backend = Backend::ClaudeCode(cc);
-    }
-
     /// Starts a new turn and returns the sender the agent task should report to.
     fn start_turn(&mut self) -> mpsc::UnboundedSender<AgentEvent> {
         self.turn += 1;
@@ -470,6 +371,8 @@ Code sign-in instead, run /backend claude-code."
             AppEvent::Agent(turn, ev) => self.on_agent(turn, ev),
             AppEvent::Models(result) => self.on_models(result),
             AppEvent::Backend(result) => self.on_backend(result),
+            AppEvent::Logins(result) => self.on_logins(result),
+            AppEvent::LoginRemoved(result) => self.on_login_removed(result),
             AppEvent::SessionSaved(id, result) => self.on_session_saved(&id, result),
             AppEvent::ClipboardPasted(Ok(text)) => self.on_paste(&text),
             AppEvent::ClipboardCopied(Ok(())) => self

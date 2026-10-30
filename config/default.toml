@@ -10,6 +10,10 @@
 # Tools, permissions, undo and sessions work the same with either.
 kind = "api"
 claude_path = "claude" # the Claude Code executable (searched on PATH)
+# More Claude Code logins for the /backend picker: config directories (CLAUDE_CONFIG_DIR)
+# each signed in to an account. Accounts added from the picker are kept by tamale and
+# don't need listing here; ~/.claude is offered automatically when signed in.
+claude_config_dirs = [] # e.g. ["~/.claude-work"]
 
 [model]
 name = "claude-opus-5-5"

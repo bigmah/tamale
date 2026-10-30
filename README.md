@@ -33,9 +33,26 @@ identically, and the footer shows the backend next to the working directory
 | `api` (default) | `kind = "api"` | `ANTHROPIC_API_KEY` |
 | `claude-code` | `kind = "claude-code"`, `--backend claude-code`, `TAMALE_BACKEND` | The Claude Code CLI's sign-in (Claude subscription or Console account) |
 
-`/backend` opens a picker to switch mid-session (↑/↓ or j/k to move, 1–2 to jump, Enter to
+`/backend` opens a picker to switch mid-session (↑/↓ or j/k to move, 1–9 to jump, Enter to
 switch, Esc to cancel; the current backend is marked with ●). `/backend api` and
-`/backend claude-code` switch directly.
+`/backend claude-code` (your default Claude Code login) switch directly.
+
+**Several Claude Code logins.** Each signed-in Claude Code account is its own row in the
+picker, e.g. `Claude Code · Max · me@home.dev` and `Claude Code · Team · me@work.dev`.
+With more than one, the footer names the account too. The picker lists:
+
+- your default login (Claude Code's default, or `CLAUDE_CONFIG_DIR` if tamale was started
+  with it),
+- `~/.claude`, when that isn't the default and is signed in,
+- config directories listed in `backend.claude_config_dirs` that are signed in,
+- accounts added with **Sign in to another Claude Code account…**: tamale creates a config
+  directory under `~/.local/share/tamale/claude-code/` (`$XDG_DATA_HOME`), runs
+  `claude auth login` for it and switches to it. Signing in to an account that's already
+  listed switches to that one instead. `d` (or Delete) removes an added account: it
+  signs it out and deletes its directory. The current backend can't be removed.
+
+Claude Code keeps each login in its own config directory, so tamale runs each one with
+its `CLAUDE_CONFIG_DIR`; sessions and settings of different logins stay separate.
 The conversation carries over in both directions: Claude Code turns are recorded in the
 same history the API backend uses, and a switch to Claude Code replays the conversation
 to a new Claude Code session. Switching to Claude Code while signed out starts the sign-in;
@@ -75,6 +92,7 @@ binary. Override just the fields you need in a personal or project TOML file:
 [backend]
 kind = "api" # or "claude-code"
 claude_path = "claude"
+claude_config_dirs = ["~/.claude-work"] # more Claude Code logins for the picker
 
 [model]
 name = "claude-opus-5-5"

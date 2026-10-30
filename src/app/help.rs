@@ -65,7 +65,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ),
     (
         "/backend [kind]",
-        "Pick where inference comes from (or /backend api|claude-code), keeping the conversation",
+        "Pick where inference comes from, incl. each Claude Code login or adding one (or /backend api|claude-code)",
     ),
     (
         "/login",

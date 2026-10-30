@@ -43,24 +43,35 @@ pub struct Account {
     pub auth_method: Option<String>,
     pub subscription_type: Option<String>,
     pub email: Option<String>,
+    pub org_id: Option<String>,
 }
 
+/// One Claude Code login. Each login lives in its own Claude Code config directory.
 #[derive(Clone)]
 pub struct ClaudeCode {
     program: PathBuf,
+    /// `CLAUDE_CONFIG_DIR` for this login; `None` is Claude Code's default (or the
+    /// variable tamale was started with).
+    pub config_dir: Option<PathBuf>,
     pub account: Account,
 }
 
 impl ClaudeCode {
     /// Finds the CLI and reads its sign-in state. Being signed out is not an error here;
     /// callers decide whether to sign in.
-    pub async fn connect(program: PathBuf) -> Result<Self> {
-        let mut cc = Self {
-            program,
-            account: Account::default(),
-        };
+    pub async fn connect(program: PathBuf, config_dir: Option<PathBuf>) -> Result<Self> {
+        let mut cc = Self::signed_out(program, config_dir);
         cc.refresh().await?;
         Ok(cc)
+    }
+
+    /// A login that hasn't been checked yet (e.g. a new directory about to be signed in).
+    pub fn signed_out(program: PathBuf, config_dir: Option<PathBuf>) -> Self {
+        Self {
+            program,
+            config_dir,
+            account: Account::default(),
+        }
     }
 
     fn command(&self) -> Command {
@@ -68,7 +79,39 @@ impl ClaudeCode {
         // An API key in the environment takes precedence over the Claude Code sign-in;
         // the API backend is the way to use one.
         cmd.env_remove("ANTHROPIC_API_KEY");
+        if let Some(dir) = &self.config_dir {
+            cmd.env("CLAUDE_CONFIG_DIR", dir);
+        }
         cmd
+    }
+
+    /// Signs this login out (`claude auth logout`), removing its stored credentials.
+    pub async fn logout(&self) -> Result<()> {
+        let status = self
+            .command()
+            .args(["auth", "logout"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await
+            .context("couldn't run `claude auth logout`")?;
+        anyhow::ensure!(status.success(), "`claude auth logout` {status}");
+        Ok(())
+    }
+
+    /// Whether both are signed in to the same account and organization.
+    pub fn same_account(&self, other: &ClaudeCode) -> bool {
+        let (a, b) = (&self.account, &other.account);
+        a.logged_in && b.logged_in && a.email == b.email && a.org_id == b.org_id
+    }
+
+    /// The label plus the account's email, to tell logins apart.
+    pub fn label_with_account(&self) -> String {
+        match self.account.email.as_deref() {
+            Some(email) if self.account.logged_in => format!("{} · {email}", self.label()),
+            _ => self.label(),
+        }
     }
 
     pub async fn refresh(&mut self) -> Result<()> {

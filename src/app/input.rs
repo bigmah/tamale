@@ -35,12 +35,8 @@ impl App {
             } else {
                 (picker.selected + 1).min(count.saturating_sub(1))
             };
-        } else if let Some(selected) = self.backend_picker {
-            self.backend_picker = Some(if up {
-                selected.saturating_sub(1)
-            } else {
-                (selected + 1).min(crate::backend::Kind::ALL.len() - 1)
-            });
+        } else if self.backend_picker.is_some() {
+            self.scroll_backend_picker(up);
         } else if let Some(selected) = self.effort_picker {
             self.effort_picker = Some(if up {
                 selected.saturating_sub(1)

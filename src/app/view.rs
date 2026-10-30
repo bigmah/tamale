@@ -8,14 +8,15 @@ use ratatui::widgets::{
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use super::backends::Choice;
 use super::help::help_lines;
 use super::{
     App, EFFORT_CHOICES, QUIET_SUMMARY_CHARS, QUIET_TOOL_CALLS, SPINNER, TOOL_PREVIEW_LINES,
     effort_label,
 };
+use crate::permissions;
 use crate::session;
 use crate::session::Entry;
-use crate::{backend, permissions};
 
 impl App {
     pub fn draw(&mut self, frame: &mut Frame) {
@@ -123,45 +124,73 @@ impl App {
     }
 
     fn draw_backend_picker(&self, frame: &mut Frame, area: Rect) {
-        let Some(selected) = self.backend_picker else {
+        let Some(picker) = &self.backend_picker else {
             return;
         };
-        let current = self.backend.kind();
-        let label_width = backend::Kind::ALL
-            .iter()
-            .map(|k| k.as_str().len())
-            .max()
-            .unwrap_or(0);
-        let items: Vec<ListItem> = backend::Kind::ALL
+        let choices = self.backend_choices();
+        let items: Vec<ListItem> = choices
             .iter()
             .enumerate()
-            .map(|(i, kind)| {
-                let detail = if *kind == current {
-                    format!("{} (current: {})", kind.describe(), self.backend.label())
-                } else {
-                    kind.describe().to_string()
+            .map(|(i, choice)| {
+                let (name, detail, signed_out) = match *choice {
+                    Choice::Api => (
+                        "api",
+                        "Anthropic API · ANTHROPIC_API_KEY".to_string(),
+                        false,
+                    ),
+                    Choice::Login(n) => {
+                        let cc = &self.logins[n];
+                        let mut detail = cc.label_with_account();
+                        if !cc.account.logged_in
+                            && let Some(dir) = &cc.config_dir
+                        {
+                            detail.push_str(&format!(" · {}", tilde(dir)));
+                        }
+                        ("claude-code", detail, !cc.account.logged_in)
+                    }
+                    Choice::AddLogin => (
+                        "+",
+                        "Sign in to another Claude Code account…".to_string(),
+                        false,
+                    ),
                 };
+                let current = self.is_current(*choice);
                 ListItem::new(Line::from(vec![
-                    Span::from(if *kind == current { "● " } else { "  " }).fg(Color::Green),
+                    Span::from(if current { "● " } else { "  " }).fg(Color::Green),
                     Span::from(format!("{} ", i + 1)).fg(Color::DarkGray),
-                    Span::from(format!("{:<label_width$}  ", kind.as_str())).bold(),
-                    Span::from(detail).fg(Color::DarkGray),
+                    Span::from(format!("{name:<11}  ")).bold(),
+                    Span::from(detail).fg(if signed_out {
+                        Color::Red
+                    } else {
+                        Color::DarkGray
+                    }),
                 ]))
             })
             .collect();
-        let width = (items.iter().map(ListItem::width).max().unwrap_or(0) + 6).max(48) as u16;
-        let height = backend::Kind::ALL.len() as u16 + 2;
+        let width = (items.iter().map(ListItem::width).max().unwrap_or(0) + 6).max(60) as u16;
+        let height = items.len() as u16 + 2;
         let popup = area.centered(Constraint::Max(width), Constraint::Length(height));
+        let title = if picker.loading {
+            format!(
+                " Select backend {} checking Claude Code logins… ",
+                SPINNER[self.tick % SPINNER.len()]
+            )
+        } else {
+            " Select backend ".to_string()
+        };
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(Style::new().fg(Color::Cyan))
-            .title(" Select backend ".bold())
-            .title_bottom(Line::from(" ↑/↓ move · enter select · esc cancel ").right_aligned());
+            .title(title.bold())
+            .title_bottom(
+                Line::from(" ↑/↓ move · enter select · d remove · esc cancel ").right_aligned(),
+            );
         frame.render_widget(Clear, popup);
         let list = List::new(items)
             .block(block)
             .highlight_style(Style::new().bg(Color::Cyan).fg(Color::Black))
             .highlight_symbol("› ");
+        let selected = picker.selected.min(choices.len() - 1);
         let mut state = ListState::default().with_selected(Some(selected));
         frame.render_stateful_widget(list, popup, &mut state);
     }
@@ -417,7 +446,7 @@ impl App {
 
     fn draw_status(&self, frame: &mut Frame, area: Rect) {
         // Where inference comes from stays visible; a long cwd loses its start instead.
-        let backend = self.backend.label();
+        let backend = self.backend_label();
         let dirs = match self.workspace.additional_dirs.len() {
             0 => String::new(),
             n => format!(" +{n} dirs"),
@@ -450,7 +479,7 @@ impl App {
         } else if self.effort_picker.is_some() {
             "↑/↓ move · 1–6 jump · enter select · esc cancel"
         } else if self.backend_picker.is_some() {
-            "↑/↓ move · 1–2 jump · enter select · esc cancel"
+            "↑/↓ move · enter select · d remove · esc cancel"
         } else if self.help_scroll.is_some() {
             "↑/↓ j/k scroll · pgup/pgdn page · esc close"
         } else if self.is_running() {
@@ -562,6 +591,16 @@ pub(super) fn render_quiet<'a>(entries: &'a [Entry], lines: &mut Vec<Line<'a>>) 
         }
         lines.push(Line::default());
         i = end;
+    }
+}
+
+/// A path with the home directory shown as `~`.
+fn tilde(path: &std::path::Path) -> String {
+    match std::env::var_os("HOME")
+        .and_then(|home| path.strip_prefix(home).ok().map(|p| p.to_path_buf()))
+    {
+        Some(rest) => format!("~/{}", rest.display()),
+        None => path.display().to_string(),
     }
 }
 
