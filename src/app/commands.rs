@@ -4,7 +4,7 @@ use rig_core::client::ModelListingClient;
 
 use super::{App, AppEvent, EFFORT_CHOICES, FALLBACK_MODELS, ModelInfo, ModelPicker, effort_label};
 use crate::session::Entry;
-use crate::{agent, session};
+use crate::{agent, permissions, session};
 
 impl App {
     /// With no argument, show the current scope. A running turn keeps its snapshot.
@@ -325,6 +325,30 @@ impl App {
         }));
     }
 
+    /// Without an argument, shows the mode and rules.
+    pub(super) fn set_permission_mode(&mut self, arg: Option<&str>) {
+        let Some(arg) = arg else {
+            let summary = self.permissions.lock().unwrap().describe();
+            self.entries.push(Entry::Info(summary));
+            return;
+        };
+        match permissions::Mode::parse(arg) {
+            Some(mode) => self.apply_permission_mode(mode),
+            None => self.entries.push(Entry::Error(format!(
+                "Unknown permission mode: {arg} (use ask, accept-edits, auto)"
+            ))),
+        }
+    }
+
+    pub(super) fn apply_permission_mode(&mut self, mode: permissions::Mode) {
+        self.permissions.lock().unwrap().mode = mode;
+        self.entries.push(Entry::Info(format!(
+            "Permission mode: {} ({}).",
+            mode.as_str(),
+            mode.describe()
+        )));
+    }
+
     pub(super) fn command(&mut self, cmd: &str) {
         match cmd.split_whitespace().next().unwrap_or("") {
             "/quit" | "/exit" => self.should_quit = true,
@@ -334,6 +358,8 @@ impl App {
             "/clear" => {
                 self.save_session();
                 self.history.clear();
+                self.checkpoints.clear();
+                self.permissions.lock().unwrap().clear_session();
                 self.context_tokens = 0;
                 self.entries.clear();
                 self.transcript.invalidate_from(0);
@@ -363,6 +389,9 @@ impl App {
                 None => self.open_picker(),
             },
             "/effort" => self.set_effort(cmd.split_whitespace().nth(1)),
+            "/undo" => self.undo(),
+            "/rewind" => self.open_rewind_picker(),
+            "/permissions" => self.set_permission_mode(cmd.split_whitespace().nth(1)),
             other => self.entries.push(Entry::Error(format!(
                 "Unknown command: {other} (type /help to see all commands)"
             ))),

@@ -45,6 +45,9 @@ pub struct Session {
     pub context_tokens: u64,
     pub history: Vec<Message>,
     pub entries: Vec<Entry>,
+    /// Turns `/undo` and `/rewind` can return to; file snapshots live in `checkpoint_dir`.
+    #[serde(default)]
+    pub checkpoints: Vec<crate::checkpoint::Turn>,
 }
 
 /// The listing fields of a session; the (possibly large) history is skipped when parsing.
@@ -223,6 +226,11 @@ pub fn dir() -> Option<PathBuf> {
     Some(data.join("tamale").join("sessions"))
 }
 
+/// File snapshots for one turn of a session: `<sessions>/<id>/checkpoints/<turn>/`.
+pub fn checkpoint_dir(id: &str, turn: u64) -> Option<PathBuf> {
+    Some(dir()?.join(id).join("checkpoints").join(turn.to_string()))
+}
+
 fn path_in(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.json"))
 }
@@ -342,6 +350,7 @@ mod tests {
                     )],
                 },
             ],
+            checkpoints: Vec::new(),
             entries: vec![
                 Entry::User("hi".into()),
                 Entry::Tool {
@@ -443,6 +452,7 @@ mod perf_tests {
             context_tokens: 0,
             history: vec![Message::user("x".repeat(1_000_000))],
             entries: vec![Entry::User("y".repeat(1_000_000))],
+            checkpoints: Vec::new(),
         };
         for i in 0..30 {
             saved.id = format!("session-{i}");

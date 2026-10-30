@@ -51,6 +51,18 @@ const COMMANDS: &[(&str, &str)] = &[
         "/resume [n|id]",
         "Pick a saved session from this directory to continue (or resume the nth / by id)",
     ),
+    (
+        "/undo",
+        "Restore files the last turn changed and remove it from the conversation",
+    ),
+    (
+        "/rewind",
+        "Pick a turn to return to; restores files from it and every later turn",
+    ),
+    (
+        "/permissions [mode]",
+        "Show the permission mode and rules, or set ask, accept-edits or auto",
+    ),
     ("/clear", "Clear the conversation and start fresh"),
     ("/quit, /exit", "Quit tamale"),
 ];
@@ -84,6 +96,10 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
                 "Scroll chat by 3 lines (also scrolls help and pickers)",
             ),
             ("Esc", "Interrupt the agent"),
+            (
+                "Shift+Tab",
+                "Cycle permission mode: ask → accept-edits → auto",
+            ),
             ("Ctrl+C", "Clear input / interrupt agent / quit"),
             ("Ctrl+D", "Quit (when input is empty)"),
             (
@@ -109,6 +125,26 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
             ("↑/↓, Ctrl+P/Ctrl+N", "Move selection"),
             ("Enter", "Resume selected session"),
             ("Esc", "Cancel"),
+        ],
+    ),
+    (
+        "Approval prompt",
+        &[
+            ("y / Enter on Yes", "Run the tool call"),
+            ("a", "Run it and allow the shown rule for this session"),
+            (
+                "n",
+                "Deny it, then type what to tell the model (Enter sends)",
+            ),
+            ("Esc", "Deny and interrupt the agent"),
+        ],
+    ),
+    (
+        "Rewind picker",
+        &[
+            ("↑/↓, j/k", "Move selection (most recent turn first)"),
+            ("Enter", "Rewind to before the selected turn"),
+            ("Esc / q", "Cancel"),
         ],
     ),
     (
@@ -203,6 +239,10 @@ pub(super) fn help_lines() -> Vec<Line<'static>> {
             ),
             ("-r, --resume", "Pick a saved session to resume on startup"),
             ("-p <prompt>", "Run one prompt non-interactively and exit"),
+            (
+                "-y, --yes",
+                "With -p, run calls that would need approval (deny rules still apply)",
+            ),
         ],
         Color::Cyan,
     );

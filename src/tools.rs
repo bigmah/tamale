@@ -154,6 +154,14 @@ pub fn summarize(name: &str, args: &Value) -> String {
     }
 }
 
+/// The file a call will modify, if any.
+pub fn write_target(name: &str, args: &Value) -> Option<PathBuf> {
+    match name {
+        "write_file" | "edit_file" => args.get("path").and_then(Value::as_str).map(PathBuf::from),
+        _ => None,
+    }
+}
+
 pub async fn execute(name: &str, args: Value) -> Result<String> {
     match name {
         "read_file" => read_file(serde_json::from_value(args)?).await,
@@ -302,21 +310,125 @@ async fn bash(a: BashArgs) -> Result<String> {
     Ok(truncate(text))
 }
 
-fn truncate(mut s: String) -> String {
-    if s.len() > MAX_OUTPUT_CHARS {
-        let mut cut = MAX_OUTPUT_CHARS;
-        while !s.is_char_boundary(cut) {
-            cut -= 1;
-        }
-        s.truncate(cut);
-        s.push_str("\n... (output truncated)");
+/// Bounds tool output for the model. Errors and summaries (compiler errors, failing tests)
+/// tend to come last, so this keeps the first third and the last two thirds of the budget,
+/// and saves the full output to a file the model can read or grep.
+fn truncate(s: String) -> String {
+    if s.len() <= MAX_OUTPUT_CHARS {
+        return s;
     }
-    s
+    let head = s.floor_char_boundary(MAX_OUTPUT_CHARS / 3);
+    let tail = s.ceil_char_boundary(s.len() - MAX_OUTPUT_CHARS * 2 / 3);
+    // Cut at line boundaries unless the nearest one is far away (very long lines).
+    let slack = MAX_OUTPUT_CHARS / 10;
+    let head = s[..head]
+        .rfind('\n')
+        .map(|i| i + 1)
+        .filter(|&i| head - i <= slack)
+        .unwrap_or(head);
+    let tail = s[tail..]
+        .find('\n')
+        .map(|i| tail + i + 1)
+        .filter(|&i| i - tail <= slack)
+        .unwrap_or(tail);
+    let omitted = &s[head..tail];
+    let lines = omitted.matches('\n').count();
+    let saved = match spill(&s) {
+        Ok(path) => format!("full output: {}", path.display()),
+        Err(e) => format!("full output could not be saved: {e:#}"),
+    };
+    format!(
+        "{}{}… {lines} lines ({} bytes) omitted; {saved} …\n{}",
+        &s[..head],
+        if s[..head].ends_with('\n') { "" } else { "\n" },
+        omitted.len(),
+        &s[tail..]
+    )
+}
+
+/// Full tool outputs live in `$XDG_CACHE_HOME/tamale/out` (default `~/.cache/tamale/out`).
+fn spill_dir() -> Option<PathBuf> {
+    std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+        .map(|dir| dir.join("tamale").join("out"))
+}
+
+fn spill(s: &str) -> Result<PathBuf> {
+    let dir = spill_dir().context("HOME is not set")?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    static PRUNED: std::sync::Once = std::sync::Once::new();
+    PRUNED.call_once(|| prune_spills(&dir, Duration::from_secs(7 * 24 * 3600)));
+    let path = dir.join(format!("{}.txt", crate::session::new_id()));
+    std::fs::write(&path, s).with_context(|| format!("writing {}", path.display()))?;
+    Ok(path)
+}
+
+/// Best effort: remove saved outputs older than `max_age`, once per process.
+fn prune_spills(dir: &Path, max_age: Duration) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let old = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > max_age);
+        if old {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn truncate_keeps_head_and_tail_and_saves_full_output() {
+        let short = "fits".to_string();
+        assert_eq!(truncate(short.clone()), short);
+
+        let lines: Vec<String> = (0..20_000).map(|i| format!("line {i} é")).collect();
+        let full = format!(
+            "{}\nerror[E0308]: mismatched types\n[exit code: 101]",
+            lines.join("\n")
+        );
+        let out = truncate(full.clone());
+        assert!(out.len() < MAX_OUTPUT_CHARS + 200);
+        assert!(out.starts_with("line 0 é\nline 1 é"));
+        // Both cuts fall on line boundaries.
+        let before = out
+            .lines()
+            .take_while(|l| !l.starts_with("… "))
+            .last()
+            .unwrap();
+        let after = out
+            .lines()
+            .skip_while(|l| !l.starts_with("… "))
+            .nth(1)
+            .unwrap();
+        assert!(
+            before.starts_with("line ") && before.ends_with(" é"),
+            "{before}"
+        );
+        assert!(
+            after.starts_with("line ") && after.ends_with(" é"),
+            "{after}"
+        );
+        assert!(out.ends_with("error[E0308]: mismatched types\n[exit code: 101]"));
+        let marker = out.lines().find(|l| l.starts_with("… ")).unwrap();
+        assert!(marker.contains("lines (") && marker.contains("bytes) omitted"));
+        let path = marker
+            .split("full output: ")
+            .nth(1)
+            .and_then(|rest| rest.strip_suffix(" …"))
+            .expect("marker names the saved file");
+        assert_eq!(std::fs::read_to_string(path).unwrap(), full);
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn every_tool_requires_a_description() {

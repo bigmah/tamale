@@ -201,3 +201,45 @@ fn model_changes_recompute_inferred_windows_and_keep_explicit_overrides() {
     assert_eq!(turn.context_window, 500_000);
     assert_eq!(turn.context_tokens, 42);
 }
+
+#[test]
+fn permission_rules_accumulate_across_layers_and_invalid_rules_name_the_file() {
+    use crate::permissions::{Decision, Mode, Policy};
+    use serde_json::json;
+
+    let fixture = Fixture::new();
+    fixture.write(
+        "personal/config.toml",
+        "[permissions]\nmode = 'auto'\ndeny = ['bash:git push*']",
+    );
+    fixture.write(
+        "project/tamale.toml",
+        "[permissions]\nmode = 'accept-edits'\nallow = ['bash:cargo *']\ndeny = ['write_file:.env*']",
+    );
+    let cwd = fixture.0.join("project");
+    let settings = Settings::load_from(&cwd, Some(&fixture.0.join("personal")), None).unwrap();
+    assert_eq!(settings.permissions.mode, Mode::AcceptEdits);
+    assert_eq!(settings.permissions.deny.len(), 2);
+    let policy = Policy::new(&settings.permissions, cwd.clone());
+    let bash = |command: &str| policy.check("bash", &json!({ "command": command }));
+    assert!(matches!(bash("git push"), Decision::Deny(_)));
+    assert_eq!(bash("cargo test"), Decision::Allow);
+    assert!(matches!(bash("make"), Decision::Ask { .. }));
+    assert_eq!(Settings::default().permissions.mode, Mode::Ask);
+
+    for (text, expected) in [
+        ("[permissions]\nmode = 'yolo'", "unknown permission mode"),
+        ("[permissions]\nallow = ['shell:ls']", "unknown tool"),
+        ("[permissions]\ndeny = ['bash:[oops']", "invalid pattern"),
+    ] {
+        let path = fixture.write("bad.toml", text);
+        let error = format!(
+            "{:#}",
+            Settings::load_from(&cwd, None, Some(&path)).unwrap_err()
+        );
+        assert!(
+            error.contains("bad.toml") && error.contains(expected),
+            "{error}"
+        );
+    }
+}

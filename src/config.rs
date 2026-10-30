@@ -8,6 +8,7 @@ use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Deserializer};
 
 use crate::agent::{self, Effort, Reasoning, Thinking};
+use crate::permissions::PermissionSettings;
 
 #[cfg(test)]
 mod tests;
@@ -20,6 +21,7 @@ pub struct Settings {
     pub model: ModelSettings,
     pub agent: AgentSettings,
     pub ui: UiSettings,
+    pub permissions: PermissionSettings,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -197,6 +199,8 @@ fn merge(base: &mut toml::Value, overlay: toml::Value) {
                 }
             }
         }
+        // Rule lists accumulate, so a project file can't drop personal deny rules.
+        (toml::Value::Array(base), toml::Value::Array(overlay)) => base.extend(overlay),
         (base, overlay) => *base = overlay,
     }
 }

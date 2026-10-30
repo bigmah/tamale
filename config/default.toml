@@ -18,3 +18,15 @@ request_timeout_secs = 300 # timeout opening a stream or waiting for its next ev
 [ui]
 verbose = false
 mouse = true
+
+[permissions]
+# ask: prompt before edits and shell commands. accept-edits: prompt before shell
+# commands only. auto: never prompt. Shift+Tab cycles modes in the TUI; -p denies
+# anything that would prompt unless --yes is passed.
+mode = "ask"
+# Rules are "tool" or "tool:glob", matched on the command (bash), path (file tools),
+# URL (web_fetch) or query (web_search); `*` also matches `/`. Every part of a compound
+# bash command must be allowed. Deny rules are checked first and apply in every mode.
+# Lists from all settings layers are combined.
+allow = [] # e.g. ["bash:cargo *", "bash:git status*", "bash:git diff*"]
+deny = [] # e.g. ["bash:git push*", "bash:rm -rf *", "write_file:.env*"]

@@ -1,9 +1,11 @@
 //! Conversation state and agent event handling. Input, commands, sessions and drawing
 //! live in child modules so each responsibility can be changed independently.
 
+mod approval;
 mod commands;
 mod help;
 mod input;
+mod rewind;
 mod sessions;
 #[cfg(test)]
 mod tests;
@@ -17,7 +19,9 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::agent::{self, AgentEvent};
+use crate::checkpoint::{self, HistoryMark, Recorder};
 use crate::config::Settings;
+use crate::permissions::{self, Policy};
 use crate::session::{self, Entry};
 use crate::workspace::Workspace;
 use view::fmt_tokens;
@@ -112,6 +116,13 @@ pub struct App {
     /// Selected row of the effort picker; `Some` while it is open.
     effort_picker: Option<usize>,
     resume_picker: Option<ResumePicker>,
+    rewind_picker: Option<rewind::Picker>,
+    /// The tool call waiting for the user's approval.
+    approval: Option<approval::Prompt>,
+    /// Shared with running turns, so mode changes apply to the next tool call.
+    permissions: permissions::Shared,
+    /// Turns that can be undone, oldest first.
+    checkpoints: Vec<checkpoint::Turn>,
     /// Id of the current session, used as its file name when saving.
     session_id: String,
     session_created: u64,
@@ -165,6 +176,7 @@ impl App {
         workspace: Workspace,
         tx: mpsc::UnboundedSender<AppEvent>,
     ) -> Self {
+        let permissions = Policy::new(&settings.permissions, workspace.cwd.clone()).shared();
         Self {
             client,
             settings,
@@ -173,6 +185,10 @@ impl App {
             picker: None,
             effort_picker: None,
             resume_picker: None,
+            rewind_picker: None,
+            approval: None,
+            permissions,
+            checkpoints: Vec::new(),
             session_id: session::new_id(),
             session_created: session::now(),
             save_error_shown: false,
@@ -231,11 +247,7 @@ impl App {
             return;
         }
 
-        self.entries.push(Entry::User(text.clone()));
-        // Consecutive user turns (e.g. after an interrupt) are merged into one message.
-        agent::push_user_text(&mut self.history, text);
-        self.save_session();
-
+        let ctx = self.begin_turn(text);
         let config = self.settings.turn_config(self.context_tokens);
         let atx = self.start_turn();
         self.task = Some(tokio::spawn(agent::run(
@@ -243,8 +255,34 @@ impl App {
             self.history.clone(),
             config,
             self.workspace.clone(),
+            ctx,
             atx,
         )));
+    }
+
+    /// Adds the prompt to the conversation and starts a checkpoint for the turn.
+    fn begin_turn(&mut self, text: String) -> agent::TurnCtx {
+        let turn = self.checkpoints.last().map_or(1, |t| t.turn + 1);
+        self.checkpoints.push(checkpoint::Turn {
+            turn,
+            prompt: text.clone(),
+            entries_len: self.entries.len(),
+            history: Some(HistoryMark {
+                len: self.history.len(),
+                merged: match self.history.last() {
+                    Some(Message::User { content }) => Some(content.len()),
+                    _ => None,
+                },
+            }),
+        });
+        self.entries.push(Entry::User(text.clone()));
+        // Consecutive user turns (e.g. after an interrupt) are merged into one message.
+        agent::push_user_text(&mut self.history, text);
+        self.save_session();
+        agent::TurnCtx {
+            permissions: self.permissions.clone(),
+            checkpoint: session::checkpoint_dir(&self.session_id, turn).map(Recorder::new),
+        }
     }
 
     fn compact(&mut self, instructions: Option<String>) {
@@ -295,6 +333,7 @@ impl App {
     }
 
     fn interrupt(&mut self) {
+        self.approval = None;
         if let Some(task) = self.task.take() {
             task.abort();
             self.entries.push(Entry::Info("Interrupted.".into()));
@@ -321,6 +360,13 @@ impl App {
     fn on_agent(&mut self, turn: u64, event: AgentEvent) {
         if turn != self.turn {
             return;
+        }
+        if matches!(event, AgentEvent::Compacted { .. }) {
+            // Earlier messages become a summary, even if the turn was just interrupted
+            // (its summary snapshot may still arrive). Undo can still restore files.
+            for turn in &mut self.checkpoints {
+                turn.history = None;
+            }
         }
         if !self.is_running() {
             // Turn was interrupted; only keep consistent history snapshots.
@@ -380,6 +426,21 @@ impl App {
                 self.attempt_entry = None;
                 self.entries.push(Entry::Info(reason));
             }
+            AgentEvent::Approve {
+                name,
+                summary,
+                description,
+                always,
+                reply,
+            } => {
+                self.approval = Some(approval::Prompt::new(
+                    name,
+                    summary,
+                    description,
+                    always,
+                    reply,
+                ))
+            }
             AgentEvent::Compacted {
                 usage,
                 before,
@@ -418,6 +479,7 @@ impl App {
             AgentEvent::Error(e) => self.entries.push(Entry::Error(e)),
             AgentEvent::Done => {
                 self.task = None;
+                self.approval = None;
                 self.compacting = false;
                 self.save_session();
             }

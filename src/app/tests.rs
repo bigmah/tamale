@@ -152,13 +152,17 @@ async fn add_dir_lists_scope_and_accepts_spaces_and_quotes_during_a_turn() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// Tests that save sessions point `TAMALE_SESSIONS_DIR` at their own directory; this
+/// keeps them from running at the same time.
+static SESSIONS_ENV: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[tokio::test]
 async fn sessions_are_saved_and_resumed() {
+    let _env = SESSIONS_ENV.lock().await;
     let dir = std::env::temp_dir().join(format!("tamale-resume-test-{}", session::new_id()));
     for name in ["startup", "shared", "later", "removed"] {
         std::fs::create_dir_all(dir.join(name)).unwrap();
     }
-    // Only this test saves sessions (the others never have history).
     unsafe { std::env::set_var("TAMALE_SESSIONS_DIR", &dir) };
     let client = anthropic::Client::new("test-key").unwrap();
     let mut workspace = Workspace::current().unwrap();
@@ -569,4 +573,195 @@ async fn agent_events_refresh_cached_text_tools_retries_and_clear() {
     let cleared = screen(&mut app);
     assert!(!cleared.contains("final response"));
     assert!(cleared.contains("Conversation cleared"));
+}
+
+#[tokio::test]
+async fn undo_and_rewind_restore_files_and_conversation() {
+    let _env = SESSIONS_ENV.lock().await;
+    let root = std::env::temp_dir().join(format!("tamale-undo-test-{}", session::new_id()));
+    let work = root.join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    unsafe { std::env::set_var("TAMALE_SESSIONS_DIR", root.join("sessions")) };
+    let client = anthropic::Client::new("test-key").unwrap();
+    let workspace = Workspace {
+        cwd: work.clone(),
+        additional_dirs: Vec::new(),
+    };
+    let (mut app, _rx) = App::new_with_channel(client, test_settings("test-model"), workspace);
+    app.command("/undo");
+    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("Nothing to undo")));
+
+    let existing = work.join("main.rs");
+    let created = work.join("new.rs");
+    std::fs::write(&existing, "original").unwrap();
+    // What the agent does during a turn: snapshot, then write.
+    let mut first = app.begin_turn("edit main".into()).checkpoint.unwrap();
+    first.before_write(&existing).unwrap();
+    std::fs::write(&existing, "edited").unwrap();
+    first.command_ran().unwrap();
+    app.history.push(Message::assistant("edited main"));
+    app.entries.push(Entry::Assistant("edited main".into()));
+    let mut second = app.begin_turn("add a file".into()).checkpoint.unwrap();
+    second.before_write(&created).unwrap();
+    std::fs::write(&created, "new").unwrap();
+    app.history.push(Message::assistant("added"));
+    app.entries.push(Entry::Assistant("added".into()));
+
+    app.command("/undo");
+    assert!(!created.exists());
+    assert_eq!(std::fs::read_to_string(&existing).unwrap(), "edited");
+    assert_eq!(app.history.len(), 2);
+    assert_eq!(app.input, "add a file");
+    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("1 file restored")));
+    assert_eq!(app.checkpoints.len(), 1);
+
+    // An interrupted turn's follow-up prompt merges into the same user message.
+    app.input.clear();
+    app.history.push(Message::user("interrupted"));
+    app.begin_turn("follow-up".into());
+    app.command("/rewind");
+    let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
+    app.on_event(key(KeyCode::Down));
+    app.on_event(key(KeyCode::Enter));
+    assert!(app.rewind_picker.is_none());
+    assert_eq!(std::fs::read_to_string(&existing).unwrap(), "original");
+    assert!(app.history.is_empty());
+    assert_eq!(app.input, "edit main");
+    let note = app
+        .entries
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            Entry::Info(t) => Some(t.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(
+        note.contains("1 file restored; 1 shell command not reverted"),
+        "{note}"
+    );
+    assert!(app.checkpoints.is_empty());
+
+    // Rewinding only the follow-up keeps the interrupted prompt.
+    app.input.clear();
+    app.history = vec![Message::user("interrupted")];
+    app.begin_turn("follow-up".into());
+    app.command("/undo");
+    assert_eq!(app.history, [Message::user("interrupted")]);
+
+    // After compaction, only files are restored.
+    app.begin_turn("later".into());
+    app.on_agent(
+        app.turn,
+        AgentEvent::Compacted {
+            usage: Default::default(),
+            before: 10,
+            after: 1,
+        },
+    );
+    let len = app.history.len();
+    app.command("/undo");
+    assert_eq!(app.history.len(), len);
+    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("not rewound")));
+    app.finish_saves().await;
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn approval_prompt_answers_and_mode_cycles() {
+    let client = anthropic::Client::new("test-key").unwrap();
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
+    let open = |app: &mut App, ready: bool| {
+        let (reply, answer) = tokio::sync::oneshot::channel();
+        let mut prompt = approval::Prompt::new(
+            "bash".into(),
+            "cargo test".into(),
+            "Run tests".into(),
+            vec!["bash:cargo test*".into()],
+            reply,
+        );
+        if ready {
+            prompt.shown -= std::time::Duration::from_secs(1);
+        }
+        app.approval = Some(prompt);
+        answer
+    };
+
+    // Keys typed right as the prompt opens don't answer it.
+    let mut answer = open(&mut app, false);
+    app.on_event(key(KeyCode::Char('y')));
+    assert!(app.approval.is_some() && answer.try_recv().is_err());
+
+    let mut answer = open(&mut app, true);
+    app.on_event(key(KeyCode::Char('a')));
+    assert!(matches!(
+        answer.try_recv(),
+        Ok(permissions::Approval::Allow)
+    ));
+    assert!(app.approval.is_none());
+    let decision = app
+        .permissions
+        .lock()
+        .unwrap()
+        .check("bash", &serde_json::json!({"command": "cargo test -q"}));
+    assert_eq!(decision, permissions::Decision::Allow);
+
+    let mut answer = open(&mut app, true);
+    app.on_event(key(KeyCode::Char('n')));
+    app.on_event(Event::Paste("try ".into()));
+    for c in "make".chars() {
+        app.on_event(key(KeyCode::Char(c)));
+    }
+    assert!(app.input.is_empty());
+    app.on_event(key(KeyCode::Enter));
+    assert!(matches!(
+        answer.try_recv(),
+        Ok(permissions::Approval::Deny { reason: Some(r) }) if r == "try make"
+    ));
+
+    // Esc closes the prompt, which denies the call.
+    let mut answer = open(&mut app, true);
+    app.on_event(key(KeyCode::Esc));
+    assert!(app.approval.is_none());
+    assert!(answer.try_recv().is_err());
+
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+    let screen =
+        |app: &mut App, terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>| {
+            terminal.draw(|frame| app.draw(frame)).unwrap();
+            terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|c| c.symbol())
+                .collect::<String>()
+        };
+    let _answer = open(&mut app, true);
+    let text = screen(&mut app, &mut terminal);
+    assert!(
+        text.contains("Allow bash?") && text.contains("cargo test") && text.contains("Run tests")
+    );
+    app.approval = None;
+
+    assert!(screen(&mut app, &mut terminal).contains(" ask "));
+    app.on_event(Event::Key(KeyEvent::new(
+        KeyCode::BackTab,
+        KeyModifiers::SHIFT,
+    )));
+    assert!(screen(&mut app, &mut terminal).contains(" accept-edits "));
+    app.command("/permissions auto");
+    assert_eq!(
+        app.permissions.lock().unwrap().mode,
+        permissions::Mode::Auto
+    );
+    app.command("/permissions");
+    assert!(
+        matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("Permission mode: auto"))
+    );
 }

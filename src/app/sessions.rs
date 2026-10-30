@@ -29,6 +29,7 @@ impl App {
             context_tokens: self.context_tokens,
             history: self.history.clone(),
             entries: self.entries.clone(),
+            checkpoints: self.checkpoints.clone(),
         };
         self.session_writer
             .get_or_insert_with(|| session::Writer::start(self.tx.clone()))
@@ -162,6 +163,8 @@ impl App {
         self.turn += 1;
         self.history = saved.history;
         self.entries = saved.entries;
+        self.checkpoints = saved.checkpoints;
+        self.permissions.lock().unwrap().clear_session();
         self.workspace.additional_dirs.clear();
         for dir in self
             .startup_dirs

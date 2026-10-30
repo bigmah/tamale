@@ -10,7 +10,7 @@ use crate::config::Settings;
 #[cfg(test)]
 mod tests;
 
-pub const HELP: &str = "usage: tamale [--add-dir <path>] [--config <path>] [--model <id>] [--effort <level>] [--thinking <mode>] [-c | -r] [-p <prompt>]
+pub const HELP: &str = "usage: tamale [--add-dir <path>] [--config <path>] [--model <id>] [--effort <level>] [--thinking <mode>] [-c | -r] [-p <prompt> [--yes]]
 
 --add-dir <path>   Include another directory in the agent's scope (repeatable).
 --config <path>    Add a TOML settings file after user and project settings.
@@ -20,6 +20,7 @@ pub const HELP: &str = "usage: tamale [--add-dir <path>] [--config <path>] [--mo
 -c, --continue    Resume the most recent session in this directory.
 -r, --resume      Pick a saved session to resume.
 -p, --print       Run one prompt non-interactively and exit.
+-y, --yes         With -p, run tool calls that would otherwise need approval.
 -h, --help        Show this help.
 
 Settings: built-in defaults < ~/.config/tamale/config.toml < project tamale.toml
@@ -38,6 +39,8 @@ pub struct Cli {
     pub config: Option<PathBuf>,
     pub print_prompt: Option<String>,
     pub resume: Option<Resume>,
+    /// Approve every call that would prompt in `-p` mode (deny rules still apply).
+    pub yes: bool,
     pub help: bool,
     model: Option<String>,
     // Outer None means no flag; Some(None) explicitly resets the API default.
@@ -68,6 +71,7 @@ impl Cli {
                         &args.next().context("--thinking needs a value")?,
                     )?)
                 }
+                "-y" | "--yes" => cli.yes = true,
                 "-c" | "--continue" => cli.resume = Some(Resume::Latest),
                 "-r" | "--resume" => cli.resume = Some(Resume::Pick),
                 "-p" | "--print" => {

@@ -13,6 +13,7 @@ use super::{
     App, EFFORT_CHOICES, QUIET_SUMMARY_CHARS, QUIET_TOOL_CALLS, SPINNER, TOOL_PREVIEW_LINES,
     effort_label,
 };
+use crate::permissions;
 use crate::session;
 use crate::session::Entry;
 
@@ -44,6 +45,12 @@ impl App {
         }
         if self.resume_picker.is_some() {
             self.draw_resume_picker(frame, chat_area);
+        }
+        if self.rewind_picker.is_some() {
+            self.draw_rewind_picker(frame, chat_area);
+        }
+        if self.approval.is_some() {
+            self.draw_approval(frame, chat_area);
         }
     }
 
@@ -273,6 +280,8 @@ impl App {
                 SPINNER[self.tick % SPINNER.len()],
                 if self.compacting {
                     "Compacting…"
+                } else if self.approval.is_some() {
+                    "Waiting for approval…"
                 } else {
                     "Thinking…"
                 }
@@ -372,7 +381,11 @@ impl App {
             );
         }
         let cwd_line = Line::from(cwd_spans);
-        let hint = if self.picker.is_some() || self.resume_picker.is_some() {
+        let hint = if self.approval.is_some() {
+            "approve the tool call · esc to interrupt"
+        } else if self.rewind_picker.is_some() {
+            "↑/↓ move · enter rewind · esc cancel"
+        } else if self.picker.is_some() || self.resume_picker.is_some() {
             "type to filter · ↑/↓ move · enter select · esc cancel"
         } else if self.effort_picker.is_some() {
             "↑/↓ move · 1–6 jump · enter select · esc cancel"
@@ -381,7 +394,13 @@ impl App {
         } else if self.is_running() {
             "esc to interrupt"
         } else {
-            "enter send · alt+enter newline · /model · /help"
+            "enter send · shift+tab mode · /help"
+        };
+        let mode = self.permissions.lock().unwrap().mode;
+        let mode_color = match mode {
+            permissions::Mode::Ask => Color::Green,
+            permissions::Mode::AcceptEdits => Color::Yellow,
+            permissions::Mode::Auto => Color::Red,
         };
         let window = self.settings.model.context_window();
         let pct = self.context_tokens * 100 / window.max(1);
@@ -399,7 +418,10 @@ impl App {
             String::new()
         };
         let line = Line::from(vec![
-            Span::from(format!(" {} ", self.settings.model.name)).fg(Color::Magenta),
+            Span::from(format!(" {} ", mode.as_str()))
+                .fg(mode_color)
+                .bold(),
+            Span::from(format!("· {} ", self.settings.model.name)).fg(Color::Magenta),
             Span::from(if self.settings.ui.verbose {
                 "· verbose "
             } else {

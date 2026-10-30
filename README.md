@@ -12,6 +12,7 @@ cargo run --release -- --model claude-opus-5-5
 cargo run --release -- --effort low          # less thorough, faster, cheaper
 cargo run --release -- --thinking off        # disable adaptive thinking
 cargo run --release -- -p "summarize src/"   # one-shot, non-interactive
+cargo run --release -- -p "fix the tests" --yes  # one-shot, approve calls that would prompt
 cargo run --release -- --continue            # resume the latest session in this directory
 cargo run --release -- --resume              # pick a saved session to resume
 cargo run --release -- --config dev.toml    # add settings from a TOML file
@@ -40,6 +41,11 @@ request_timeout_secs = 300
 [ui]
 verbose = false
 mouse = true
+
+[permissions]
+mode = "accept-edits"
+allow = ["bash:cargo *", "bash:git status*", "bash:git diff*"]
+deny = ["bash:git push*", "bash:rm -rf *", "write_file:.env*"]
 ```
 
 Settings are merged field by field, in this order (later values win):
@@ -52,7 +58,8 @@ Settings are merged field by field, in this order (later values win):
 5. The `TAMALE_*` environment variables below
 6. `--model`, `--effort`, and `--thinking` flags
 
-All fields are optional in override files. `effort = "default"` resets an inherited
+All fields are optional in override files. `permissions.allow` and `permissions.deny`
+lists are combined across layers rather than replaced. `effort = "default"` resets an inherited
 effort to the API default. Unknown fields, invalid types, empty model names, zero
 token limits and compaction percentages outside 1–100 produce a startup error.
 Missing personal/project files are skipped; an explicit `--config` file must exist.
@@ -216,13 +223,71 @@ rendered"). The chat shows that as the step's label, with the raw call dimmed af
 run of tool calls reads as a sequence of steps. Long runs are collapsed to the last 5 steps.
 `/verbose` shows every step, the full call and its output.
 
-All tools run immediately without asking for confirmation, in both the TUI and `-p` mode.
-The agent can modify files and run any shell command in the working directory.
+Output over 30,000 characters keeps its first third and last two thirds (where compiler
+errors and test summaries usually are), with a marker in between. The full output is
+saved to `~/.cache/tamale/out/` (`$XDG_CACHE_HOME/tamale/out`) and the marker gives its
+path, so the agent can `read_file` or `grep` it. Saved outputs older than 7 days are deleted.
+
+## Permissions
+
+The permission mode decides which tool calls wait for your approval:
+
+| Mode | Asks before |
+| --- | --- |
+| `ask` (default) | `write_file`, `edit_file` and `bash` |
+| `accept-edits` | `bash` |
+| `auto` | nothing |
+
+Reading, searching and web tools never ask. `Shift+Tab` cycles the modes, the status bar
+shows the current one, and `/permissions [mode]` shows the rules or sets the mode.
+
+The approval popup offers **yes**, **yes, and don't ask again this session** for a
+suggested rule (e.g. `bash:cargo test*` or `edit_file:src/*`), and **no**, after which
+you can type what to tell the model instead. `Esc` denies the call and interrupts the
+agent. Keys pressed in the first 300 ms are ignored, so typing can't answer by accident.
+
+Rules in `[permissions]` are `tool` or `tool:glob`. The glob matches the command for
+`bash`, the path for file tools (as given and relative to the working directory) and the
+URL or query for web tools; `*` also matches `/`.
+
+- **Deny** rules are checked first and apply in every mode, including `auto` and `--yes`.
+  For `bash` they match the whole command and each part of a compound command; for file
+  tools they also match the file name, so `write_file:.env*` blocks `config/.env.local`.
+- **Allow** rules skip the prompt. Every part of a compound command (`&&`, `||`, `;`,
+  `|`, `&`, newlines) must be allowed. Commands with substitution (`$(…)`, backticks) or
+  file redirection never match an allow rule (`2>&1` and `/dev/null` are fine), and
+  paths containing `..` never match one. A bare `bash` rule allows every command.
+
+In `-p` mode nothing can be approved interactively: calls that would prompt are denied
+and the model is told why, unless `--yes` is passed.
+
+Rules are a guard against mistakes, not a sandbox: an allowed command like `cargo test`
+still runs arbitrary build scripts. A project's `tamale.toml` can also change the mode
+and add allow rules, so review it in repositories you don't trust.
+
+## Checkpoints and undo
+
+Before the agent's first write to a file in a turn, the file's original contents (or
+the fact that it didn't exist) are saved under the session's directory,
+`sessions/<id>/checkpoints/<turn>/`.
+
+- `/undo` restores the files changed in the last turn, removes that turn from the
+  conversation, and puts its prompt back in the input box.
+- `/rewind` opens a picker of turns (most recent first, with the number of files and
+  commands in each); `Enter` returns to before the selected turn, restoring files from
+  it and every later turn.
+- Shell commands can't be reverted. Their effects stay, and the undo message says how
+  many commands ran (e.g. "2 files restored; 1 shell command not reverted").
+- After compaction, earlier turns can still restore files, but the conversation isn't
+  rewound because those messages have been summarized.
+- Checkpoints are saved with the session, so `/undo` works after `/resume`. `-p` runs
+  aren't saved and have no checkpoints.
 
 ## Keys
 
 - `Enter` send · `Alt/Shift+Enter` or `Ctrl+J` newline
 - `Esc` interrupt the agent
+- `Shift+Tab` cycle the permission mode (see [Permissions](#permissions))
 - `PgUp/PgDn`, `Shift+↑/↓`, mouse wheel scroll (a scrollbar and "↓ N more lines" badge show while scrolled up)
 - Mouse wheel scrolling is **on by default**, alongside copy/paste. Hold your
   terminal's mouse override modifier while dragging to select text (usually Shift;
@@ -254,6 +319,8 @@ The agent can modify files and run any shell command in the working directory.
 - `/compact [focus]` summarizes the conversation to free context
 - `/add-dir [path]` adds a directory to the agent's scope, or lists the current scope
 - `/resume [n|id]` continues a saved session (see [Sessions](#sessions))
+- `/undo` and `/rewind` restore files and rewind the conversation (see [Checkpoints](#checkpoints-and-undo))
+- `/permissions [mode]` shows the mode and rules, or sets `ask`, `accept-edits` or `auto`
 - `/clear` resets the conversation, `/quit` (or `/exit`) quits
 
 Direct clipboard commands use `pbcopy`/`pbpaste` on macOS, PowerShell on Windows,
@@ -269,9 +336,12 @@ Your terminal's native copy/paste shortcuts also work without these utilities, i
 - `src/agent/{request,reasoning,prompt,models}.rs` – streaming/retries, reasoning settings,
   instruction loading and model metadata/cost estimates
 - `src/tools.rs` – tool definitions and implementations
+- `src/permissions.rs` – permission modes and allow/deny rule matching
+- `src/checkpoint.rs` – file snapshots for `/undo` and `/rewind`
 - `src/tools/search.rs`, `src/tools/web.rs` – built-in repository search and web tools
 - `src/app.rs` – conversation state and agent event handling
 - `src/app/{input,commands,sessions,view,help}.rs` – key/clipboard input, commands and pickers,
   session actions, rendering and help content
+- `src/app/{approval,rewind}.rs` – the approval popup, `/undo` and the rewind picker
 - `src/clipboard.rs` – system clipboard access
 - `src/session.rs` – saving, listing and loading sessions

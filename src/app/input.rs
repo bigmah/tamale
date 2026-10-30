@@ -72,8 +72,19 @@ impl App {
             return;
         }
 
+        // A waiting tool call takes the keyboard from everything else.
+        if self.approval.is_some() {
+            self.on_approval_key(key, ctrl);
+            return;
+        }
+
         if self.picker.is_some() {
             self.on_picker_key(key, ctrl);
+            return;
+        }
+
+        if self.rewind_picker.is_some() {
+            self.on_rewind_picker_key(key, ctrl);
             return;
         }
 
@@ -117,6 +128,10 @@ impl App {
             }
             KeyCode::Char('d') if ctrl && self.input.is_empty() => self.should_quit = true,
             KeyCode::Esc if self.is_running() => self.interrupt(),
+            KeyCode::BackTab => {
+                let mut policy = self.permissions.lock().unwrap();
+                policy.mode = policy.mode.next();
+            }
             KeyCode::Enter if alt || shift => self.insert_str("\n"),
             KeyCode::Char('j') if ctrl => self.insert_str("\n"),
             KeyCode::Enter => self.submit(),
@@ -161,13 +176,20 @@ impl App {
 
     pub(super) fn on_paste(&mut self, text: &str) {
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
-        if let Some(picker) = &mut self.picker {
+        if let Some(approval) = &mut self.approval {
+            if let Some(reason) = &mut approval.reason {
+                reason.push_str(&text.replace('\n', " "));
+            }
+        } else if let Some(picker) = &mut self.picker {
             picker.filter.push_str(&text.replace('\n', " "));
             picker.selected = 0;
         } else if let Some(picker) = &mut self.resume_picker {
             picker.filter.push_str(&text.replace('\n', " "));
             picker.selected = 0;
-        } else if self.help_scroll.is_none() && self.effort_picker.is_none() {
+        } else if self.help_scroll.is_none()
+            && self.effort_picker.is_none()
+            && self.rewind_picker.is_none()
+        {
             self.insert_str(&text);
         }
     }

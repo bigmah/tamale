@@ -74,7 +74,7 @@ fn page_paginates_and_handles_out_of_range_and_long_unicode_lines() {
     assert!(!out.contains("\tfirst"));
     assert!(format_page(&url, "", "one", Some(10), None).contains("past the end"));
     let out = format_page(&url, "", &"é".repeat(MAX_OUTPUT_CHARS), None, None);
-    assert!(out.contains("output truncated"));
+    assert!(out.contains("bytes) omitted; full output: "), "{out}");
 }
 
 #[tokio::test]

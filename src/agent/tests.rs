@@ -13,7 +13,18 @@ use serde_json::json;
 use super::models::context_window;
 use super::*;
 use crate::config::Settings;
+use crate::permissions::{Mode, Policy};
 use rig_core::completion::CompletionError;
+
+/// Tools run without approval or checkpoints.
+fn unrestricted() -> TurnCtx {
+    let mut policy = Policy::new(&Settings::default().permissions, std::env::temp_dir());
+    policy.mode = Mode::Auto;
+    TurnCtx {
+        permissions: policy.shared(),
+        checkpoint: None,
+    }
+}
 
 #[derive(Clone, Default)]
 struct Model {
@@ -92,6 +103,7 @@ async fn token_limits_continue_text_thinking_and_empty_responses() {
         &mut history,
         Settings::default().turn_config(0),
         &Workspace::current().unwrap(),
+        &mut unrestricted(),
         &tx,
     )
     .await
@@ -175,6 +187,7 @@ async fn truncated_tools_are_not_executed_or_replayed() {
         &mut history,
         Settings::default().turn_config(0),
         &Workspace::current().unwrap(),
+        &mut unrestricted(),
         &tx,
     )
     .await
@@ -218,6 +231,7 @@ async fn empty_truncation_after_tools_keeps_tool_results_first() {
         &mut history,
         Settings::default().turn_config(0),
         &Workspace::current().unwrap(),
+        &mut unrestricted(),
         &tx,
     )
     .await
@@ -292,6 +306,7 @@ async fn context_limit_compacts_and_resumes_the_task() {
         &mut history,
         Settings::default().turn_config(0),
         &Workspace::current().unwrap(),
+        &mut unrestricted(),
         &tx,
     )
     .await
@@ -325,6 +340,7 @@ async fn empty_end_turn_recovers_once_then_reports_failure() {
             vec![Message::user("Task")],
             Settings::default().turn_config(0),
             Workspace::current().unwrap(),
+            unrestricted(),
             tx,
         )
         .await;
@@ -354,6 +370,7 @@ async fn pause_turn_replays_the_assistant_without_adding_user_input() {
         &mut history,
         Settings::default().turn_config(0),
         &Workspace::current().unwrap(),
+        &mut unrestricted(),
         &tx,
     )
     .await
@@ -386,6 +403,7 @@ async fn refusal_and_unknown_stop_reasons_report_errors_without_running_tools() 
             vec![Message::user("Task")],
             Settings::default().turn_config(0),
             Workspace::current().unwrap(),
+            unrestricted(),
             tx,
         )
         .await;
@@ -413,6 +431,7 @@ async fn incomplete_streams_retry_instead_of_looking_finished() {
         vec![Message::user("Task")],
         settings.turn_config(0),
         Workspace::current().unwrap(),
+        unrestricted(),
         tx,
     )
     .await;
@@ -487,6 +506,7 @@ async fn stalled_opening_and_stream_retry_and_recover() {
             vec![Message::user("Task")],
             settings.turn_config(0),
             Workspace::current().unwrap(),
+            unrestricted(),
             tx,
         )
         .await;
@@ -573,6 +593,7 @@ async fn tool_followup_preserves_thinking_and_effort() {
         &mut history,
         settings.turn_config(0),
         &Workspace::current().unwrap(),
+        &mut unrestricted(),
         &tx,
     )
     .await
@@ -653,6 +674,7 @@ async fn manual_and_automatic_compaction_use_configured_limits_and_thinking() {
             &mut history,
             settings.turn_config(250),
             &workspace,
+            &mut unrestricted(),
             &tx,
         )
         .await
@@ -723,6 +745,7 @@ async fn configured_retry_limit_controls_actual_attempts() {
             vec![Message::user("Task")],
             settings.turn_config(0),
             Workspace::current().unwrap(),
+            unrestricted(),
             tx,
         )
         .await;
@@ -767,4 +790,121 @@ fn context_windows_match_models_api() {
     ] {
         assert_eq!(context_window(model), 200_000, "{model}");
     }
+}
+
+#[tokio::test]
+async fn tool_calls_wait_for_approval_and_writes_are_checkpointed() {
+    let root = std::env::temp_dir().join(format!("tamale-approval-{}", crate::session::new_id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let file = root.join("a.txt");
+    std::fs::write(&file, "old").unwrap();
+    let call = |id: &str, name: &str, args: serde_json::Value| {
+        RawStreamingChoice::ToolCall(RawStreamingToolCall::new(id, name.into(), args))
+    };
+    let model = Model::new(vec![
+        vec![
+            call(
+                "write",
+                "write_file",
+                json!({"description": "Write", "path": file, "content": "new"}),
+            ),
+            call(
+                "blocked",
+                "bash",
+                json!({"description": "Clean", "command": "rm -rf x"}),
+            ),
+            call(
+                "denied",
+                "bash",
+                json!({"description": "Build", "command": "make"}),
+            ),
+        ],
+        vec![RawStreamingChoice::Message("Done.".into())],
+    ]);
+    let rules = |list: &[&str]| {
+        list.iter()
+            .map(|r| crate::permissions::Rule::parse(r).unwrap())
+            .collect()
+    };
+    let settings = crate::permissions::PermissionSettings {
+        mode: Mode::Ask,
+        allow: rules(&[]),
+        deny: rules(&["bash:rm *"]),
+    };
+    let checkpoint = root.join("checkpoint");
+    let ctx = TurnCtx {
+        permissions: Policy::new(&settings, root.clone()).shared(),
+        checkpoint: Some(Recorder::new(checkpoint.clone())),
+    };
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    tokio::spawn(run(
+        model,
+        vec![Message::user("Task")],
+        Settings::default().turn_config(0),
+        Workspace::current().unwrap(),
+        ctx,
+        tx,
+    ));
+    let mut asked = Vec::new();
+    let mut history = Vec::new();
+    while let Some(event) = rx.recv().await {
+        match event {
+            AgentEvent::Approve {
+                name,
+                always,
+                reply,
+                ..
+            } => {
+                let answer = if name == "write_file" {
+                    Approval::Allow
+                } else {
+                    Approval::Deny {
+                        reason: Some("use cargo instead".into()),
+                    }
+                };
+                asked.push((name, always));
+                reply.send(answer).unwrap();
+            }
+            AgentEvent::History(h) => history = h,
+            AgentEvent::Done => break,
+            _ => {}
+        }
+    }
+    // The deny rule blocks `rm` without asking.
+    assert_eq!(
+        asked,
+        [
+            (
+                "write_file".to_string(),
+                vec!["write_file:a.txt".to_string()]
+            ),
+            ("bash".to_string(), vec!["bash:make*".to_string()]),
+        ]
+    );
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "new");
+    let results: Vec<String> = history
+        .iter()
+        .filter_map(|m| match m {
+            Message::User { content } => Some(content),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|c| match c {
+            UserContent::ToolResult(r) => Some(format!("{:?}", r.content)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(results.len(), 3);
+    assert!(
+        results[1].contains("permission rule `bash:rm *`"),
+        "{}",
+        results[1]
+    );
+    assert!(results[2].contains("use cargo instead"), "{}", results[2]);
+
+    // Denied commands never ran, so only the write is in the checkpoint.
+    assert_eq!(crate::checkpoint::summary(&checkpoint), (1, 0));
+    crate::checkpoint::restore(&[checkpoint]);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "old");
+    std::fs::remove_dir_all(root).unwrap();
 }

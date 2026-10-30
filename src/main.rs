@@ -1,8 +1,10 @@
 mod agent;
 mod app;
+mod checkpoint;
 mod cli;
 mod clipboard;
 mod config;
+mod permissions;
 mod session;
 mod tools;
 mod workspace;
@@ -53,7 +55,12 @@ async fn start(cli: cli::Cli) -> Result<()> {
         let model = client
             .completion_model(settings.model.name)
             .with_prompt_caching();
-        return print_mode(model, config, workspace, prompt).await;
+        let permissions = permissions::Policy::new(&settings.permissions, workspace.cwd.clone());
+        let ctx = agent::TurnCtx {
+            permissions: permissions.shared(),
+            checkpoint: None,
+        };
+        return print_mode(model, config, workspace, ctx, cli.yes, prompt).await;
     }
 
     // Restore terminal input modes even if we panic.
@@ -94,6 +101,8 @@ async fn print_mode<M>(
     model: M,
     config: agent::TurnConfig,
     workspace: workspace::Workspace,
+    ctx: agent::TurnCtx,
+    yes: bool,
     prompt: String,
 ) -> Result<()>
 where
@@ -104,7 +113,7 @@ where
 
     let (tx, mut rx) = mpsc::unbounded_channel();
     let history = vec![rig_core::completion::Message::user(prompt)];
-    tokio::spawn(agent::run(model, history, config, workspace, tx));
+    tokio::spawn(agent::run(model, history, config, workspace, ctx, tx));
 
     let mut failed = false;
     while let Some(ev) = rx.recv().await {
@@ -129,6 +138,23 @@ where
                 "\n⟳ {error}; retrying in {:.1}s (attempt {attempt})",
                 delay.as_secs_f64()
             ),
+            AgentEvent::Approve { name, reply, .. } => {
+                let answer = if yes {
+                    permissions::Approval::Allow
+                } else {
+                    eprintln!(
+                        "  denied: {name} needs approval (allow it in [permissions] or pass --yes)"
+                    );
+                    permissions::Approval::Deny {
+                        reason: Some(
+                            "this non-interactive run only allows calls permitted by the \
+[permissions] settings; it can't prompt for approval."
+                                .into(),
+                        ),
+                    }
+                };
+                let _ = reply.send(answer);
+            }
             AgentEvent::Compacting => eprintln!("\n⏺ compacting conversation…"),
             AgentEvent::Continuing(reason) => eprintln!("\n⟳ {reason}"),
             AgentEvent::Error(e) => {

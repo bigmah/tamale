@@ -13,8 +13,11 @@ use rig_core::completion::message::{ReasoningContent, ToolResultContent, UserCon
 use rig_core::completion::{
     AssistantContent, CompletionModel, FinishReason, Message, ToolDefinition, Usage,
 };
-use tokio::sync::mpsc;
+use serde_json::Value;
+use tokio::sync::{mpsc, oneshot};
 
+use crate::checkpoint::Recorder;
+use crate::permissions::{self, Approval, Decision};
 use crate::workspace::Workspace;
 use crate::{config::AgentSettings, tools};
 pub use models::{context_size, cost};
@@ -34,6 +37,15 @@ pub enum AgentEvent {
     ToolResult {
         output: String,
         is_error: bool,
+    },
+    /// The latest tool call needs the user's approval. `always` lists the session rules
+    /// "always allow" would add (empty if none can cover the call).
+    Approve {
+        name: String,
+        summary: String,
+        description: String,
+        always: Vec<String>,
+        reply: oneshot::Sender<Approval>,
     },
     /// A request failed transiently and will be retried. Text streamed during the failed
     /// attempt should be discarded.
@@ -59,6 +71,74 @@ pub enum AgentEvent {
     Done,
 }
 
+/// Per-turn tool state: what may run without asking, and where file snapshots go.
+pub struct TurnCtx {
+    pub permissions: permissions::Shared,
+    /// `None` when the turn isn't checkpointed (e.g. `-p` runs, which aren't saved).
+    pub checkpoint: Option<Recorder>,
+}
+
+impl TurnCtx {
+    /// Asks the policy (and, if needed, the user) whether the call may run. `Err` is the
+    /// tool result explaining why not.
+    async fn authorize(
+        &self,
+        name: &str,
+        args: &Value,
+        tx: &mpsc::UnboundedSender<AgentEvent>,
+    ) -> Result<(), String> {
+        let decision = self.permissions.lock().unwrap().check(name, args);
+        let always = match decision {
+            Decision::Allow => return Ok(()),
+            Decision::Deny(rule) => {
+                return Err(format!(
+                    "Blocked by the permission rule `{rule}`. Don't retry this call; \
+use another approach or ask the user."
+                ));
+            }
+            Decision::Ask { always } => always,
+        };
+        let (reply, answer) = oneshot::channel();
+        let _ = tx.send(AgentEvent::Approve {
+            name: name.into(),
+            summary: tools::summarize(name, args),
+            description: tools::describe(name, args),
+            always,
+            reply,
+        });
+        match answer.await {
+            Ok(Approval::Allow) => Ok(()),
+            Ok(Approval::Deny {
+                reason: Some(reason),
+            }) => Err(format!("The user denied this tool call and said: {reason}")),
+            Ok(Approval::Deny { reason: None }) | Err(_) => Err(
+                "The user denied this tool call. Don't retry it; adjust your approach or ask \
+the user how to proceed."
+                    .into(),
+            ),
+        }
+    }
+
+    /// Snapshots files a call is about to change.
+    fn before_execute(
+        &mut self,
+        name: &str,
+        args: &Value,
+        workspace: &Workspace,
+    ) -> anyhow::Result<()> {
+        let Some(recorder) = &mut self.checkpoint else {
+            return Ok(());
+        };
+        if let Some(path) = tools::write_target(name, args) {
+            recorder.before_write(&workspace.cwd.join(path))?;
+        } else if name == "bash" {
+            // Commands can't be reverted; counting them lets /undo say so.
+            let _ = recorder.command_ran();
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct TurnConfig {
     pub context_window: u64,
@@ -82,11 +162,12 @@ pub async fn run<M>(
     mut history: Vec<Message>,
     config: TurnConfig,
     workspace: Workspace,
+    mut ctx: TurnCtx,
     tx: mpsc::UnboundedSender<AgentEvent>,
 ) where
     M: CompletionModel + Clone,
 {
-    if let Err(e) = run_inner(model, &mut history, config, &workspace, &tx).await {
+    if let Err(e) = run_inner(model, &mut history, config, &workspace, &mut ctx, &tx).await {
         let _ = tx.send(AgentEvent::Error(format!("{e:#}")));
     }
     let _ = tx.send(AgentEvent::Done);
@@ -132,6 +213,7 @@ async fn run_inner<M>(
     history: &mut Vec<Message>,
     mut config: TurnConfig,
     workspace: &Workspace,
+    ctx: &mut TurnCtx,
     tx: &mpsc::UnboundedSender<AgentEvent>,
 ) -> anyhow::Result<()>
 where
@@ -218,9 +300,20 @@ task using tools as needed. If the task is complete, provide the final answer.",
                 description: tools::describe(&name, &args),
             });
 
-            let (output, is_error) = match tools::execute(&name, args).await {
+            let result = match ctx.authorize(&name, &args, tx).await {
+                Err(denied) => Err(denied),
+                Ok(()) => match ctx.before_execute(&name, &args, workspace) {
+                    Err(e) => Err(format!(
+                        "Error: couldn't save a checkpoint, so the call was not run: {e:#}"
+                    )),
+                    Ok(()) => tools::execute(&name, args)
+                        .await
+                        .map_err(|e| format!("Error: {e:#}")),
+                },
+            };
+            let (output, is_error) = match result {
                 Ok(out) => (out, false),
-                Err(e) => (format!("Error: {e:#}"), true),
+                Err(out) => (out, true),
             };
             let _ = tx.send(AgentEvent::ToolResult {
                 output: output.clone(),

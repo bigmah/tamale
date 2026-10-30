@@ -88,4 +88,7 @@ fn additional_directories_are_repeatable_and_work_with_print_and_resume() {
     );
     assert_eq!(cli.resume, Some(Resume::Latest));
     assert_eq!(cli.print_prompt.as_deref(), Some("check both"));
+    assert!(!cli.yes);
+    assert!(parse(&["-p", "go", "--yes"]).unwrap().yes);
+    assert!(parse(&["-y"]).unwrap().yes);
 }
