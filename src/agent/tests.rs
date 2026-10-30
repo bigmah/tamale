@@ -20,10 +20,7 @@ use rig_core::completion::CompletionError;
 fn unrestricted() -> TurnCtx {
     let mut policy = Policy::new(&Settings::default().permissions, std::env::temp_dir());
     policy.mode = Mode::Auto;
-    TurnCtx {
-        permissions: policy.shared(),
-        checkpoint: None,
-    }
+    TurnCtx::new(policy.shared(), None)
 }
 
 #[derive(Clone, Default)]
@@ -832,10 +829,10 @@ async fn tool_calls_wait_for_approval_and_writes_are_checkpointed() {
         deny: rules(&["bash:rm *"]),
     };
     let checkpoint = root.join("checkpoint");
-    let ctx = TurnCtx {
-        permissions: Policy::new(&settings, root.clone()).shared(),
-        checkpoint: Some(Recorder::new(checkpoint.clone())),
-    };
+    let ctx = TurnCtx::new(
+        Policy::new(&settings, root.clone()).shared(),
+        Some(Recorder::new(checkpoint.clone())),
+    );
     let (tx, mut rx) = mpsc::unbounded_channel();
     tokio::spawn(run(
         model,

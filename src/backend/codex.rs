@@ -6,9 +6,10 @@
 //! instructions and tamale's tools are offered through the [`mcp`] bridge, so tool calls
 //! get the same permission prompts and checkpoints as on the other backends.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::OnceLock;
 
 use anyhow::{Context, Result, bail};
 use rig_core::completion::message::{ToolResultContent, UserContent};
@@ -231,6 +232,22 @@ backend.codex_path if it isn't on PATH",
 
     /// Models from Codex's catalog as (id, display name).
     pub async fn list_models(&self) -> Result<Vec<(String, String)>> {
+        let catalog = self.catalog().await?;
+        Ok(catalog["models"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|m| m["visibility"] == "list")
+            .filter_map(|m| {
+                let id = m["slug"].as_str()?.to_string();
+                let name = m["display_name"].as_str().unwrap_or(&id).to_string();
+                Some((id, name))
+            })
+            .collect())
+    }
+
+    /// Codex's model catalog (`codex debug models`).
+    async fn catalog(&self) -> Result<Value> {
         let output = self
             .command()
             .args(["debug", "models"])
@@ -244,19 +261,30 @@ backend.codex_path if it isn't on PATH",
             output.status,
             String::from_utf8_lossy(&output.stderr).trim()
         );
-        let catalog: Value = serde_json::from_slice(&output.stdout)
-            .context("unexpected `codex debug models` output")?;
-        Ok(catalog["models"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter(|m| m["visibility"] == "list")
-            .filter_map(|m| {
-                let id = m["slug"].as_str()?.to_string();
-                let name = m["display_name"].as_str().unwrap_or(&id).to_string();
-                Some((id, name))
-            })
-            .collect())
+        serde_json::from_slice(&output.stdout).context("unexpected `codex debug models` output")
+    }
+
+    /// A copy of the catalog without Codex's own subagents (its models turn them on),
+    /// so the model uses tamale's `agent` tool, whose steps tamale sees and shows.
+    /// Written once per login per process; `None` if the catalog can't be read.
+    async fn catalog_without_subagents(&self) -> Option<PathBuf> {
+        static FILES: OnceLock<std::sync::Mutex<HashMap<Option<PathBuf>, PathBuf>>> =
+            OnceLock::new();
+        let files = FILES.get_or_init(Default::default);
+        if let Some(file) = files.lock().unwrap().get(&self.home) {
+            return Some(file.clone());
+        }
+        let mut catalog = self.catalog().await.ok()?;
+        without_subagents(&mut catalog);
+        let mut files = files.lock().unwrap();
+        let file = std::env::temp_dir().join(format!(
+            "tamale-codex-models-{}-{}.json",
+            std::process::id(),
+            files.len()
+        ));
+        std::fs::write(&file, catalog.to_string()).ok()?;
+        files.insert(self.home.clone(), file.clone());
+        Some(file)
     }
 
     /// Runs one turn: the whole tool loop happens inside one `codex exec` run.
@@ -436,8 +464,9 @@ backend.codex_path if it isn't on PATH",
         mut on: impl FnMut(Update),
     ) -> Result<Outcome> {
         let bridge = Bridge::start(tools).await?;
+        let catalog = self.catalog_without_subagents().await;
         let mut child = self
-            .args(turn, &run, &bridge)
+            .args(turn, &run, &bridge, catalog.as_deref())
             .current_dir(&turn.workspace.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -492,7 +521,7 @@ backend.codex_path if it isn't on PATH",
         bail!("Codex exited ({status}) before finishing the response{detail}")
     }
 
-    fn args(&self, turn: &Turn, run: &Run, bridge: &Bridge) -> Command {
+    fn args(&self, turn: &Turn, run: &Run, bridge: &Bridge, catalog: Option<&Path>) -> Command {
         let mut cmd = self.command();
         cmd.arg("exec");
         if let Some(id) = &run.resume {
@@ -537,6 +566,12 @@ backend.codex_path if it isn't on PATH",
         if let Some(effort) = run.reasoning.effort {
             config.push(("model_reasoning_effort", toml_string(effort.as_str())));
         }
+        if let Some(catalog) = catalog {
+            config.push((
+                "model_catalog_json",
+                toml_string(&catalog.to_string_lossy()),
+            ));
+        }
         for (key, value) in config {
             cmd.arg("-c").arg(format!("{key}={value}"));
         }
@@ -566,6 +601,15 @@ struct Run {
     resume: Option<String>,
     persist: bool,
     reasoning: Reasoning,
+}
+
+/// Turns off Codex's built-in subagent tools and instructions for every model.
+fn without_subagents(catalog: &mut Value) {
+    for model in catalog["models"].as_array_mut().into_iter().flatten() {
+        if let Some(model) = model.as_object_mut() {
+            model.insert("multi_agent_version".into(), Value::Null);
+        }
+    }
 }
 
 /// A TOML string literal for a `-c key=value` override. JSON string escapes are valid

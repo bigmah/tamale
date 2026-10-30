@@ -595,14 +595,14 @@ async fn undo_and_rewind_restore_files_and_conversation() {
     let created = work.join("new.rs");
     std::fs::write(&existing, "original").unwrap();
     // What the agent does during a turn: snapshot, then write.
-    let mut first = app.begin_turn("edit main".into()).checkpoint.unwrap();
-    first.before_write(&existing).unwrap();
+    let first = app.begin_turn("edit main".into()).checkpoint.unwrap();
+    first.lock().unwrap().before_write(&existing).unwrap();
     std::fs::write(&existing, "edited").unwrap();
-    first.command_ran().unwrap();
+    first.lock().unwrap().command_ran().unwrap();
     app.history.push(Message::assistant("edited main"));
     app.entries.push(Entry::Assistant("edited main".into()));
-    let mut second = app.begin_turn("add a file".into()).checkpoint.unwrap();
-    second.before_write(&created).unwrap();
+    let second = app.begin_turn("add a file".into()).checkpoint.unwrap();
+    second.lock().unwrap().before_write(&created).unwrap();
     std::fs::write(&created, "new").unwrap();
     app.history.push(Message::assistant("added"));
     app.entries.push(Entry::Assistant("added".into()));

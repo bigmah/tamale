@@ -313,10 +313,15 @@ impl App {
         // Consecutive user turns (e.g. after an interrupt) are merged into one message.
         agent::push_user_text(&mut self.history, text);
         self.save_session();
-        agent::TurnCtx {
-            permissions: self.permissions.clone(),
-            checkpoint: session::checkpoint_dir(&self.session_id, turn).map(Recorder::new),
-        }
+        agent::TurnCtx::new(
+            self.permissions.clone(),
+            session::checkpoint_dir(&self.session_id, turn).map(Recorder::new),
+        )
+        .with_subagent(backend::Subagent {
+            backend: self.backend.clone(),
+            model: self.settings.model.name.clone(),
+            config: self.settings.turn_config(0),
+        })
     }
 
     fn compact(&mut self, instructions: Option<String>) {
@@ -511,6 +516,7 @@ impl App {
                 self.add_usage(&u);
                 self.context_tokens = agent::context_size(&u);
             }
+            AgentEvent::SubagentUsage(u) => self.add_usage(&u),
             AgentEvent::Error(e) => self.entries.push(Entry::Error(e)),
             AgentEvent::Thread(_) => {}
             AgentEvent::Done => {

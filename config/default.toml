@@ -45,8 +45,9 @@ mouse = true
 # anything that would prompt unless --yes is passed.
 mode = "auto"
 # Rules are "tool" or "tool:glob", matched on the command (bash), path (file tools),
-# URL (web_fetch) or query (web_search); `*` also matches `/`. Every part of a compound
-# bash command must be allowed. Deny rules are checked first and apply in every mode.
+# URL (web_fetch), query (web_search) or task (agent); `*` also matches `/`. Every part
+# of a compound bash command must be allowed. Deny rules are checked first and apply in
+# every mode. deny = ["agent"] turns subagents off.
 # Lists from all settings layers are combined.
 allow = [] # e.g. ["bash:cargo *", "bash:git status*", "bash:git diff*"]
 deny = [] # e.g. ["bash:git push*", "bash:rm -rf *", "write_file:.env*"]

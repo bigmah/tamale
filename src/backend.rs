@@ -12,6 +12,7 @@ pub mod claude_code;
 pub mod codex;
 pub mod logins;
 mod mcp;
+mod subagent;
 
 use std::path::{Path, PathBuf};
 
@@ -26,6 +27,7 @@ use crate::agent::{self, AgentEvent, TurnConfig, TurnCtx};
 use crate::workspace::Workspace;
 pub use claude_code::ClaudeCode;
 pub use codex::Codex;
+pub use subagent::Subagent;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]

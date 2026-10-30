@@ -218,10 +218,7 @@ fn labels_describe_the_account() {
 fn unrestricted() -> TurnCtx {
     let mut policy = Policy::new(&Settings::default().permissions, std::env::temp_dir());
     policy.mode = Mode::Auto;
-    TurnCtx {
-        permissions: policy.shared(),
-        checkpoint: None,
-    }
+    TurnCtx::new(policy.shared(), None)
 }
 
 async fn rpc(url: &str, body: Value) -> (reqwest::StatusCode, String) {

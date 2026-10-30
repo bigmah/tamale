@@ -60,10 +60,12 @@ async fn start(cli: cli::Cli) -> Result<()> {
     }
     if let Some(prompt) = cli.print_prompt {
         let permissions = permissions::Policy::new(&settings.permissions, workspace.cwd.clone());
-        let ctx = agent::TurnCtx {
-            permissions: permissions.shared(),
-            checkpoint: None,
-        };
+        let ctx =
+            agent::TurnCtx::new(permissions.shared(), None).with_subagent(backend::Subagent {
+                backend: backend.clone(),
+                model: settings.model.name.clone(),
+                config: settings.turn_config(0),
+            });
         let turn = backend::Turn {
             model: settings.model.name.clone(),
             history: vec![rig_core::completion::Message::user(prompt.clone())],

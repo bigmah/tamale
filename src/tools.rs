@@ -10,6 +10,9 @@ use tokio::process::Command;
 mod search;
 mod web;
 
+/// The tool that starts a subagent. It's run by the turn, not by [`execute`].
+pub const AGENT: &str = "agent";
+
 const MAX_OUTPUT_CHARS: usize = 30_000;
 const DEFAULT_READ_LIMIT: usize = 2_000;
 
@@ -94,6 +97,29 @@ pub fn definitions() -> Vec<ToolDefinition> {
     ];
     defs.extend(search::definitions());
     defs.extend(web::definitions());
+    defs.push(ToolDefinition {
+        name: AGENT.into(),
+        description: "Hand a self-contained task to a subagent: a fresh agent with the same \
+            tools (except this one) and permissions, but none of this conversation. It works \
+            until done and returns only its final report, so the files and output it goes \
+            through don't fill your context. Use it for broad searches or investigations \
+            across many files, or a side task you can describe completely. Don't use it for \
+            a few tool calls you could make directly, or when you already know which file \
+            to look at. The prompt must stand alone: say what to do, what you already know \
+            or ruled out, where to look, and what to report back. Treat its report as a \
+            lead to check, not a verified fact."
+            .into(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "The complete task for the subagent, including context and what to report"
+                }
+            },
+            "required": ["prompt"]
+        }),
+    });
     for def in &mut defs {
         def.parameters["properties"]["description"] =
             json!({ "type": "string", "description": DESCRIPTION_SCHEMA });
@@ -128,6 +154,7 @@ pub fn describe(name: &str, args: &Value) -> String {
         "web_search" => format!("Search the web for {target}"),
         "web_fetch" => format!("Fetch {target}"),
         "bash" => "Run a shell command".into(),
+        "agent" => "Hand a task to a subagent".into(),
         _ => format!("Use {name}"),
     }
 }
@@ -150,6 +177,7 @@ pub fn summarize(name: &str, args: &Value) -> String {
         "grep" | "glob" => s("pattern"),
         "web_search" => s("query"),
         "web_fetch" => s("url"),
+        "agent" => s("prompt"),
         _ => args.to_string(),
     }
 }

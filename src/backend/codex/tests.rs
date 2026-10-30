@@ -131,6 +131,25 @@ fn claude_models_leave_the_choice_to_codex() {
 }
 
 #[test]
+fn catalog_override_turns_off_codex_subagents() {
+    let mut catalog = json!({"models": [
+        {"slug": "a", "multi_agent_version": "v2", "tool_mode": "code_mode_only"},
+        {"slug": "b"},
+    ]});
+    without_subagents(&mut catalog);
+    for model in catalog["models"].as_array().unwrap() {
+        assert!(model["multi_agent_version"].is_null());
+        assert!(
+            model
+                .as_object()
+                .unwrap()
+                .contains_key("multi_agent_version")
+        );
+    }
+    assert_eq!(catalog["models"][0]["tool_mode"], "code_mode_only");
+}
+
+#[test]
 fn config_strings_are_quoted_for_toml() {
     let quoted = toml_string("say \"hi\"\n\\ok");
     let parsed: toml::Table = toml::from_str(&format!("v = {quoted}")).unwrap();
@@ -300,10 +319,7 @@ async fn live_codex_uses_tools_continues_and_compacts() {
     let ctx = || {
         let mut policy = Policy::new(&settings.permissions, std::env::temp_dir());
         policy.mode = Mode::Auto;
-        TurnCtx {
-            permissions: policy.shared(),
-            checkpoint: None,
-        }
+        TurnCtx::new(policy.shared(), None)
     };
     async fn drive(
         future: impl std::future::Future<Output = ()>,

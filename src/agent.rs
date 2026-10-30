@@ -7,6 +7,7 @@ mod request;
 #[cfg(test)]
 mod tests;
 
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rig_core::completion::message::{ReasoningContent, ToolResultContent, UserContent};
@@ -71,18 +72,37 @@ pub enum AgentEvent {
     /// next turn can continue it instead of resending the history.
     Thread(String),
     Usage(Usage),
+    /// Usage of a subagent's request: counted in the totals, not as the context size.
+    SubagentUsage(Usage),
     Error(String),
     Done,
 }
 
-/// Per-turn tool state: what may run without asking, and where file snapshots go.
+/// Per-turn tool state: what may run without asking, where file snapshots go, and how to
+/// start subagents.
 pub struct TurnCtx {
     pub permissions: permissions::Shared,
     /// `None` when the turn isn't checkpointed (e.g. `-p` runs, which aren't saved).
-    pub checkpoint: Option<Recorder>,
+    /// Shared with the turn's subagents, so `/undo` covers their changes too.
+    pub checkpoint: Option<Arc<Mutex<Recorder>>>,
+    /// `None` refuses the `agent` tool (in subagents, so they don't nest).
+    pub subagent: Option<crate::backend::Subagent>,
 }
 
 impl TurnCtx {
+    pub fn new(permissions: permissions::Shared, checkpoint: Option<Recorder>) -> Self {
+        Self {
+            permissions,
+            checkpoint: checkpoint.map(|r| Arc::new(Mutex::new(r))),
+            subagent: None,
+        }
+    }
+
+    pub fn with_subagent(mut self, subagent: crate::backend::Subagent) -> Self {
+        self.subagent = Some(subagent);
+        self
+    }
+
     /// Asks the policy (and, if needed, the user) whether the call may run. `Err` is the
     /// tool result explaining why not.
     async fn authorize(
@@ -132,6 +152,9 @@ the user how to proceed."
         workspace: &Workspace,
         tx: &mpsc::UnboundedSender<AgentEvent>,
     ) -> (String, bool) {
+        if name == tools::AGENT {
+            return self.run_subagent(args, workspace, tx).await;
+        }
         let result = match self.authorize(name, &args, tx).await {
             Err(denied) => Err(denied),
             Ok(()) => match self.before_execute(name, &args, workspace) {
@@ -149,6 +172,30 @@ the user how to proceed."
         }
     }
 
+    /// Runs the `agent` tool: a fresh agent with this turn's permissions and checkpoint.
+    async fn run_subagent(
+        &self,
+        args: Value,
+        workspace: &Workspace,
+        tx: &mpsc::UnboundedSender<AgentEvent>,
+    ) -> (String, bool) {
+        let Some(subagent) = &self.subagent else {
+            return (
+                "Error: subagents can't start subagents. Do the work yourself.".into(),
+                true,
+            );
+        };
+        if let Err(denied) = self.authorize(tools::AGENT, &args, tx).await {
+            return (denied, true);
+        }
+        let ctx = TurnCtx {
+            permissions: self.permissions.clone(),
+            checkpoint: self.checkpoint.clone(),
+            subagent: None,
+        };
+        subagent.run(&args, ctx, workspace, tx).await
+    }
+
     /// Snapshots files a call is about to change.
     fn before_execute(
         &mut self,
@@ -156,9 +203,10 @@ the user how to proceed."
         args: &Value,
         workspace: &Workspace,
     ) -> anyhow::Result<()> {
-        let Some(recorder) = &mut self.checkpoint else {
+        let Some(recorder) = &self.checkpoint else {
             return Ok(());
         };
+        let mut recorder = recorder.lock().unwrap();
         if let Some(path) = tools::write_target(name, args) {
             recorder.before_write(&workspace.cwd.join(path))?;
         } else if name == "bash" {

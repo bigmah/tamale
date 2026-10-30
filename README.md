@@ -103,8 +103,9 @@ The `codex` backend runs `codex exec --json` headlessly for each turn, so it nee
   turning off, and tamale's system prompt in place of Codex's instructions. tamale's
   tools are served over the same local MCP server, pre-approved on Codex's side, so
   every call goes through tamale's own permission rules, approval popup and checkpoints.
-  (Codex's newest models still get its multi-agent instructions, and Codex's
-  `apply_patch` remains listed, blocked by the read-only sandbox.)
+  Codex's own subagents are turned off through a patched copy of its model catalog
+  (`model_catalog_json`, written to the temp directory), so models use tamale's `agent`
+  tool instead. Codex's `apply_patch` remains listed, blocked by the read-only sandbox.
 - **Conversations**: each tamale session keeps a Codex thread and continues it with
   `codex exec resume`; after anything that rewrites the history a new thread starts with
   the conversation replayed, as with Claude Code.
@@ -293,6 +294,7 @@ This defines task context; tools already run without a filesystem sandbox.
 | `web_search` | Search the web and return titles, URLs, and snippets |
 | `web_fetch` | Read a URL as numbered text, with extracted links and line pagination |
 | `bash` | Run builds, tests, git, and other shell commands |
+| `agent` | Hand a self-contained task to a subagent and get back its report |
 
 `grep` and `glob` are built into the binary; no `rg` installation is needed. They
 respect `.gitignore`, `.ignore`, and global Git ignores, skip hidden files, and
@@ -323,6 +325,24 @@ and downloads are capped at 2 MiB. It doesn't execute JavaScript, authenticate t
 sites, or extract PDFs. Search queries go to the selected provider and fetched URLs
 go to their destination servers. Web content is marked as untrusted reference data,
 and the agent is instructed to cite source URLs.
+
+### Subagents
+
+The `agent` tool starts a subagent: a fresh agent on the current backend (API, Claude
+Code or Codex) and model, with the same system prompt and tools, but none of the
+conversation. The model writes it a standalone task; the subagent works until done and
+only its final report comes back as the tool result, so the files and output it went
+through don't fill the main context. The model is told to use it for broad searches,
+investigations across many files, or well-described side tasks, not for a few calls it
+could make itself.
+
+- Its steps appear in the chat as they happen, marked `↳`; its text and history stay
+  out of the conversation.
+- It shares the turn's permission mode, rules and approval prompts, and its file
+  changes are part of the turn's checkpoint, so `/undo` reverts them too. Starting one
+  needs no approval itself; `deny = ["agent"]` turns subagents off.
+- Subagents can't start subagents, and they run one at a time. Their usage counts in
+  the session totals but not in the context meter. Esc stops them with the turn.
 
 Every tool call carries a short model-written `description` ("Find where tool calls are
 rendered"). The chat shows that as the step's label, with the raw call dimmed after it, so a
@@ -445,6 +465,7 @@ Your terminal's native copy/paste shortcuts also work without these utilities, i
 - `src/backend/codex.rs` – running `codex exec`, sign-in, event translation and usage
 - `src/backend/logins.rs` – the Claude Code and Codex logins offered in the picker
 - `src/backend/mcp.rs` – the local MCP server that offers tamale's tools to Claude Code and Codex
+- `src/backend/subagent.rs` – the `agent` tool: running a subagent on the current backend
 - `src/agent.rs` – agent turns, tool execution and compaction
 - `src/agent/{request,reasoning,prompt,models}.rs` – streaming/retries, reasoning settings,
   instruction loading and model metadata/cost estimates

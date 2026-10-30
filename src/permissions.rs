@@ -23,6 +23,8 @@ const READ_ONLY_TOOLS: &[&str] = &[
     "glob",
     "web_search",
     "web_fetch",
+    // Starting a subagent needs no approval; its own calls are checked one by one.
+    "agent",
 ];
 const EDIT_TOOLS: &[&str] = &["write_file", "edit_file"];
 const PATH_TOOLS: &[&str] = &[
@@ -382,6 +384,7 @@ impl Policy {
             match tool {
                 "web_fetch" => arg("url"),
                 "web_search" => arg("query"),
+                "agent" => arg("prompt"),
                 _ => "",
             }
             .to_string(),
