@@ -1,6 +1,6 @@
 //! A minimal MCP server (streamable HTTP transport) that offers tamale's tools to a
-//! Claude Code run. Each call goes through the turn's permission checks and checkpoints,
-//! exactly like a call made by the API backend.
+//! Claude Code or Codex run. Each call goes through the turn's permission checks and
+//! checkpoints, exactly like a call made by the API backend.
 //!
 //! The server listens on 127.0.0.1 for the length of one run. Its URL contains a random
 //! token, so other local processes can't call the tools.
@@ -67,7 +67,7 @@ impl Bridge {
     pub async fn start(tools: Tools) -> Result<Self> {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
-            .context("starting the tool server for Claude Code")?;
+            .context("starting the tool server for the CLI backend")?;
         let path = format!("/mcp/{}", token());
         let url = format!("http://{}{path}", listener.local_addr()?);
         let tools = Arc::new(tools);

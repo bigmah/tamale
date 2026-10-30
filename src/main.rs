@@ -47,17 +47,16 @@ async fn start(cli: cli::Cli) -> Result<()> {
     settings.validate()?;
 
     let mut backend = Backend::connect(&settings.backend).await?;
-    if let Backend::ClaudeCode(cc) = &mut backend
-        && !cc.account.logged_in
-    {
+    if !backend.signed_in() {
+        let (name, login) = match &backend {
+            Backend::Codex(_) => ("Codex", "codex login"),
+            _ => ("Claude Code", "claude auth login"),
+        };
         if cli.print_prompt.is_some() {
-            bail!(
-                "Claude Code isn't signed in. Run `claude auth login` (or start tamale \
-without -p to sign in)."
-            );
+            bail!("{name} isn't signed in. Run `{login}` (or start tamale without -p to sign in).");
         }
-        eprintln!("Claude Code isn't signed in; starting `claude auth login`…");
-        cc.login().await?;
+        eprintln!("{name} isn't signed in; starting `{login}`…");
+        backend.login().await?;
     }
     if let Some(prompt) = cli.print_prompt {
         let permissions = permissions::Policy::new(&settings.permissions, workspace.cwd.clone());
@@ -214,7 +213,7 @@ async fn run(
                 drop(events);
                 let mouse = app.mouse_enabled();
                 suspend_terminal();
-                let result = request.cc.login().await;
+                let result = request.login.login().await;
                 *terminal = resume_terminal(mouse)?;
                 events = EventStream::new();
                 app.on_login(request, result);

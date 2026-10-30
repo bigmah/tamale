@@ -45,9 +45,9 @@ pub enum AppEvent {
     SessionSaved(String, Result<(), String>),
     /// A backend requested with `/backend` is ready (or couldn't be set up).
     Backend(Result<Backend, String>),
-    /// Claude Code logins found for the backend picker.
-    Logins(Result<Vec<backend::ClaudeCode>, String>),
-    /// An added Claude Code account was removed (its label), or why it couldn't be.
+    /// CLI logins found for the backend picker, and CLIs that couldn't be listed.
+    Logins(Vec<Backend>, Vec<String>),
+    /// An added CLI account was removed (its label), or why it couldn't be.
     LoginRemoved(Result<String, String>),
 }
 
@@ -115,11 +115,12 @@ impl ResumePicker {
 
 pub struct App {
     backend: Backend,
-    /// The backend's own conversation for `history` (a Claude Code session), cleared
+    /// The backend's own conversation for `history` (a Claude Code session or Codex
+    /// thread), cleared
     /// whenever `history` is rewritten so the next turn starts a fresh one.
     thread: Option<String>,
-    /// Claude Code logins known so far (the backend picker refreshes them).
-    logins: Vec<backend::ClaudeCode>,
+    /// CLI logins (Claude Code and Codex) known so far; the backend picker refreshes them.
+    logins: Vec<Backend>,
     /// Set by `/login` and the picker; the event loop suspends the TUI to run the sign-in.
     login_request: Option<backends::LoginRequest>,
     settings: Settings,
@@ -193,8 +194,8 @@ impl App {
     ) -> Self {
         let permissions = Policy::new(&settings.permissions, workspace.cwd.clone()).shared();
         let logins = match &backend {
-            Backend::ClaudeCode(cc) => vec![cc.clone()],
             Backend::Api(_) => Vec::new(),
+            login => vec![login.clone()],
         };
         Self {
             backend,
@@ -371,7 +372,7 @@ impl App {
             AppEvent::Agent(turn, ev) => self.on_agent(turn, ev),
             AppEvent::Models(result) => self.on_models(result),
             AppEvent::Backend(result) => self.on_backend(result),
-            AppEvent::Logins(result) => self.on_logins(result),
+            AppEvent::Logins(logins, errors) => self.on_logins(logins, errors),
             AppEvent::LoginRemoved(result) => self.on_login_removed(result),
             AppEvent::SessionSaved(id, result) => self.on_session_saved(&id, result),
             AppEvent::ClipboardPasted(Ok(text)) => self.on_paste(&text),

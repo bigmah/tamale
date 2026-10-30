@@ -2,7 +2,7 @@
 
 A small Claude Code–style coding agent for the terminal, written in pure Rust with
 [rig](https://rig.rs) and [ratatui](https://ratatui.rs). Inference comes from the Anthropic
-API or from your Claude Code sign-in (see [Backends](#backends)).
+API or from your Claude Code or Codex sign-in (see [Backends](#backends)).
 
 ## Usage
 
@@ -10,6 +10,7 @@ API or from your Claude Code sign-in (see [Backends](#backends)).
 export ANTHROPIC_API_KEY=sk-ant-...
 cargo run --release                          # interactive TUI
 cargo run --release -- --backend claude-code # use your Claude Code sign-in instead of an API key
+cargo run --release -- --backend codex       # use your Codex (ChatGPT) sign-in
 cargo run --release -- --model claude-opus-5-5
 cargo run --release -- --effort low          # less thorough, faster, cheaper
 cargo run --release -- --thinking off        # disable adaptive thinking
@@ -32,10 +33,12 @@ identically, and the footer shows the backend next to the working directory
 | --- | --- | --- |
 | `api` (default) | `kind = "api"` | `ANTHROPIC_API_KEY` |
 | `claude-code` | `kind = "claude-code"`, `--backend claude-code`, `TAMALE_BACKEND` | The Claude Code CLI's sign-in (Claude subscription or Console account) |
+| `codex` | `kind = "codex"`, `--backend codex`, `TAMALE_BACKEND` | The Codex CLI's sign-in (ChatGPT plan or OpenAI API key) |
 
 `/backend` opens a picker to switch mid-session (↑/↓ or j/k to move, 1–9 to jump, Enter to
-switch, Esc to cancel; the current backend is marked with ●). `/backend api` and
-`/backend claude-code` (your default Claude Code login) switch directly.
+switch, Esc to cancel; the current backend is marked with ●). `/backend api`,
+`/backend claude-code` and `/backend codex` (your default login of each CLI) switch
+directly. Codex logins work like Claude Code logins below (see [Codex](#codex)).
 
 **Several Claude Code logins.** Each signed-in Claude Code account is its own row in the
 picker, e.g. `Claude Code · Max · me@home.dev` and `Claude Code · Team · me@work.dev`.
@@ -83,6 +86,37 @@ The `claude-code` backend runs `claude -p` headlessly for each turn, so it needs
   retries and in-run context management; tamale still auto-compacts between turns.
   The model picker shows the built-in model list (Claude Code has no model listing).
 
+### Codex
+
+The `codex` backend runs `codex exec --json` headlessly for each turn, so it needs the
+[Codex CLI](https://github.com/openai/codex) installed (set `backend.codex_path` if
+`codex` isn't on `PATH`). It works like the `claude-code` backend:
+
+- **Signing in**: tamale checks `codex login status` and runs `codex login` when you're
+  signed out (at startup, on `/login`, or when switching to it). Each Codex login lives in
+  its own `CODEX_HOME`; the picker lists your default login, `~/.codex`, the homes in
+  `backend.codex_homes`, and accounts added with **Sign in to another Codex account…**
+  (kept under `~/.local/share/tamale/codex/`). The footer shows the plan, e.g.
+  `via Codex · Plus`.
+- **Tools**: Codex runs with `--ignore-user-config` and `--ignore-rules`, a read-only
+  sandbox, no AGENTS.md, skills, web search, shell or other built-in tools it allows
+  turning off, and tamale's system prompt in place of Codex's instructions. tamale's
+  tools are served over the same local MCP server, pre-approved on Codex's side, so
+  every call goes through tamale's own permission rules, approval popup and checkpoints.
+  (Codex's newest models still get its multi-agent instructions, and Codex's
+  `apply_patch` remains listed, blocked by the read-only sandbox.)
+- **Conversations**: each tamale session keeps a Codex thread and continues it with
+  `codex exec resume`; after anything that rewrites the history a new thread starts with
+  the conversation replayed, as with Claude Code.
+- **Models**: `/model` lists Codex's model catalog (`codex debug models`). While
+  `model.name` is a Claude model (the default), Codex uses its own default model and the
+  footer says `codex default`. `--effort`/`/effort` sets `model_reasoning_effort`;
+  `/thinking` and `agent.max_tokens` don't apply.
+- **Context and usage**: Codex reports usage per turn; tamale reads the last request's
+  size from Codex's session file for the context meter. Codex compacts its own thread,
+  so tamale doesn't auto-compact before Codex turns (`/compact` still works). Costs
+  aren't estimated for OpenAI models.
+
 ## Configuration
 
 Defaults live in [`config/default.toml`](config/default.toml) and are embedded in the
@@ -90,9 +124,11 @@ binary. Override just the fields you need in a personal or project TOML file:
 
 ```toml
 [backend]
-kind = "api" # or "claude-code"
+kind = "api" # or "claude-code" or "codex"
 claude_path = "claude"
 claude_config_dirs = ["~/.claude-work"] # more Claude Code logins for the picker
+codex_path = "codex"
+codex_homes = ["~/.codex-work"] # more Codex logins for the picker
 
 [model]
 name = "claude-opus-5-5"
@@ -136,7 +172,7 @@ The same settings apply to interactive and `-p` runs, tool follow-ups, retries a
 manual/automatic compaction. Settings load at startup; slash commands change the
 current session's settings without rewriting TOML files.
 
-`TAMALE_BACKEND` sets the backend (`api` or `claude-code`).
+`TAMALE_BACKEND` sets the backend (`api`, `claude-code` or `codex`).
 `TAMALE_MODEL` sets the default model (otherwise `claude-opus-5-5`).
 `TAMALE_EFFORT` sets the default effort level (otherwise the API default).
 `TAMALE_THINKING` sets the thinking mode (`adaptive` or `on`, the default; `off` to disable).
@@ -387,8 +423,8 @@ the fact that it didn't exist) are saved under the session's directory,
   and `/thinking off` set it explicitly. Shown in the status bar; changes during a run
   take effect on the next message.
 - `/compact [focus]` summarizes the conversation to free context
-- `/backend` opens a backend picker; `/backend api|claude-code` switches directly, keeping the conversation
-- `/login` signs in to Claude Code (with the `claude-code` backend; see [Backends](#backends))
+- `/backend` opens a backend picker; `/backend api|claude-code|codex` switches directly, keeping the conversation
+- `/login` signs in to Claude Code or Codex (with their backends; see [Backends](#backends))
 - `/add-dir [path]` adds a directory to the agent's scope, or lists the current scope
 - `/resume [n|id]` continues a saved session (see [Sessions](#sessions))
 - `/undo` and `/rewind` restore files and rewind the conversation (see [Checkpoints](#checkpoints-and-undo))
@@ -404,9 +440,11 @@ Your terminal's native copy/paste shortcuts also work without these utilities, i
 - `src/main.rs` – startup, terminal setup, event loop and one-shot output
 - `src/cli.rs` – command-line parsing and overrides
 - `src/config.rs`, `config/default.toml` – typed settings, defaults, file discovery and merging
-- `src/backend.rs` – backend selection (API or Claude Code) and dispatch
+- `src/backend.rs` – backend selection (API, Claude Code or Codex) and dispatch
 - `src/backend/claude_code.rs` – running `claude -p`, sign-in, stream translation and replay
-- `src/backend/mcp.rs` – the local MCP server that offers tamale's tools to Claude Code
+- `src/backend/codex.rs` – running `codex exec`, sign-in, event translation and usage
+- `src/backend/logins.rs` – the Claude Code and Codex logins offered in the picker
+- `src/backend/mcp.rs` – the local MCP server that offers tamale's tools to Claude Code and Codex
 - `src/agent.rs` – agent turns, tool execution and compaction
 - `src/agent/{request,reasoning,prompt,models}.rs` – streaming/retries, reasoning settings,
   instruction loading and model metadata/cost estimates

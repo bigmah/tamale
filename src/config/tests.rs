@@ -256,6 +256,20 @@ fn backend_comes_from_files_and_environment() {
     assert_eq!(settings.backend.kind, Kind::ClaudeCode);
     assert_eq!(settings.backend.claude_path, PathBuf::from("/opt/claude"));
     assert_eq!(Settings::default().backend.kind, Kind::Api);
+    assert_eq!(
+        Settings::default().backend.codex_path,
+        PathBuf::from("codex")
+    );
+    let codex = dir.write(
+        "codex.toml",
+        "[backend]\nkind = \"codex\"\ncodex_homes = [\"~/.codex-work\"]\n",
+    );
+    let settings = Settings::load_from(&dir.0, None, Some(&codex)).unwrap();
+    assert_eq!(settings.backend.kind, Kind::Codex);
+    assert_eq!(
+        settings.backend.codex_homes,
+        [PathBuf::from("~/.codex-work")]
+    );
 
     let mut settings = Settings::default();
     settings

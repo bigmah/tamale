@@ -100,6 +100,8 @@ fn backend_flag_selects_where_inference_comes_from() {
         .unwrap()
         .apply(&mut settings);
     assert_eq!(settings.backend.kind, backend::Kind::ClaudeCode);
+    parse(&["-b", "codex"]).unwrap().apply(&mut settings);
+    assert_eq!(settings.backend.kind, backend::Kind::Codex);
     parse(&["-b", "api"]).unwrap().apply(&mut settings);
     assert_eq!(settings.backend.kind, backend::Kind::Api);
     parse(&[]).unwrap().apply(&mut settings);

@@ -123,6 +123,10 @@ impl Settings {
             "backend.claude_path must not be empty"
         );
         ensure!(
+            !self.backend.codex_path.as_os_str().is_empty(),
+            "backend.codex_path must not be empty"
+        );
+        ensure!(
             !self.model.name.trim().is_empty(),
             "model.name must not be empty"
         );

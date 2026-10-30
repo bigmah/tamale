@@ -65,11 +65,11 @@ const COMMANDS: &[(&str, &str)] = &[
     ),
     (
         "/backend [kind]",
-        "Pick where inference comes from, incl. each Claude Code login or adding one (or /backend api|claude-code)",
+        "Pick where inference comes from, incl. each Claude Code or Codex login or adding one (or /backend api|claude-code|codex)",
     ),
     (
         "/login",
-        "Sign in to Claude Code (claude-code backend; the footer shows where inference comes from)",
+        "Sign in to Claude Code or Codex (their backends; the footer shows where inference comes from)",
     ),
     ("/clear", "Clear the conversation and start fresh"),
     ("/quit, /exit", "Quit tamale"),

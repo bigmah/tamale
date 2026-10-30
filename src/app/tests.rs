@@ -788,18 +788,31 @@ fn status_shows_where_inference_comes_from_even_with_a_long_cwd() {
     assert!(row.trim_end().ends_with("· via Anthropic API"), "{row}");
 }
 
-fn login(email: &str, dir: Option<&str>) -> backend::ClaudeCode {
+fn login(email: &str, dir: Option<&str>) -> Backend {
     let mut cc = backend::ClaudeCode::signed_out("claude".into(), dir.map(Into::into));
     cc.account = serde_json::from_value(serde_json::json!({
         "loggedIn": true, "authMethod": "claude.ai", "subscriptionType": "max",
         "email": email, "orgId": format!("org-{email}"),
     }))
     .unwrap();
-    cc
+    Backend::ClaudeCode(cc)
+}
+
+fn codex_login(email: &str, dir: Option<&str>) -> Backend {
+    let mut codex = backend::Codex::signed_out("codex".into(), dir.map(Into::into));
+    codex.account = backend::codex::Account {
+        logged_in: true,
+        auth_method: Some("chatgpt".into()),
+        plan: Some("plus".into()),
+        email: Some(email.into()),
+        account_id: Some(format!("acct-{email}")),
+    };
+    Backend::Codex(codex)
 }
 
 #[tokio::test]
 async fn backend_switches_keep_the_conversation_and_drop_the_old_thread() {
+    use backend::Kind;
     use backends::{Choice, LoginRequest};
     let client = anthropic::Client::new("test-key").unwrap();
     let (mut app, _rx) = App::new_with_channel(
@@ -814,19 +827,25 @@ async fn backend_switches_keep_the_conversation_and_drop_the_old_thread() {
     // The picker opens on the current backend while logins are checked.
     app.command("/backend");
     assert!(app.backend_picker.as_ref().unwrap().loading);
-    assert_eq!(app.backend_choices(), [Choice::Api, Choice::AddLogin]);
-    app.on_app_event(AppEvent::Logins(Ok(vec![personal.clone(), work.clone()])));
+    let adds = [
+        Choice::AddLogin(Kind::ClaudeCode),
+        Choice::AddLogin(Kind::Codex),
+    ];
+    assert_eq!(app.backend_choices(), [&[Choice::Api][..], &adds].concat());
+    app.on_app_event(AppEvent::Logins(
+        vec![personal.clone(), work.clone()],
+        vec![],
+    ));
     let picker = app.backend_picker.as_ref().unwrap();
     assert!(!picker.loading);
     assert_eq!(picker.selected, 0);
     assert_eq!(
         app.backend_choices(),
         [
-            Choice::Api,
-            Choice::Login(0),
-            Choice::Login(1),
-            Choice::AddLogin
+            &[Choice::Api, Choice::Login(0), Choice::Login(1)][..],
+            &adds
         ]
+        .concat()
     );
     app.on_key(key(KeyCode::Char('x')));
     assert!(app.input.is_empty(), "keys don't reach the prompt");
@@ -834,7 +853,7 @@ async fn backend_switches_keep_the_conversation_and_drop_the_old_thread() {
     app.on_key(key(KeyCode::Down));
     assert_eq!(
         app.backend_picker.as_ref().unwrap().selected,
-        3,
+        4,
         "stops at the last row"
     );
 
@@ -842,6 +861,7 @@ async fn backend_switches_keep_the_conversation_and_drop_the_old_thread() {
     app.history = vec![Message::user("earlier")];
     app.thread = Some("old-session".into());
     app.models = Some(vec![]);
+    app.on_key(key(KeyCode::Up));
     app.on_key(key(KeyCode::Up));
     app.on_key(key(KeyCode::Up));
     app.on_key(key(KeyCode::Enter));
@@ -856,7 +876,10 @@ async fn backend_switches_keep_the_conversation_and_drop_the_old_thread() {
 
     // Logins tamale didn't add can't be removed from the picker.
     app.command("/backend");
-    app.on_app_event(AppEvent::Logins(Ok(vec![personal.clone(), work.clone()])));
+    app.on_app_event(AppEvent::Logins(
+        vec![personal.clone(), work.clone()],
+        vec![],
+    ));
     assert_eq!(app.backend_picker.as_ref().unwrap().selected, 1);
     app.on_key(key(KeyCode::Down));
     app.on_key(key(KeyCode::Char('d')));
@@ -869,7 +892,7 @@ async fn backend_switches_keep_the_conversation_and_drop_the_old_thread() {
 
     // Adding an account that's already known switches to it instead of duplicating it.
     let request = LoginRequest {
-        cc: login("me@home.dev", Some("/tmp/tamale-test-new")),
+        login: login("me@home.dev", Some("/tmp/tamale-test-new")),
         adding: true,
     };
     app.on_login(request, Ok(()));
@@ -881,13 +904,41 @@ async fn backend_switches_keep_the_conversation_and_drop_the_old_thread() {
 
     // A new account is added and used.
     let request = LoginRequest {
-        cc: login("me@side.dev", Some("/tmp/tamale-test-side")),
+        login: login("me@side.dev", Some("/tmp/tamale-test-side")),
         adding: true,
     };
     app.on_login(request, Ok(()));
     assert_eq!(app.logins.len(), 3);
     assert!(app.is_current(Choice::Login(2)));
     assert!(app.take_login_request().is_none());
+
+    // Codex logins are listed after Claude Code's; the same email on another CLI is
+    // another account. Listing one CLI keeps the other's logins.
+    let codex = codex_login("me@home.dev", None);
+    app.command("/backend");
+    app.on_app_event(AppEvent::Logins(
+        vec![codex.clone()],
+        vec!["Claude Code: boom".into()],
+    ));
+    assert!(
+        matches!(&app.entries[app.entries.len() - 1], Entry::Error(e) if e.contains("Claude Code: boom"))
+    );
+    assert_eq!(app.logins.len(), 4);
+    let choices = app.backend_choices();
+    assert_eq!(choices[4], Choice::Login(3));
+    app.on_key(key(KeyCode::Char('5')));
+    assert!(app.is_current(Choice::Login(3)));
+    assert_eq!(app.settings.backend.kind, Kind::Codex);
+    assert_eq!(app.backend_label(), "Codex · Plus");
+    app.command("/backend codex");
+    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.starts_with("Already using")));
+    app.command("/backend");
+    app.on_key(key(KeyCode::Char('d')));
+    assert!(matches!(app.entries.last(), Some(Entry::Error(e)) if e.contains("codex logout")));
+    app.on_key(key(KeyCode::Esc));
+    app.command("/backend");
+    app.on_key(key(KeyCode::Char('4')));
+    assert!(app.is_current(Choice::Login(2)));
 
     // Direct switches.
     app.command("/backend gpt");

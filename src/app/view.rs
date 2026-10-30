@@ -139,18 +139,18 @@ impl App {
                         false,
                     ),
                     Choice::Login(n) => {
-                        let cc = &self.logins[n];
-                        let mut detail = cc.label_with_account();
-                        if !cc.account.logged_in
-                            && let Some(dir) = &cc.config_dir
+                        let login = &self.logins[n];
+                        let mut detail = login.label_with_account();
+                        if !login.signed_in()
+                            && let Some(dir) = login.login_dir()
                         {
                             detail.push_str(&format!(" · {}", tilde(dir)));
                         }
-                        ("claude-code", detail, !cc.account.logged_in)
+                        (login.kind().as_str(), detail, !login.signed_in())
                     }
-                    Choice::AddLogin => (
+                    Choice::AddLogin(kind) => (
                         "+",
-                        "Sign in to another Claude Code account…".to_string(),
+                        format!("Sign in to another {} account…", kind.cli_name()),
                         false,
                     ),
                 };
@@ -172,7 +172,7 @@ impl App {
         let popup = area.centered(Constraint::Max(width), Constraint::Length(height));
         let title = if picker.loading {
             format!(
-                " Select backend {} checking Claude Code logins… ",
+                " Select backend {} checking logins… ",
                 SPINNER[self.tick % SPINNER.len()]
             )
         } else {
@@ -512,7 +512,11 @@ impl App {
             Span::from(format!(" {} ", mode.as_str()))
                 .fg(mode_color)
                 .bold(),
-            Span::from(format!("· {} ", self.settings.model.name)).fg(Color::Magenta),
+            Span::from(format!(
+                "· {} ",
+                self.backend.model_label(&self.settings.model.name)
+            ))
+            .fg(Color::Magenta),
             Span::from(if self.settings.ui.verbose {
                 "· verbose "
             } else {

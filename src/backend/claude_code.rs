@@ -351,18 +351,7 @@ backend.claude_path if it isn't on PATH",
         let _writer = AbortOnDrop(tokio::spawn(async move {
             let _ = stdin.write_all(prompt.as_bytes()).await;
         }));
-        let stderr = child.stderr.take().context("no stderr")?;
-        let mut stderr = AbortOnDrop(tokio::spawn(async move {
-            let mut tail = VecDeque::new();
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                if tail.len() == STDERR_LINES {
-                    tail.pop_front();
-                }
-                tail.push_back(line);
-            }
-            Vec::from(tail).join("\n")
-        }));
+        let mut stderr = stderr_tail(child.stderr.take().context("no stderr")?);
 
         let mut lines = BufReader::new(child.stdout.take().context("no stdout")?).lines();
         let mut parser = Parser::default();
@@ -448,7 +437,7 @@ struct Run {
 }
 
 /// Aborts a helper task when the run ends (or is interrupted).
-struct AbortOnDrop<T>(JoinHandle<T>);
+pub(super) struct AbortOnDrop<T>(pub(super) JoinHandle<T>);
 
 impl<T> Drop for AbortOnDrop<T> {
     fn drop(&mut self) {
@@ -456,7 +445,22 @@ impl<T> Drop for AbortOnDrop<T> {
     }
 }
 
-fn capitalize(s: &str) -> String {
+/// Collects the last lines of a CLI's stderr, for error messages.
+pub(super) fn stderr_tail(stderr: tokio::process::ChildStderr) -> AbortOnDrop<String> {
+    AbortOnDrop(tokio::spawn(async move {
+        let mut tail = VecDeque::new();
+        let mut lines = BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if tail.len() == STDERR_LINES {
+                tail.pop_front();
+            }
+            tail.push_back(line);
+        }
+        Vec::from(tail).join("\n")
+    }))
+}
+
+pub(super) fn capitalize(s: &str) -> String {
     let mut chars = s.chars();
     match chars.next() {
         Some(first) => first.to_uppercase().chain(chars).collect(),
@@ -725,7 +729,7 @@ fn result_text(content: &Value) -> String {
 }
 
 /// The history before the newest prompt (which is the last text of the last user message).
-fn without_prompt(history: &[Message], prompt: &str) -> Vec<Message> {
+pub(super) fn without_prompt(history: &[Message], prompt: &str) -> Vec<Message> {
     let mut prior = history.to_vec();
     if let Some(Message::User { content }) = prior.last_mut()
         && matches!(content.last(), Some(UserContent::Text(t)) if t.text == prompt)
@@ -738,9 +742,9 @@ fn without_prompt(history: &[Message], prompt: &str) -> Vec<Message> {
     prior
 }
 
-/// The prompt for a new Claude Code session, with any earlier conversation replayed as a
-/// transcript (after `/resume`, `/undo`, compaction, or a model change on the API backend).
-fn seed(history: &[Message], prompt: &str) -> String {
+/// The prompt for a new CLI session (Claude Code or Codex), with any earlier conversation
+/// replayed as a transcript (after `/resume`, `/undo`, compaction, or a backend switch).
+pub(super) fn seed(history: &[Message], prompt: &str) -> String {
     if history.is_empty() {
         return prompt.to_string();
     }

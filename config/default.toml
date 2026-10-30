@@ -7,13 +7,20 @@
 #   api          the Anthropic API, using ANTHROPIC_API_KEY
 #   claude-code  your Claude Code sign-in (subscription or Console), by running the
 #                `claude` CLI headlessly; sign in with `claude auth login` or /login
-# Tools, permissions, undo and sessions work the same with either.
+#   codex        your Codex sign-in (ChatGPT plan or OpenAI API key), by running the
+#                `codex` CLI headlessly; sign in with `codex login` or /login
+# Tools, permissions, undo and sessions work the same with each.
 kind = "api"
 claude_path = "claude" # the Claude Code executable (searched on PATH)
 # More Claude Code logins for the /backend picker: config directories (CLAUDE_CONFIG_DIR)
 # each signed in to an account. Accounts added from the picker are kept by tamale and
 # don't need listing here; ~/.claude is offered automatically when signed in.
 claude_config_dirs = [] # e.g. ["~/.claude-work"]
+codex_path = "codex" # the Codex executable (searched on PATH)
+# More Codex logins for the /backend picker: home directories (CODEX_HOME) each signed in
+# to an account. ~/.codex is offered automatically when signed in. The codex backend uses
+# model.name unless it's a Claude model, in which case Codex picks its default.
+codex_homes = [] # e.g. ["~/.codex-work"]
 
 [model]
 name = "claude-opus-5-5"

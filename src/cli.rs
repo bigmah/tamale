@@ -13,10 +13,11 @@ mod tests;
 
 pub const HELP: &str = "usage: tamale [--backend <kind>] [--add-dir <path>] [--config <path>] [--model <id>] [--effort <level>] [--thinking <mode>] [-c | -r] [-p <prompt> [--yes]]
 
--b, --backend      api (ANTHROPIC_API_KEY) or claude-code (your Claude Code sign-in).
+-b, --backend      api (ANTHROPIC_API_KEY), claude-code (your Claude Code sign-in) or
+                   codex (your Codex sign-in).
 --add-dir <path>   Include another directory in the agent's scope (repeatable).
 --config <path>    Add a TOML settings file after user and project settings.
--m, --model <id>  Anthropic model ID.
+-m, --model <id>  Model ID (Anthropic, or a Codex model on the codex backend).
 -e, --effort      low, medium, high, xhigh, max, or default (API decides).
 --thinking        adaptive (on) or off.
 -c, --continue    Resume the most recent session in this directory.
@@ -27,8 +28,8 @@ pub const HELP: &str = "usage: tamale [--backend <kind>] [--add-dir <path>] [--c
 
 Settings: built-in defaults < ~/.config/tamale/config.toml < project tamale.toml
           < --config < TAMALE_* environment variables < CLI flags.
-The api backend requires ANTHROPIC_API_KEY; claude-code requires the `claude` CLI
-(tamale offers to sign in when it isn't). See config/default.toml for all settings.";
+The api backend requires ANTHROPIC_API_KEY; claude-code requires the `claude` CLI and
+codex the `codex` CLI (tamale offers to sign in when they aren't). See config/default.toml for all settings.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Resume {

@@ -1,15 +1,15 @@
-//! Choosing where inference comes from: `/backend`, its picker, and Claude Code logins
-//! (`/login`, adding and removing accounts).
+//! Choosing where inference comes from: `/backend`, its picker, and Claude Code and Codex
+//! logins (`/login`, adding and removing accounts).
 
 use crossterm::event::{KeyCode, KeyEvent};
 
 use super::{App, AppEvent};
-use crate::backend::{self, Backend, ClaudeCode, logins};
+use crate::backend::{self, Backend, Kind, logins};
 use crate::session::Entry;
 
 pub(super) struct Picker {
     pub selected: usize,
-    /// Still checking which Claude Code logins exist.
+    /// Still checking which CLI logins exist.
     pub loading: bool,
 }
 
@@ -19,39 +19,62 @@ pub(super) enum Choice {
     Api,
     /// An index into `App::logins`.
     Login(usize),
-    AddLogin,
+    /// Sign in to another account of a CLI.
+    AddLogin(Kind),
 }
 
-/// A Claude Code sign-in for the event loop to run (it needs the terminal).
+/// Kinds of CLI login the picker can add.
+const LOGIN_KINDS: [Kind; 2] = [Kind::ClaudeCode, Kind::Codex];
+
+/// A row's identity: [`Choice::Login`] indexes shift when the list is refreshed.
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum ChoiceKey {
+    Api,
+    Login(Kind, Option<std::path::PathBuf>),
+    AddLogin(Kind),
+}
+
+/// A CLI sign-in for the event loop to run (it needs the terminal).
 pub struct LoginRequest {
-    pub cc: ClaudeCode,
+    pub login: Backend,
     /// A new account from the picker; its directory is removed if sign-in fails.
     pub(super) adding: bool,
 }
 
 impl App {
-    /// Footer label; with several Claude Code logins, the account tells them apart.
+    /// Footer label; with several logins of the same CLI, the account tells them apart.
     pub(super) fn backend_label(&self) -> String {
-        match &self.backend {
-            Backend::ClaudeCode(cc) if self.logins.len() > 1 => cc.label_with_account(),
-            backend => backend.label(),
+        let kind = self.backend.kind();
+        let logins = self.logins.iter().filter(|l| l.kind() == kind).count();
+        if kind != Kind::Api && logins > 1 {
+            self.backend.label_with_account()
+        } else {
+            self.backend.label()
         }
     }
 
+    /// The API, each CLI's logins, then a row to add an account of each CLI.
     pub(super) fn backend_choices(&self) -> Vec<Choice> {
         let mut choices = vec![Choice::Api];
-        choices.extend((0..self.logins.len()).map(Choice::Login));
-        choices.push(Choice::AddLogin);
+        for kind in LOGIN_KINDS {
+            choices.extend(
+                (0..self.logins.len())
+                    .filter(|&i| self.logins[i].kind() == kind)
+                    .map(Choice::Login),
+            );
+        }
+        choices.extend(LOGIN_KINDS.map(Choice::AddLogin));
         choices
     }
 
     pub(super) fn is_current(&self, choice: Choice) -> bool {
-        match (choice, &self.backend) {
-            (Choice::Api, Backend::Api(_)) => true,
-            (Choice::Login(i), Backend::ClaudeCode(cc)) => {
-                self.logins.get(i).map(|l| &l.config_dir) == Some(&cc.config_dir)
-            }
-            _ => false,
+        match choice {
+            Choice::Api => matches!(self.backend, Backend::Api(_)),
+            Choice::Login(i) => self
+                .logins
+                .get(i)
+                .is_some_and(|l| l.same_login(&self.backend)),
+            Choice::AddLogin(_) => false,
         }
     }
 
@@ -62,27 +85,27 @@ impl App {
             .unwrap_or(0)
     }
 
-    /// `/login`: signs in to the current Claude Code login again (or switches its account).
+    /// `/login`: signs in to the current CLI login again (or switches its account).
     pub(super) fn login(&mut self) {
         match &self.backend {
             Backend::Api(_) => self.entries.push(Entry::Info(
                 "This session uses the Anthropic API with ANTHROPIC_API_KEY. To use a Claude \
-Code sign-in instead, pick one with /backend."
+Code or Codex sign-in instead, pick one with /backend."
                     .into(),
             )),
-            Backend::ClaudeCode(_) if self.is_running() => self.entries.push(Entry::Error(
+            _ if self.is_running() => self.entries.push(Entry::Error(
                 "Can't sign in while the agent is running (Esc to interrupt first).".into(),
             )),
-            Backend::ClaudeCode(cc) => {
+            login => {
                 self.login_request = Some(LoginRequest {
-                    cc: cc.clone(),
+                    login: login.clone(),
                     adding: false,
                 })
             }
         }
     }
 
-    /// `/backend <kind>` switches directly (`claude-code` is the default login);
+    /// `/backend <kind>` switches directly (`claude-code` and `codex` are the default logins);
     /// without an argument it opens the picker. The conversation carries over.
     pub(super) fn switch_backend(&mut self, arg: Option<&str>) {
         let Some(arg) = arg else {
@@ -99,10 +122,7 @@ Code sign-in instead, pick one with /backend."
         if self.refuse_while_running() {
             return;
         }
-        let current = match &self.backend {
-            Backend::Api(_) => kind == backend::Kind::Api,
-            Backend::ClaudeCode(cc) => kind == backend::Kind::ClaudeCode && cc.config_dir.is_none(),
-        };
+        let current = self.backend.kind() == kind && self.backend.login_dir().is_none();
         if current {
             self.entries.push(Entry::Info(format!(
                 "Already using {}.",
@@ -130,11 +150,11 @@ Code sign-in instead, pick one with /backend."
         self.is_running()
     }
 
-    /// Makes `backend` current. A Claude Code session from before doesn't hold the turns
-    /// made since, so the next turn starts a new one.
+    /// Makes `backend` current. A CLI session from before doesn't hold the turns made
+    /// since, so the next turn starts a new one.
     fn set_backend(&mut self, backend: Backend) {
-        if let Backend::ClaudeCode(cc) = &backend {
-            self.remember_login(cc.clone());
+        if backend.kind() != Kind::Api {
+            self.remember_login(backend.clone());
         }
         self.settings.backend.kind = backend.kind();
         self.backend = backend;
@@ -142,14 +162,10 @@ Code sign-in instead, pick one with /backend."
         self.models = None;
     }
 
-    fn remember_login(&mut self, cc: ClaudeCode) {
-        match self
-            .logins
-            .iter_mut()
-            .find(|l| l.config_dir == cc.config_dir)
-        {
-            Some(known) => *known = cc,
-            None => self.logins.push(cc),
+    fn remember_login(&mut self, login: Backend) {
+        match self.logins.iter_mut().find(|l| l.same_login(&login)) {
+            Some(known) => *known = login,
+            None => self.logins.push(login),
         }
     }
 
@@ -173,14 +189,13 @@ Code sign-in instead, pick one with /backend."
             "Switched to {}{note}. The conversation continues.",
             self.backend_label()
         )));
-        if let Backend::ClaudeCode(cc) = &self.backend
-            && !cc.account.logged_in
-        {
-            self.entries.push(Entry::Info(
-                "Claude Code isn't signed in; starting sign-in…".into(),
-            ));
+        if !self.backend.signed_in() {
+            self.entries.push(Entry::Info(format!(
+                "{} isn't signed in; starting sign-in…",
+                self.backend.kind().cli_name()
+            )));
             self.login_request = Some(LoginRequest {
-                cc: cc.clone(),
+                login: self.backend.clone(),
                 adding: false,
             });
         }
@@ -191,55 +206,51 @@ Code sign-in instead, pick one with /backend."
     }
 
     pub fn on_login(&mut self, request: LoginRequest, result: anyhow::Result<()>) {
-        let LoginRequest { cc, adding } = request;
+        let LoginRequest { login, adding } = request;
         if let Err(e) = result {
             self.entries.push(Entry::Error(format!("{e:#}")));
             if adding {
                 tokio::spawn(async move {
-                    let _ = logins::remove(&cc).await;
+                    let _ = logins::remove(&login).await;
                 });
             } else {
                 // Keep what the refresh learned (e.g. still signed in to the old account).
-                self.remember_login(cc.clone());
-                if self.is_current_login(&cc) {
-                    self.backend = Backend::ClaudeCode(cc);
+                self.remember_login(login.clone());
+                if login.same_login(&self.backend) {
+                    self.backend = login;
                 }
             }
             return;
         }
-        if adding && let Some(existing) = self.logins.iter().find(|l| l.same_account(&cc)).cloned()
+        if adding
+            && let Some(existing) = self.logins.iter().find(|l| l.same_account(&login)).cloned()
         {
             tokio::spawn(async move {
-                let _ = logins::remove(&cc).await;
+                let _ = logins::remove(&login).await;
             });
             self.entries.push(Entry::Info(format!(
                 "That account is already signed in ({}).",
                 existing.label_with_account()
             )));
-            if !self.is_current_login(&existing) {
-                self.use_backend(Backend::ClaudeCode(existing));
+            if !existing.same_login(&self.backend) {
+                self.use_backend(existing);
             }
             return;
         }
-        let who = cc
-            .account
-            .email
-            .as_deref()
+        let who = login
+            .email()
             .map(|email| format!(" as {email}"))
             .unwrap_or_default();
         self.entries.push(Entry::Info(format!(
-            "Signed in to Claude Code{who} ({}).",
-            cc.label()
+            "Signed in to {}{who} ({}).",
+            login.kind().cli_name(),
+            login.label()
         )));
-        if adding || self.is_current_login(&cc) {
-            self.set_backend(Backend::ClaudeCode(cc));
+        if adding || login.same_login(&self.backend) {
+            self.set_backend(login);
         } else {
-            self.remember_login(cc);
+            self.remember_login(login);
         }
-    }
-
-    fn is_current_login(&self, cc: &ClaudeCode) -> bool {
-        matches!(&self.backend, Backend::ClaudeCode(current) if current.config_dir == cc.config_dir)
     }
 
     // -------------------------------------------------------- picker
@@ -252,41 +263,56 @@ Code sign-in instead, pick one with /backend."
         let settings = self.settings.backend.clone();
         let tx = self.tx.clone();
         tokio::spawn(async move {
-            let result = logins::list(&settings).await.map_err(|e| format!("{e:#}"));
-            let _ = tx.send(AppEvent::Logins(result));
+            let (logins, errors) = logins::list(&settings).await;
+            let _ = tx.send(AppEvent::Logins(logins, errors));
         });
     }
 
-    pub(super) fn on_logins(&mut self, result: Result<Vec<ClaudeCode>, String>) {
-        let selected = self
-            .backend_picker
-            .as_ref()
-            .and_then(|p| self.backend_choices().get(p.selected).copied());
-        match result {
-            Ok(list) => {
-                self.logins = list;
-                // The current login stays listed even if it was signed out meanwhile.
-                if let Backend::ClaudeCode(cc) = &self.backend {
-                    match self.logins.iter().find(|l| l.config_dir == cc.config_dir) {
-                        Some(fresh) => self.backend = Backend::ClaudeCode(fresh.clone()),
-                        None => self.logins.push(cc.clone()),
-                    }
-                }
-            }
-            // Without the CLI, only the API is available.
-            Err(e) => self.entries.push(Entry::Error(format!(
-                "Couldn't list Claude Code logins: {e}"
-            ))),
+    pub(super) fn on_logins(&mut self, list: Vec<Backend>, errors: Vec<String>) {
+        let selected = self.backend_picker.as_ref().and_then(|p| {
+            self.backend_choices()
+                .get(p.selected)
+                .map(|&c| self.choice_key(c))
+        });
+        for error in errors {
+            self.entries
+                .push(Entry::Error(format!("Couldn't list logins of {error}")));
         }
-        let choices = self.backend_choices();
+        // A CLI that couldn't be listed keeps the logins known from before.
+        let listed: Vec<Kind> = list.iter().map(Backend::kind).collect();
+        self.logins.retain(|l| !listed.contains(&l.kind()));
+        self.logins.extend(list);
+        // The current login stays listed even if it was signed out meanwhile.
+        if self.backend.kind() != Kind::Api {
+            match self.logins.iter().find(|l| l.same_login(&self.backend)) {
+                Some(fresh) => self.backend = fresh.clone(),
+                None => self.logins.push(self.backend.clone()),
+            }
+        }
         let current = self.current_choice();
+        // Keep a moved selection on the same row; otherwise the current one.
+        let moved = match selected {
+            Some(ChoiceKey::Api) | None => None,
+            Some(key) => self
+                .backend_choices()
+                .into_iter()
+                .position(|c| self.choice_key(c) == key),
+        };
         if let Some(picker) = &mut self.backend_picker {
             picker.loading = false;
-            // Keep a moved selection on the same kind of row; otherwise the current one.
-            picker.selected = match selected {
-                Some(Choice::Api) | None => current,
-                Some(other) => choices.iter().position(|c| *c == other).unwrap_or(current),
-            };
+            picker.selected = moved.unwrap_or(current);
+        }
+    }
+
+    /// What a row stands for, stable across refreshes of the login list.
+    fn choice_key(&self, choice: Choice) -> ChoiceKey {
+        match choice {
+            Choice::Api => ChoiceKey::Api,
+            Choice::Login(i) => ChoiceKey::Login(
+                self.logins[i].kind(),
+                self.logins[i].login_dir().map(Into::into),
+            ),
+            Choice::AddLogin(kind) => ChoiceKey::AddLogin(kind),
         }
     }
 
@@ -348,18 +374,17 @@ Code sign-in instead, pick one with /backend."
                     )));
                     return;
                 }
-                let cc = self.logins[i].clone();
-                self.use_backend(Backend::ClaudeCode(cc));
+                let login = self.logins[i].clone();
+                self.use_backend(login);
             }
-            Choice::AddLogin => {
+            Choice::AddLogin(kind) => {
                 if self.refuse_while_running() {
                     return;
                 }
-                match logins::new_dir() {
-                    Ok(dir) => {
-                        let program = self.settings.backend.claude_path.clone();
+                match logins::new_login(kind, &self.settings.backend) {
+                    Ok(login) => {
                         self.login_request = Some(LoginRequest {
-                            cc: ClaudeCode::signed_out(program, Some(dir)),
+                            login,
                             adding: true,
                         });
                     }
@@ -372,29 +397,33 @@ Code sign-in instead, pick one with /backend."
     }
 
     fn remove_login(&mut self, i: usize) {
-        let cc = self.logins[i].clone();
-        if !logins::is_added(cc.config_dir.as_deref()) {
-            self.entries.push(Entry::Error(
+        let login = self.logins[i].clone();
+        if !logins::is_added(&login) {
+            let logout = match login.kind() {
+                Kind::Codex => "codex logout",
+                _ => "claude auth logout",
+            };
+            self.entries.push(Entry::Error(format!(
                 "Only accounts added here can be removed here. To sign this one out, run \
-`claude auth logout`."
-                    .into(),
-            ));
+`{logout}`."
+            )));
             return;
         }
-        if self.is_current_login(&cc) {
+        if login.same_login(&self.backend) {
             self.entries.push(Entry::Error(
                 "That's the current backend; switch to another one before removing it.".into(),
             ));
             return;
         }
         self.logins.remove(i);
+        let last = self.backend_choices().len() - 1;
         if let Some(picker) = &mut self.backend_picker {
-            picker.selected = picker.selected.min(self.logins.len() + 1);
+            picker.selected = picker.selected.min(last);
         }
         let tx = self.tx.clone();
         tokio::spawn(async move {
-            let label = cc.label_with_account();
-            let result = logins::remove(&cc)
+            let label = login.label_with_account();
+            let result = logins::remove(&login)
                 .await
                 .map(|()| label)
                 .map_err(|e| format!("{e:#}"));
