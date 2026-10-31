@@ -1319,6 +1319,8 @@ async fn diff_viewer_expands_unchanged_lines() {
     let event = rx.recv().await.unwrap();
     app.on_app_event(event);
     app.on_event(key(KeyCode::Tab));
+    // n moves the cursor to the next hunk, whose row holds the gap above it.
+    app.on_event(key(KeyCode::Char('n')));
     let text = screen_lines(&mut app, 110, 60).join("\n");
     // Lines 8–32 are hidden between the changes, 40–41 after them.
     assert!(
@@ -1333,10 +1335,14 @@ async fn diff_viewer_expands_unchanged_lines() {
     let text = screen_lines(&mut app, 110, 60).join("\n");
     assert!(text.contains("line 16") && text.contains("line 22"), "{text}");
     assert!(text.contains("↕ 5 unchanged lines  @@") && !text.contains("line 19"), "{text}");
+    app.on_event(key(KeyCode::Char('n')));
     app.on_event(key(KeyCode::Enter));
     let text = screen_lines(&mut app, 110, 60).join("\n");
     assert!(text.contains(" 20  20   line 19"), "{text}");
-    // The next gap on screen is now the trailing one.
+    assert!(text.contains("↕ 2 unchanged lines"), "{text}");
+    // The cursor moves onto a gap with j/k too.
+    app.on_event(key(KeyCode::Char('G')));
+    let text = screen_lines(&mut app, 110, 60).join("\n");
     assert!(text.contains("↕ 2 unchanged lines  ⏎ expand"), "{text}");
 
     // Expansions survive a reload; E toggles the whole file and back.
@@ -1350,5 +1356,63 @@ async fn diff_viewer_expands_unchanged_lines() {
     app.on_event(key(KeyCode::Char('E')));
     let text = screen_lines(&mut app, 110, 60).join("\n");
     assert!(!text.contains("line 17") && text.contains("↕ 25 unchanged lines"), "{text}");
+    let _ = std::fs::remove_dir_all(&work);
+}
+
+#[tokio::test]
+async fn visual_selection_in_the_diff_quotes_lines_into_the_prompt() {
+    let work = std::env::temp_dir().join(format!("tamale-diff-visual-{}", session::new_id()));
+    std::fs::create_dir_all(&work).unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&work)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+    };
+    git(&["init", "-q"]);
+    std::fs::write(work.join("a.rs"), "one\ntwo\nthree\nfour\n").unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-qm", "init"]);
+    std::fs::write(work.join("a.rs"), "one\n2\nthree\nfour\n").unwrap();
+
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let workspace = Workspace {
+        cwd: work.clone(),
+        additional_dirs: Vec::new(),
+    };
+    let (mut app, mut rx) = App::new_with_channel(client, test_settings("test-model"), workspace);
+    app.command("/diff");
+    let event = rx.recv().await.unwrap();
+    app.on_app_event(event);
+    app.on_event(key(KeyCode::Tab));
+    // Rows: header, one, -two, +2, three, four. Select from "one" through "+2".
+    app.on_event(key(KeyCode::Char('j')));
+    app.on_event(key(KeyCode::Char('V')));
+    app.on_event(key(KeyCode::Char('j')));
+    app.on_event(key(KeyCode::Char('j')));
+    let text = screen_lines(&mut app, 100, 30).join("\n");
+    assert!(text.contains("-- VISUAL LINE --"), "{text}");
+    assert!(text.contains("3 rows selected"), "{text}");
+    // Esc leaves visual mode rather than the tab.
+    app.on_event(key(KeyCode::Esc));
+    assert!(app.diff_open);
+    assert!(!screen_lines(&mut app, 100, 30).join("\n").contains("VISUAL"));
+
+    app.on_event(key(KeyCode::Char('v')));
+    app.on_event(key(KeyCode::Char('k')));
+    app.on_event(key(KeyCode::Char('k')));
+    app.input = "Context first".into();
+    app.on_event(key(KeyCode::Enter));
+    assert!(!app.diff_open, "asking returns to the chat");
+    assert_eq!(
+        app.input,
+        "Context first\n\nIn `a.rs` (lines 1–2):\n```diff\n one\n-two\n+2\n```\n\n"
+    );
+    assert_eq!(app.cursor, app.input.len());
+    assert!(app.history.is_empty(), "nothing is sent until you add a question");
     let _ = std::fs::remove_dir_all(&work);
 }

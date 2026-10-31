@@ -284,6 +284,10 @@ impl App {
                 .push(Entry::Info("Nothing to copy yet.".into()));
             return;
         };
+        self.write_clipboard(text);
+    }
+
+    pub(super) fn write_clipboard(&self, text: String) {
         let tx = self.tx.clone();
         tokio::spawn(async move {
             let result = clipboard::write(&text).await.map_err(|e| e.to_string());

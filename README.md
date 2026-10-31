@@ -493,18 +493,25 @@ highlighted.
 
 Keys: `Tab` switches between the file tree and the diff. In the tree, `↑/↓` (`j/k`)
 select a file, `←/→` (`h/l`) fold or unfold directories and `Enter` opens the diff. In
-the diff, `↑/↓` scroll, `←/→` pan long lines (`←` at the left edge returns to the tree)
-and `g/G` jump to the top or bottom.
-Unchanged lines more than 3 lines from a change fold into `↕ 25 unchanged lines` rows:
-`Enter` (or `e`) expands the first one on screen (marked `⏎ expand`) by 20 lines next
-to the changes, small gaps open fully, and clicking a row expands that one. `E` shows
-the whole file, and pressing it again goes back to just the changes. Expanded lines stay
-open across refreshes. Anywhere: `PgUp/PgDn`/`Space`/`Ctrl+U/D` scroll
-the diff, `n`/`p` jump between hunks (past the last hunk, `n` moves to the next file),
-`]`/`[` move between files, and `q` or `Esc` returns to the chat. `←` also leads back:
-from the diff to the tree, up through parent directories, and from the top of the tree
-to the chat. The mouse wheel scrolls
-whichever pane it's over, and clicking a tree row selects it.
+the diff, `j/k` (`↑/↓`) move a line cursor (the view follows), `←/→` pan long lines
+(`←` at the left edge returns to the tree) and `g/G` jump to the top or bottom.
+Anywhere: `PgUp/PgDn`/`Space`/`Ctrl+U/D` page through the diff, `n`/`p` jump between
+hunks (past the last hunk, `n` moves to the next file), `]`/`[` move between files, and
+`q` or `Esc` returns to the chat. `←` also leads back: from the diff to the tree, up
+through parent directories, and from the top of the tree to the chat. The mouse wheel
+scrolls whichever pane it's over, and clicking a tree row selects it.
+
+**Unchanged lines** more than 3 lines from a change fold into `↕ 25 unchanged lines`
+rows. With the cursor on one (marked `⏎ expand`), `Enter` (or `e`) reveals 20 more lines
+next to the changes; small gaps open fully. Clicking a row expands it too. `E` shows the
+whole file, and pressing it again goes back to just the changes. Expanded lines stay
+open across refreshes.
+
+**Asking about code**: in the diff, `v` or `V` starts a vim-style visual line
+selection that `j/k` (and `PgUp/PgDn`, `g/G`, `n/p`) extend. `Enter` (or `a`) returns to
+the chat with the selected lines quoted in the prompt, as the file path, line numbers
+and a `diff` block, ready for your question; nothing is sent until you press `Enter`
+again. `y` copies the quote to the clipboard instead, and `Esc` cancels the selection.
 
 ## Layout
 

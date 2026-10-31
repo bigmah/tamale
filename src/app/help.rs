@@ -109,6 +109,7 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
                 "Scroll chat by 3 lines (also scrolls help and pickers)",
             ),
             ("→ (empty prompt)", "Switch to the Diff tab; Esc or ← comes back"),
+            ("v / V (in a diff)", "Select lines; Enter quotes them into the prompt, y copies"),
             ("Esc", "Interrupt the agent (unsent queued messages return to the input)"),
             (
                 "Shift+Tab",

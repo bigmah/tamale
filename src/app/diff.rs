@@ -21,6 +21,8 @@ const ADDED_EMPHASIS: Color = Color::Rgb(36, 100, 52);
 const REMOVED_BG: Color = Color::Rgb(58, 20, 24);
 const REMOVED_EMPHASIS: Color = Color::Rgb(122, 38, 46);
 const HUNK_BG: Color = Color::Rgb(24, 34, 52);
+const CURSOR_BG: Color = Color::Rgb(48, 48, 62);
+const SELECTION_BG: Color = Color::Rgb(52, 64, 112);
 /// Columns moved per ←/→ in the diff pane.
 const HSCROLL_STEP: usize = 8;
 const TAB: &str = "    ";
@@ -49,7 +51,8 @@ struct Row {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RowKind {
-    Line,
+    /// A diff line, by index into the file's lines.
+    Line(usize),
     /// Hidden unchanged lines `start..end` (indexes into the file's lines).
     Gap {
         start: usize,
@@ -110,6 +113,13 @@ pub(super) struct Viewer {
     scroll: usize,
     /// The diff pane's largest scroll offset at the last draw.
     max_scroll: usize,
+    /// The diff pane's cursor row, moved with j/k.
+    cursor: usize,
+    /// Where a visual line selection (`v`) started; it runs to the cursor.
+    visual: Option<usize>,
+    /// Set by keyboard moves so the next draw scrolls the cursor into view; otherwise
+    /// (after the wheel) the cursor is kept on screen instead.
+    follow_cursor: bool,
     hscroll: usize,
     tree_scroll: usize,
     /// Set by keyboard moves so the next draw scrolls the selection into view.
@@ -143,6 +153,9 @@ impl Viewer {
             focus: Focus::Files,
             scroll: 0,
             max_scroll: 0,
+            cursor: 0,
+            visual: None,
+            follow_cursor: true,
             hscroll: 0,
             tree_scroll: 0,
             follow: true,
@@ -192,6 +205,8 @@ impl Viewer {
         if self.file != Some(file) {
             self.file = Some(file);
             self.scroll = 0;
+            self.cursor = 0;
+            self.visual = None;
             self.hscroll = 0;
         }
     }
@@ -271,20 +286,36 @@ impl Viewer {
         self.scroll = self.scroll.saturating_add_signed(delta);
     }
 
+    fn move_cursor(&mut self, delta: isize) {
+        self.cursor = self.cursor.saturating_add_signed(delta);
+        self.follow_cursor = true;
+    }
+
+    /// Moves the cursor and the view together, like Ctrl+D in vim.
+    fn page_by(&mut self, delta: isize) {
+        self.scroll_by(delta);
+        self.move_cursor(delta);
+    }
+
     fn step_hunk(&mut self, forward: bool) {
         let Some(rendered) = &self.rendered else {
             return;
         };
-        let scroll = self.scroll.min(self.max_scroll);
-        if forward {
-            match rendered.hunks.iter().find(|&&h| h > scroll) {
-                // Hunks that can't reach the top are already on screen once scrolled to the end.
-                Some(&row) if scroll < self.max_scroll => self.scroll = row.min(self.max_scroll),
-                // Past the last hunk, continue with the next file.
-                _ => self.step_file(true),
+        let target = if forward {
+            rendered.hunks.iter().find(|&&h| h > self.cursor)
+        } else {
+            rendered.hunks.iter().rev().find(|&&h| h < self.cursor)
+        };
+        match target {
+            Some(&row) => {
+                self.cursor = row;
+                self.follow_cursor = true;
+                // Show the hunk from its header down.
+                self.scroll = row;
             }
-        } else if let Some(&row) = rendered.hunks.iter().rev().find(|&&h| h < scroll) {
-            self.scroll = row;
+            // Past the last hunk, continue with the next file.
+            None if forward => self.step_file(true),
+            None => {}
         }
     }
 
@@ -338,19 +369,63 @@ impl Viewer {
         self.rendered = Some(render_file(index, file, self.reveals.get(&file.path)));
     }
 
-    /// The first collapsed gap on screen, which Enter expands.
-    fn target_gap(&self) -> Option<usize> {
+    /// The selected rows (cursor and visual anchor), clamped to the file's rows.
+    fn selection(&self) -> Option<(usize, usize)> {
+        let anchor = self.visual?;
+        let last = self.rendered.as_ref()?.rows.len().checked_sub(1)?;
+        let (cursor, anchor) = (self.cursor.min(last), anchor.min(last));
+        Some((cursor.min(anchor), cursor.max(anchor)))
+    }
+
+    /// The selected lines quoted for a prompt: the path, line numbers and a diff block.
+    fn selection_text(&self) -> Option<String> {
+        let (first, last) = self.selection()?;
         let rendered = self.rendered.as_ref()?;
-        let top = self.scroll.min(self.max_scroll);
-        let height = self.diff_area.height as usize;
-        rendered
-            .rows
-            .iter()
-            .enumerate()
-            .skip(top)
-            .take(height)
-            .find(|(_, kind)| matches!(kind, RowKind::Gap { .. }))
-            .map(|(row, _)| row)
+        let file = self.files().get(self.file?)?;
+        let lines: Vec<_> = file.hunks.iter().flat_map(|h| &h.lines).collect();
+        let mut body = String::new();
+        let (mut new, mut old) = (Vec::new(), Vec::new());
+        for kind in &rendered.rows[first..=last] {
+            match *kind {
+                RowKind::Line(i) => {
+                    let line = lines[i];
+                    let sign = match line.kind {
+                        Kind::Added => '+',
+                        Kind::Removed => '-',
+                        Kind::Context | Kind::NoNewline => ' ',
+                    };
+                    body.push(sign);
+                    body.push_str(line.text.trim_end_matches('\r'));
+                    body.push('\n');
+                    new.extend(line.new);
+                    old.extend(line.old);
+                }
+                RowKind::Gap { start, end } => {
+                    body.push_str(&format!(" … {} unchanged lines\n", end - start));
+                }
+                RowKind::Other => {}
+            }
+        }
+        if body.is_empty() {
+            return None;
+        }
+        let range = |nums: &[u32], what: &str| {
+            let (a, b) = (nums.iter().min().unwrap(), nums.iter().max().unwrap());
+            if a == b {
+                format!("{what} {a}")
+            } else {
+                format!("{what}s {a}–{b}")
+            }
+        };
+        let range = if !new.is_empty() {
+            range(&new, "line")
+        } else {
+            range(&old, "removed line")
+        };
+        Some(format!(
+            "In `{}` ({range}):\n```diff\n{body}```\n\n",
+            file.path
+        ))
     }
 
     /// Reveals up to `EXPAND_STEP` hidden lines of the gap at `row`, next to the changes
@@ -677,7 +752,7 @@ fn render_file(index: usize, file: &FileDiff, reveal: Option<&Reveal>) -> Render
         if line.kind == Kind::Context {
             text_line = text_line.fg(Color::Gray);
         }
-        rendered.push(gutter, text_line, bg, RowKind::Line);
+        rendered.push(gutter, text_line, bg, RowKind::Line(i - 1));
     }
     rendered
 }
@@ -797,6 +872,21 @@ impl App {
         }
     }
 
+    /// Goes back to the chat with `quote` added to the prompt, ready for a question.
+    fn ask_about(&mut self, quote: &str) {
+        self.diff_open = false;
+        if !self.input.trim().is_empty() && !self.input.ends_with("\n\n") {
+            self.input.push_str(if self.input.ends_with('\n') {
+                "\n"
+            } else {
+                "\n\n"
+            });
+        }
+        self.input.push_str(quote);
+        self.cursor = self.input.len();
+        self.scroll_back = 0;
+    }
+
     /// The Chat/Diff tab bar; `None` outside a git repository.
     pub(super) fn tab_spans(&self) -> Option<Vec<Span<'static>>> {
         let viewer = self.diff.as_ref()?;
@@ -833,8 +923,40 @@ impl App {
         let Some(viewer) = &mut self.diff else {
             return;
         };
+        // Keys act on the laid-out rows, even before the first draw.
+        viewer.render();
         let page = viewer.page() as isize;
         viewer.follow = true;
+        // Visual line mode: j/k extend the selection, which goes to the chat or clipboard.
+        if viewer.visual.is_some() {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('v' | 'V') => {
+                    viewer.visual = None;
+                    return;
+                }
+                KeyCode::Char('c') if ctrl => {
+                    viewer.visual = None;
+                    return;
+                }
+                KeyCode::Enter | KeyCode::Char('a') => {
+                    if let Some(quote) = viewer.selection_text() {
+                        viewer.visual = None;
+                        self.ask_about(&quote);
+                    }
+                    return;
+                }
+                KeyCode::Char('y') => {
+                    if let Some(quote) = viewer.selection_text() {
+                        viewer.visual = None;
+                        self.write_clipboard(quote);
+                    }
+                    return;
+                }
+                // Moving files or hunks ends the selection; scrolling keys extend it.
+                KeyCode::Tab | KeyCode::BackTab | KeyCode::Char('[' | ']') => viewer.visual = None,
+                _ => {}
+            }
+        }
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => self.diff_open = false,
             KeyCode::Char('c') if ctrl => self.diff_open = false,
@@ -850,10 +972,10 @@ impl App {
             KeyCode::Char('E') => viewer.toggle_full_file(),
             KeyCode::Char('n') => viewer.step_hunk(true),
             KeyCode::Char('p' | 'N') => viewer.step_hunk(false),
-            KeyCode::PageDown | KeyCode::Char(' ') => viewer.scroll_by(page),
-            KeyCode::PageUp => viewer.scroll_by(-page),
-            KeyCode::Char('d') if ctrl => viewer.scroll_by(page / 2),
-            KeyCode::Char('u') if ctrl => viewer.scroll_by(-page / 2),
+            KeyCode::PageDown | KeyCode::Char(' ') => viewer.page_by(page),
+            KeyCode::PageUp => viewer.page_by(-page),
+            KeyCode::Char('d') if ctrl => viewer.page_by(page / 2),
+            KeyCode::Char('u') if ctrl => viewer.page_by(-page / 2),
             _ if viewer.focus == Focus::Files => match key.code {
                 KeyCode::Up | KeyCode::Char('k') => {
                     viewer.select_row(viewer.selected.saturating_sub(1))
@@ -884,11 +1006,18 @@ impl App {
                 _ => {}
             },
             _ => match key.code {
-                KeyCode::Up | KeyCode::Char('k') => viewer.scroll_by(-1),
-                KeyCode::Down | KeyCode::Char('j') => viewer.scroll_by(1),
-                KeyCode::Home | KeyCode::Char('g') => viewer.scroll = 0,
+                KeyCode::Up | KeyCode::Char('k') => viewer.move_cursor(-1),
+                KeyCode::Down | KeyCode::Char('j') => viewer.move_cursor(1),
+                KeyCode::Home | KeyCode::Char('g') => {
+                    viewer.cursor = 0;
+                    viewer.follow_cursor = true;
+                }
                 // Clamped to the real maximum when drawn.
-                KeyCode::End | KeyCode::Char('G') => viewer.scroll = usize::MAX,
+                KeyCode::End | KeyCode::Char('G') => {
+                    viewer.cursor = usize::MAX;
+                    viewer.follow_cursor = true;
+                }
+                KeyCode::Char('v' | 'V') => viewer.visual = Some(viewer.cursor),
                 KeyCode::Left | KeyCode::Char('h') if viewer.hscroll == 0 => {
                     viewer.focus = Focus::Files
                 }
@@ -896,11 +1025,7 @@ impl App {
                     viewer.hscroll = viewer.hscroll.saturating_sub(HSCROLL_STEP)
                 }
                 KeyCode::Right | KeyCode::Char('l') => viewer.hscroll += HSCROLL_STEP,
-                KeyCode::Enter | KeyCode::Char('e') => {
-                    if let Some(row) = viewer.target_gap() {
-                        viewer.expand_gap(row);
-                    }
-                }
+                KeyCode::Enter | KeyCode::Char('e') => viewer.expand_gap(viewer.cursor),
                 _ => {}
             },
         }
@@ -910,6 +1035,7 @@ impl App {
         let Some(viewer) = &mut self.diff else {
             return;
         };
+        viewer.render();
         let at = Position::new(mouse.column, mouse.row);
         let in_tree = viewer.tree_area.contains(at);
         match mouse.kind {
@@ -927,6 +1053,7 @@ impl App {
                     } else {
                         WHEEL_LINES as isize
                     });
+                    viewer.follow_cursor = false;
                 }
             }
             MouseEventKind::Down(MouseButton::Left) if in_tree => {
@@ -940,7 +1067,10 @@ impl App {
             MouseEventKind::Down(MouseButton::Left) if viewer.diff_area.contains(at) => {
                 viewer.focus = Focus::Diff;
                 let top = viewer.scroll.min(viewer.max_scroll);
-                viewer.expand_gap(top + (mouse.row - viewer.diff_area.y) as usize);
+                viewer.cursor = top + (mouse.row - viewer.diff_area.y) as usize;
+                if viewer.visual.is_none() {
+                    viewer.expand_gap(viewer.cursor);
+                }
             }
             _ => {}
         }
@@ -989,11 +1119,14 @@ impl App {
         frame.render_widget(Line::from(title), title_area);
 
         let hint = match viewer.focus {
+            _ if viewer.visual.is_some() => {
+                " -- VISUAL LINE --  j/k extend · enter ask the agent · y copy · esc cancel "
+            }
             Focus::Files => {
                 " ↑/↓ select · ←/→ fold · enter open · tab diff pane · [/] file · n/p hunk · r refresh · esc chat "
             }
             Focus::Diff => {
-                " ↑/↓ scroll · ←/→ pan · enter expand · E whole file · tab files · [/] file · n/p hunk · r refresh · esc chat "
+                " j/k move · v select · ←/→ pan · enter expand · E whole file · tab files · [/] file · n/p hunk · r refresh · esc chat "
             }
         };
         frame.render_widget(Line::from(hint).fg(Color::DarkGray), hint_area);
@@ -1123,7 +1256,19 @@ impl App {
         let total = rendered.text.len();
         let height = inner.height as usize;
         viewer.max_scroll = total.saturating_sub(height);
+        viewer.cursor = viewer.cursor.min(total.saturating_sub(1));
+        if height > 0 {
+            if std::mem::take(&mut viewer.follow_cursor) {
+                viewer.scroll = viewer
+                    .scroll
+                    .clamp((viewer.cursor + 1).saturating_sub(height), viewer.cursor);
+            } else {
+                let scroll = viewer.scroll.min(viewer.max_scroll);
+                viewer.cursor = viewer.cursor.clamp(scroll, scroll + height - 1);
+            }
+        }
         viewer.scroll = viewer.scroll.min(viewer.max_scroll);
+        let selection = viewer.selection();
         let hunks = rendered.hunks.len();
         let position = if hunks == 0 {
             None
@@ -1136,7 +1281,7 @@ impl App {
             let hunk = rendered
                 .hunks
                 .iter()
-                .filter(|&&h| h <= viewer.scroll)
+                .filter(|&&h| h <= viewer.cursor)
                 .count()
                 .max(1);
             Some(format!(
@@ -1144,6 +1289,14 @@ impl App {
                 viewer.scroll + 1,
                 (viewer.scroll + height).min(total)
             ))
+        };
+        let position = match selection {
+            Some((first, last)) => Some(format!(
+                " {} row{} selected · enter ask · y copy ",
+                last - first + 1,
+                if first == last { "" } else { "s" }
+            )),
+            None => position,
         };
         if let Some(position) = position {
             diff_block =
@@ -1157,10 +1310,20 @@ impl App {
         ])
         .areas(inner);
         let visible = viewer.scroll..(viewer.scroll + height).min(total);
+        let focused = viewer.focus == Focus::Diff;
         for (y, bg) in rendered.backgrounds[visible.clone()].iter().enumerate() {
+            let row = visible.start + y;
+            let selected = selection.is_some_and(|(a, b)| (a..=b).contains(&row));
+            let bg = if selected {
+                Some(SELECTION_BG)
+            } else if focused && row == viewer.cursor {
+                Some(CURSOR_BG)
+            } else {
+                *bg
+            };
             if let Some(bg) = bg {
-                let row = Rect::new(inner.x, inner.y + y as u16, inner.width, 1);
-                frame.buffer_mut().set_style(row, Style::new().bg(*bg));
+                let area = Rect::new(inner.x, inner.y + y as u16, inner.width, 1);
+                frame.buffer_mut().set_style(area, Style::new().bg(bg));
             }
         }
         frame.render_widget(
@@ -1168,10 +1331,11 @@ impl App {
             gutter_area,
         );
         let mut text = rendered.text[visible.clone()].to_vec();
-        // Mark the gap Enter would expand.
-        if viewer.focus == Focus::Diff
-            && let Some(row) = viewer.target_gap()
-            && let Some(line) = text.get_mut(row - visible.start)
+        // Mark a gap under the cursor, which Enter expands.
+        if focused
+            && selection.is_none()
+            && matches!(rendered.rows.get(viewer.cursor), Some(RowKind::Gap { .. }))
+            && let Some(line) = text.get_mut(viewer.cursor - visible.start)
         {
             line.spans
                 .push(Span::from("  ⏎ expand").fg(Color::Cyan).bold());
@@ -1180,6 +1344,15 @@ impl App {
             Paragraph::new(text).scroll((0, viewer.hscroll.min(u16::MAX as usize) as u16)),
             text_area,
         );
+        // A bar down the left edge of the selection.
+        if let Some((first, last)) = selection {
+            for row in first.max(visible.start)..=last.min(visible.end.saturating_sub(1)) {
+                let y = inner.y + (row - visible.start) as u16;
+                frame.buffer_mut()[(inner.x, y)]
+                    .set_symbol("▌")
+                    .set_fg(Color::Cyan);
+            }
+        }
         if total > height {
             let mut state =
                 ScrollbarState::new(total.saturating_sub(height)).position(viewer.scroll);
