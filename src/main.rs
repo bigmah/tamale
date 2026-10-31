@@ -206,7 +206,7 @@ async fn run(
     (mut app, mut rx): (App, mpsc::UnboundedReceiver<app::AppEvent>),
 ) -> Result<()> {
     let mut events = EventStream::new();
-    let mut tick = tokio::time::interval(Duration::from_millis(80));
+    let mut tick = tokio::time::interval(Duration::from_millis(50));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut dirty = true;
     let mut next_frame = tokio::time::Instant::now();

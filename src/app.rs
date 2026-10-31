@@ -1,6 +1,7 @@
 //! Conversation state and agent event handling. Input, commands, sessions and drawing
 //! live in child modules so each responsibility can be changed independently.
 
+mod activity;
 mod approval;
 mod backends;
 mod commands;
@@ -191,6 +192,8 @@ pub struct App {
     /// Assistant entry created by the in-flight request, dropped if the request is retried.
     attempt_entry: Option<usize>,
     tick: usize,
+    /// When the current run began, for the activity animation and elapsed time.
+    busy_since: Option<std::time::Instant>,
     pub should_quit: bool,
 }
 
@@ -264,6 +267,7 @@ impl App {
             turn_failed: false,
             attempt_entry: None,
             tick: 0,
+            busy_since: None,
             should_quit: false,
         }
     }

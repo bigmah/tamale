@@ -8,6 +8,7 @@ use ratatui::widgets::{
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use super::activity;
 use super::backends::Choice;
 use super::help::help_lines;
 use super::markdown;
@@ -361,20 +362,20 @@ impl App {
         self.transcript
             .sync(&self.entries, area.width, self.settings.ui.verbose);
         let running = self.is_running();
-        let spinner = Line::from(
-            format!(
-                "{} {}",
-                SPINNER[self.tick % SPINNER.len()],
-                if self.compacting {
-                    "Compacting…"
-                } else if self.approval.is_some() {
-                    "Waiting for approval…"
-                } else {
-                    "Thinking…"
-                }
-            )
-            .fg(Color::Yellow),
-        );
+        let since = if running {
+            *self.busy_since.get_or_insert_with(std::time::Instant::now)
+        } else {
+            self.busy_since = None;
+            std::time::Instant::now()
+        };
+        let (label, palette) = if self.compacting {
+            ("Compacting…", activity::COMPACTING)
+        } else if self.approval.is_some() {
+            ("Waiting for approval…", activity::WAITING)
+        } else {
+            ("Thinking…", activity::THINKING)
+        };
+        let spinner = activity::line(label, palette, since.elapsed(), self.approval.is_none());
         let spinner_rows = if running {
             Paragraph::new(spinner.clone())
                 .wrap(Wrap { trim: false })
