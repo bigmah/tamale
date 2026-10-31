@@ -25,6 +25,8 @@ pub enum Entry {
         output: Option<(String, bool)>,
     },
     Info(String),
+    /// Model-written text outside the conversation, such as a goal checker's verdict.
+    Note(String),
     Error(String),
 }
 

@@ -45,6 +45,26 @@ fn parses_session_text_usage_and_result() {
 }
 
 #[test]
+fn later_text_blocks_start_a_new_paragraph() {
+    let block = || {
+        json!({"type": "stream_event", "event": {"type": "content_block_start",
+        "content_block": {"type": "text", "text": ""}}})
+    };
+    let delta = |text: &str| {
+        json!({"type": "stream_event", "event": {"type": "content_block_delta",
+        "delta": {"type": "text_delta", "text": text}}})
+    };
+    assert_eq!(
+        parse_all(&[block(), delta("Checking."), block(), delta("Done.")]),
+        vec![
+            Update::Text("Checking.".into()),
+            Update::Text("\n\n".into()),
+            Update::Text("Done.".into()),
+        ]
+    );
+}
+
+#[test]
 fn ignores_subagent_events_and_reads_error_lists() {
     let updates = parse_all(&[
         json!({"type": "assistant", "parent_tool_use_id": "toolu_1",

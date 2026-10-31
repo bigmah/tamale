@@ -202,22 +202,23 @@ impl App {
             Some(MET) => {
                 let goal = self.goal.take().unwrap();
                 self.entries.push(Entry::Info(format!(
-                    "✓ Goal achieved after {} turn{} (confirmed by the checker): {}\n{}",
+                    "✓ Goal achieved after {} turn{} (confirmed by the checker): {}",
                     goal.turns,
                     if goal.turns == 1 { "" } else { "s" },
                     goal.condition,
-                    answer.trim_end()
                 )));
+                self.entries
+                    .push(Entry::Note(answer.trim_end().to_string()));
             }
             Some(NOT_MET) => {
-                self.entries.push(Entry::Info(format!(
-                    "✗ Checker: goal not met yet.\n{}",
-                    answer.trim_end()
-                )));
+                self.entries
+                    .push(Entry::Info("✗ Checker: goal not met yet.".into()));
+                self.entries
+                    .push(Entry::Note(answer.trim_end().to_string()));
                 self.continue_goal(&answer);
             }
             _ => {
-                self.entries.push(Entry::Info(answer));
+                self.entries.push(Entry::Note(answer));
                 self.pause_goal("the checker gave no verdict");
             }
         }

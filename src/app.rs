@@ -13,6 +13,7 @@ mod rewind;
 mod sessions;
 #[cfg(test)]
 mod tests;
+mod markdown;
 mod transcript;
 mod view;
 

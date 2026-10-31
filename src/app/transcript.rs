@@ -3,7 +3,8 @@
 use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Wrap};
 
-use super::view::{render_entry, render_markdown_from, render_quiet};
+use super::markdown;
+use super::view::{render_entry, render_quiet};
 use crate::session::Entry;
 
 #[derive(Default)]
@@ -24,7 +25,7 @@ struct AssistantTail {
     entry: usize,
     byte: usize,
     line: usize,
-    in_code: bool,
+    gap: bool,
 }
 
 struct Group {
@@ -61,7 +62,7 @@ impl Transcript {
             self.dirty_from = None;
             self.lines.truncate(tail.line);
             self.ends.truncate(tail.line);
-            self.append_assistant(tail.entry, text, tail.byte, tail.in_code);
+            self.append_assistant(tail.entry, text, tail.byte, tail.gap);
             return;
         }
         self.appended = None;
@@ -107,10 +108,10 @@ impl Transcript {
                     .iter()
                     .position(|entry| !matches!(entry, Entry::Tool { .. }))
                     .map_or(entries.len(), |count| from + count);
-                render_quiet(&entries[from..end], &mut lines);
+                render_quiet(&entries[from..end], width, &mut lines);
                 end
             } else {
-                render_entry(&entries[from], verbose, &mut lines);
+                render_entry(&entries[from], verbose, width, &mut lines);
                 lines.push(Line::default());
                 from + 1
             };
@@ -120,14 +121,14 @@ impl Transcript {
         self.entries = entries.len();
     }
 
-    fn append_assistant(&mut self, entry: usize, text: &str, byte: usize, in_code: bool) {
+    fn append_assistant(&mut self, entry: usize, text: &str, byte: usize, gap: bool) {
         let mut lines = Vec::new();
-        let tail = render_markdown_from(&text[byte..], &mut lines, in_code);
+        let tail = markdown::render(&text[byte..], self.width, gap, &mut lines);
         self.tail = Some(AssistantTail {
             entry,
             byte: byte + tail.byte,
-            line: self.lines.len() + lines.len().saturating_sub(1),
-            in_code: tail.in_code,
+            line: self.lines.len() + tail.line,
+            gap: tail.gap,
         });
         lines.push(Line::default());
         self.append_lines(lines);
@@ -180,11 +181,11 @@ mod tests {
         let mut lines = Vec::new();
         if verbose {
             for entry in entries {
-                render_entry(entry, true, &mut lines);
+                render_entry(entry, true, width, &mut lines);
                 lines.push(Line::default());
             }
         } else {
-            render_quiet(entries, &mut lines);
+            render_quiet(entries, width, &mut lines);
         }
         let reference = Paragraph::new(lines).wrap(Wrap { trim: false });
         let total = reference.line_count(width);
@@ -275,9 +276,10 @@ mod tests {
             let mut entries = vec![Entry::Assistant(String::new())];
             let mut cache = Transcript::default();
             check(&mut cache, &entries, width, false);
-            for ch in "# Title\r\n```rust\nlet café = \"👩‍💻\";\n```\n**bold** and `code`\n\nnext\r\n"
-                .chars()
-            {
+            let text = "# Title\r\n```rust\nlet café = \"👩‍💻\";\n```\n**bold** and `code`\n\nnext\r\n\
+                        - one\n  - two\n- [x] three\n\n> [!NOTE]\n> quoted *text*\n\n\
+                        | a | b |\n|---|:-:|\n| 1 | 2 |\n\nSetext\n---\n1. x\n\n   y\n";
+            for ch in text.chars() {
                 if let Entry::Assistant(text) = &mut entries[0] {
                     text.push(ch);
                 }

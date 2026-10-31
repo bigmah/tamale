@@ -349,7 +349,7 @@ fn quiet_mode_collapses_tool_calls_and_verbose_toggles() {
     let text = |lines: &[Line]| -> Vec<String> { lines.iter().map(|l| l.to_string()).collect() };
 
     let mut quiet = Vec::new();
-    render_quiet(&entries, &mut quiet);
+    render_quiet(&entries, 80, &mut quiet);
     let quiet = text(&quiet);
     assert!(quiet[0].contains("2 earlier steps"));
     assert!(
@@ -365,7 +365,7 @@ fn quiet_mode_collapses_tool_calls_and_verbose_toggles() {
 
     let mut verbose = Vec::new();
     for e in &entries {
-        render_entry(e, true, &mut verbose);
+        render_entry(e, true, 80, &mut verbose);
     }
     assert!(text(&verbose).iter().any(|l| l.contains("line a")));
 
@@ -1158,7 +1158,9 @@ async fn goals_continue_until_the_checker_confirms_them() {
     checked(&mut app, "Ran cargo test: 42 passed.\n\n**[goal met]**");
     assert!(!app.is_running());
     assert!(app.goal.is_none());
-    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.starts_with("✓ Goal achieved")));
+    let n = app.entries.len();
+    assert!(matches!(&app.entries[n - 2], Entry::Info(t) if t.starts_with("✓ Goal achieved")));
+    assert!(matches!(&app.entries[n - 1], Entry::Note(t) if t.contains("42 passed")));
     assert!(!screen(&mut app).contains("◎ goal"));
 
     // Errors pause instead of looping, from the agent or the checker.

@@ -514,6 +514,8 @@ enum Update {
 struct Parser {
     /// Usage reported when the current response started (the prompt side).
     started: Option<Usage>,
+    /// Whether text was streamed this turn, so the next text block starts a new paragraph.
+    texted: bool,
 }
 
 impl Parser {
@@ -533,7 +535,13 @@ impl Parser {
                         self.started = Some(usage(&inner["message"]["usage"], Usage::new()));
                         None
                     }
+                    "content_block_start"
+                        if inner["content_block"]["type"] == "text" && self.texted =>
+                    {
+                        Some(Update::Text("\n\n".into()))
+                    }
                     "content_block_delta" if inner["delta"]["type"] == "text_delta" => {
+                        self.texted = true;
                         Some(Update::Text(inner["delta"]["text"].as_str()?.to_string()))
                     }
                     "message_delta" => {

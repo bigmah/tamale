@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Position, Rect};
-use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, BorderType, Clear, List, ListItem, ListState, Paragraph, Scrollbar,
@@ -10,6 +10,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::backends::Choice;
 use super::help::help_lines;
+use super::markdown;
 use super::{
     App, EFFORT_CHOICES, QUIET_SUMMARY_CHARS, QUIET_TOOL_CALLS, SPINNER, TOOL_PREVIEW_LINES,
     effort_label,
@@ -586,11 +587,11 @@ pub(super) fn fmt_tokens(n: u64) -> String {
 /// Compact chat rendering: each tool call is one line showing what the step is for (its
 /// description) without output, and long runs of consecutive steps are collapsed to the
 /// most recent few.
-pub(super) fn render_quiet<'a>(entries: &'a [Entry], lines: &mut Vec<Line<'a>>) {
+pub(super) fn render_quiet<'a>(entries: &'a [Entry], width: u16, lines: &mut Vec<Line<'a>>) {
     let mut i = 0;
     while i < entries.len() {
         if !matches!(entries[i], Entry::Tool { .. }) {
-            render_entry(&entries[i], false, lines);
+            render_entry(&entries[i], false, width, lines);
             lines.push(Line::default());
             i += 1;
             continue;
@@ -607,7 +608,7 @@ pub(super) fn render_quiet<'a>(entries: &'a [Entry], lines: &mut Vec<Line<'a>>) 
             ));
         }
         for entry in &entries[i + hidden..end] {
-            render_entry(entry, false, lines);
+            render_entry(entry, false, width, lines);
         }
         lines.push(Line::default());
         i = end;
@@ -648,7 +649,12 @@ pub(super) fn truncate_chars(s: &str, max: usize) -> String {
     }
 }
 
-pub(super) fn render_entry<'a>(entry: &'a Entry, verbose: bool, lines: &mut Vec<Line<'a>>) {
+pub(super) fn render_entry<'a>(
+    entry: &'a Entry,
+    verbose: bool,
+    width: u16,
+    lines: &mut Vec<Line<'a>>,
+) {
     match entry {
         Entry::User(text) => {
             for (i, l) in text.lines().enumerate() {
@@ -659,7 +665,9 @@ pub(super) fn render_entry<'a>(entry: &'a Entry, verbose: bool, lines: &mut Vec<
                 ]));
             }
         }
-        Entry::Assistant(text) => render_markdown(text, lines),
+        Entry::Assistant(text) | Entry::Note(text) => {
+            markdown::render(text, width, false, lines);
+        }
         Entry::Tool {
             name,
             summary,
@@ -724,62 +732,6 @@ pub(super) fn render_entry<'a>(entry: &'a Entry, verbose: bool, lines: &mut Vec<
             }
         }
     }
-}
-
-/// Very small markdown styling: code fences, headings, bullets and `inline code`.
-fn render_markdown<'a>(text: &'a str, lines: &mut Vec<Line<'a>>) {
-    render_markdown_from(text, lines, false);
-}
-
-pub(super) struct MarkdownTail {
-    pub byte: usize,
-    pub in_code: bool,
-}
-
-/// Return the start/state of the last source line, which is the only previously
-/// rendered line that can change when another streaming chunk is appended.
-pub(super) fn render_markdown_from<'a>(
-    text: &'a str,
-    lines: &mut Vec<Line<'a>>,
-    mut in_code: bool,
-) -> MarkdownTail {
-    let mut tail = MarkdownTail { byte: 0, in_code };
-    let mut byte = 0;
-    for segment in text.split_inclusive('\n') {
-        tail = MarkdownTail { byte, in_code };
-        byte += segment.len();
-        let l = segment
-            .strip_suffix('\n')
-            .map_or(segment, |line| line.strip_suffix('\r').unwrap_or(line));
-        if l.trim_start().starts_with("```") {
-            in_code = !in_code;
-            lines.push(Line::from(l.fg(Color::DarkGray)));
-            continue;
-        }
-        if in_code {
-            lines.push(Line::from(
-                Span::from(format!("  {l}")).fg(Color::LightYellow),
-            ));
-            continue;
-        }
-        if let Some(h) = l.strip_prefix('#') {
-            let h = h.trim_start_matches('#').trim_start();
-            lines.push(Line::from(h.bold().add_modifier(Modifier::UNDERLINED)));
-            continue;
-        }
-        let mut spans = Vec::new();
-        for (i, part) in l.split('`').enumerate() {
-            if i % 2 == 1 {
-                spans.push(part.fg(Color::LightYellow));
-            } else {
-                for (j, p) in part.split("**").enumerate() {
-                    spans.push(if j % 2 == 1 { p.bold() } else { Span::from(p) });
-                }
-            }
-        }
-        lines.push(Line::from(spans));
-    }
-    tail
 }
 
 impl App {
