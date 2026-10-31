@@ -248,6 +248,15 @@ impl Policy {
         }
     }
 
+    /// A copy that also denies every file edit, for agents that should only look.
+    pub fn read_only(&self) -> Self {
+        let mut policy = self.clone();
+        policy
+            .deny
+            .extend(EDIT_TOOLS.iter().map(|tool| Rule::parse(tool).unwrap()));
+        policy
+    }
+
     pub fn clear_session(&mut self) {
         self.session.clear();
     }

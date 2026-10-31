@@ -1084,6 +1084,108 @@ async fn messages_left_in_the_queue_are_sent_when_the_turn_ends() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[tokio::test]
+async fn goals_continue_until_the_checker_confirms_them() {
+    let _env = SESSIONS_ENV.lock().await;
+    let root = std::env::temp_dir().join(format!("tamale-goal-test-{}", session::new_id()));
+    unsafe { std::env::set_var("TAMALE_SESSIONS_DIR", root.join("sessions")) };
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    let reply = |app: &mut App, text: &str| {
+        app.on_agent(app.turn, AgentEvent::TextDelta(text.into()));
+        app.on_agent(app.turn, AgentEvent::Done);
+    };
+    let checked = |app: &mut App, answer: &str| {
+        app.on_agent(
+            app.turn,
+            AgentEvent::GoalChecked {
+                answer: answer.into(),
+                failed: false,
+            },
+        );
+    };
+
+    app.command("/goal all tests pass");
+    assert!(app.is_running());
+    assert!(matches!(app.entries.last(), Some(Entry::User(t)) if t == "/goal all tests pass"));
+    assert!(format!("{:?}", app.history).contains("Work toward the goal above"));
+    assert!(screen(&mut app).contains("goal 1/20 all tests pass"));
+
+    // The end of a turn starts the checker, which doesn't add to the conversation.
+    reply(&mut app, "All tests pass now.");
+    assert!(app.is_running());
+    assert!(app.goal.as_ref().unwrap().checking);
+    assert_eq!(app.checkpoints.len(), 1);
+    assert!(screen(&mut app).contains("goal checking 1/20"));
+    // Its steps show in the transcript.
+    app.on_agent(
+        app.turn,
+        AgentEvent::ToolCall {
+            name: "bash".into(),
+            summary: "cargo test".into(),
+            description: "↳ Run the tests".into(),
+        },
+    );
+
+    // Not met: the agent continues with the checker's findings.
+    checked(&mut app, "`parse` still fails.\n[goal not met]");
+    assert!(app.is_running());
+    assert_eq!(app.checkpoints.len(), 2);
+    assert!(matches!(app.entries.last(), Some(Entry::User(t))
+        if t.contains("turn 2 of 20") && t.contains("`parse` still fails.")));
+    assert!(format!("{:?}", app.history).contains("`parse` still fails."));
+
+    // Blocked pauses without checking; resume continues.
+    reply(&mut app, "Which database should I use?\n[goal blocked]");
+    assert!(!app.is_running());
+    assert!(app.goal.as_ref().unwrap().paused);
+    app.command("/goal resume");
+    assert!(app.is_running());
+
+    // An interrupt pauses too, also while checking.
+    reply(&mut app, "Done.");
+    assert!(app.goal.as_ref().unwrap().checking);
+    app.interrupt();
+    let goal = app.goal.as_ref().unwrap();
+    assert!(goal.paused && !goal.checking);
+    app.command("/goal resume");
+
+    reply(&mut app, "All 42 tests pass.");
+    checked(&mut app, "Ran cargo test: 42 passed.\n\n**[goal met]**");
+    assert!(!app.is_running());
+    assert!(app.goal.is_none());
+    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.starts_with("✓ Goal achieved")));
+    assert!(!screen(&mut app).contains("◎ goal"));
+
+    // Errors pause instead of looping, from the agent or the checker.
+    app.command("/goal ship it");
+    app.on_agent(app.turn, AgentEvent::Error("overloaded".into()));
+    app.on_agent(app.turn, AgentEvent::Done);
+    assert!(!app.is_running());
+    assert!(app.goal.as_ref().unwrap().paused);
+    app.command("/goal resume");
+    reply(&mut app, "Shipped.");
+    app.on_agent(
+        app.turn,
+        AgentEvent::GoalChecked {
+            answer: "Error: the subagent failed: overloaded".into(),
+            failed: true,
+        },
+    );
+    assert!(!app.is_running());
+    assert!(app.goal.as_ref().unwrap().paused);
+    app.command("/goal clear");
+    assert!(app.goal.is_none());
+
+    app.finish_saves().await;
+    unsafe { std::env::remove_var("TAMALE_SESSIONS_DIR") };
+    let _ = std::fs::remove_dir_all(root);
+}
+
 fn screen(app: &mut App) -> String {
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
     terminal.draw(|frame| app.draw(frame)).unwrap();

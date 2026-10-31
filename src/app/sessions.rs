@@ -165,6 +165,7 @@ impl App {
         self.thread = None;
         self.entries = saved.entries;
         self.checkpoints = saved.checkpoints;
+        self.goal = None;
         self.permissions.lock().unwrap().clear_session();
         self.workspace.additional_dirs.clear();
         for dir in self

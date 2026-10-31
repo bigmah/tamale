@@ -458,6 +458,18 @@ the fact that it didn't exist) are saved under the session's directory,
   and `/thinking off` set it explicitly. Shown in the status bar; changes during a run
   take effect on the next message.
 - `/compact [focus]` summarizes the conversation to free context
+- `/goal <condition>` keeps the agent working until the condition holds, e.g.
+  `/goal cargo test passes with no warnings`. After each turn a separate checker (a
+  subagent on the same backend and model) verifies the condition by reading files and
+  running commands, and answers `[goal met]` or `[goal not met]`. Its steps show in the
+  transcript (marked `↳`), and its tool calls follow your permission mode and rules, with
+  `write_file` and `edit_file` always denied. Until it confirms, the agent gets a
+  continuation prompt with the checker's findings, up to 20 turns. The agent can end a turn
+  with `[goal blocked]` when it needs you. Interrupts (Esc), errors (the agent's or the
+  checker's), `[goal blocked]` and the turn limit pause the goal; `/goal resume` continues
+  it, `/goal clear` drops it, and `/goal` alone shows it. The goal is shown above the input
+  while it is set. Messages you queue during a goal are sent before the next check.
+  `/clear` and `/resume` drop the goal.
 - `/backend` opens a backend picker; `/backend api|claude-code|codex` switches directly, keeping the conversation
 - `/login` signs in to Claude Code or Codex (with their backends; see [Backends](#backends))
 - `/add-dir [path]` adds a directory to the agent's scope, or lists the current scope

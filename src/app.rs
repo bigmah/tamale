@@ -5,6 +5,7 @@ mod approval;
 mod backends;
 mod commands;
 mod diff;
+mod goal;
 mod help;
 mod input;
 mod prompts;
@@ -182,6 +183,10 @@ pub struct App {
     cost_partial: bool,
     /// Whether the running task is currently compacting the conversation.
     compacting: bool,
+    /// The `/goal` being worked toward, if any.
+    goal: Option<goal::Goal>,
+    /// Whether the running turn reported an error.
+    turn_failed: bool,
     /// Assistant entry created by the in-flight request, dropped if the request is retried.
     attempt_entry: Option<usize>,
     tick: usize,
@@ -254,6 +259,8 @@ impl App {
             cost: 0.0,
             cost_partial: false,
             compacting: false,
+            goal: None,
+            turn_failed: false,
             attempt_entry: None,
             tick: 0,
             should_quit: false,
@@ -321,8 +328,13 @@ impl App {
     }
 
     fn send_prompt(&mut self, text: String) {
-        let ctx = self.begin_turn(text.clone());
-        let turn = self.backend_turn(text);
+        self.send_prompt_as(text.clone(), text);
+    }
+
+    /// Sends `prompt` to the model while showing (and keeping for `/undo`) `shown`.
+    fn send_prompt_as(&mut self, shown: String, prompt: String) {
+        let ctx = self.begin_turn_as(shown, prompt.clone());
+        let turn = self.backend_turn(prompt);
         let atx = self.start_turn();
         self.task = Some(tokio::spawn(self.backend.clone().run(turn, ctx, atx)));
     }
@@ -339,11 +351,16 @@ impl App {
     }
 
     /// Adds the prompt to the conversation and starts a checkpoint for the turn.
+    #[cfg(test)]
     fn begin_turn(&mut self, text: String) -> agent::TurnCtx {
+        self.begin_turn_as(text.clone(), text)
+    }
+
+    fn begin_turn_as(&mut self, shown: String, text: String) -> agent::TurnCtx {
         let turn = self.checkpoints.last().map_or(1, |t| t.turn + 1);
         self.checkpoints.push(checkpoint::Turn {
             turn,
-            prompt: text.clone(),
+            prompt: shown.clone(),
             entries_len: self.entries.len(),
             history: Some(HistoryMark {
                 len: self.history.len(),
@@ -353,7 +370,7 @@ impl App {
                 },
             }),
         });
-        self.entries.push(Entry::User(text.clone()));
+        self.entries.push(Entry::User(shown));
         // Consecutive user turns (e.g. after an interrupt) are merged into one message.
         agent::push_user_text(&mut self.history, text);
         self.save_session();
@@ -396,6 +413,7 @@ impl App {
     fn start_turn(&mut self) -> mpsc::UnboundedSender<AgentEvent> {
         self.turn += 1;
         self.compacting = false;
+        self.turn_failed = false;
         self.attempt_entry = None;
         let turn = self.turn;
         let (atx, mut arx) = mpsc::unbounded_channel();
@@ -415,6 +433,7 @@ impl App {
         if let Some(task) = self.task.take() {
             task.abort();
             self.entries.push(Entry::Info("Interrupted.".into()));
+            self.pause_goal("interrupted");
             self.save_session();
         }
         // Undelivered messages go back to the input box rather than being lost.
@@ -595,8 +614,15 @@ impl App {
                 self.context_tokens = agent::context_size(&u);
             }
             AgentEvent::SubagentUsage(u) => self.add_usage(&u),
-            AgentEvent::Error(e) => self.entries.push(Entry::Error(e)),
+            AgentEvent::Error(e) => {
+                self.turn_failed = true;
+                self.entries.push(Entry::Error(e))
+            }
             AgentEvent::Thread(_) | AgentEvent::Steered(_) => {}
+            AgentEvent::GoalChecked { answer, failed } => {
+                self.save_session();
+                self.on_goal_checked(answer, failed);
+            }
             AgentEvent::Done => {
                 self.task = None;
                 self.approval = None;
@@ -604,6 +630,9 @@ impl App {
                 self.save_session();
                 self.reload_diff();
                 self.send_queued();
+                if !self.is_running() {
+                    self.after_goal_turn(self.turn_failed);
+                }
             }
         }
     }

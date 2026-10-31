@@ -77,6 +77,11 @@ pub enum AgentEvent {
     Error(String),
     /// Queued user messages were delivered to the model with a tool result.
     Steered(Vec<String>),
+    /// The `/goal` checker's final answer, sent instead of `Done` when it finishes.
+    GoalChecked {
+        answer: String,
+        failed: bool,
+    },
     Done,
 }
 

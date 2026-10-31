@@ -351,6 +351,7 @@ impl App {
                 self.history.clear();
                 self.thread = None;
                 self.checkpoints.clear();
+                self.goal = None;
                 self.permissions.lock().unwrap().clear_session();
                 self.context_tokens = 0;
                 self.entries.clear();
@@ -362,6 +363,7 @@ impl App {
             }
             "/resume" | "/continue" => self.resume_command(cmd.split_whitespace().nth(1)),
             "/add-dir" => self.add_dir(cmd["/add-dir".len()..].trim()),
+            "/goal" => self.goal_command(cmd["/goal".len()..].trim()),
             "/help" => self.help_scroll = Some(0),
             "/thinking" => self.set_thinking(cmd.split_whitespace().nth(1)),
             "/verbose" => self.set_verbose(cmd.split_whitespace().nth(1)),

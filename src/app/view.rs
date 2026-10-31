@@ -26,9 +26,11 @@ impl App {
         let input_height = (rows.len() as u16).clamp(1, 10) + 2;
         let queued = self.queued_messages();
         let queued_height = queued.len().min(MAX_QUEUED_LINES) as u16;
+        let goal_height = self.goal.is_some() as u16;
 
-        let [chat_area, queued_area, input_area, status_area] = Layout::vertical([
+        let [chat_area, goal_area, queued_area, input_area, status_area] = Layout::vertical([
             Constraint::Min(1),
+            Constraint::Length(goal_height),
             Constraint::Length(queued_height),
             Constraint::Length(input_height),
             Constraint::Length(2),
@@ -36,6 +38,7 @@ impl App {
         .areas(area);
 
         self.draw_chat(frame, chat_area);
+        self.draw_goal(frame, goal_area);
         draw_queued(frame, queued_area, &queued);
         self.draw_input(frame, input_area, rows, cursor);
         self.draw_status(frame, status_area);
@@ -777,6 +780,42 @@ pub(super) fn render_markdown_from<'a>(
         lines.push(Line::from(spans));
     }
     tail
+}
+
+impl App {
+    /// The `/goal` being worked toward, above the input.
+    fn draw_goal(&self, frame: &mut Frame, area: Rect) {
+        let Some(goal) = &self.goal else {
+            return;
+        };
+        let (label, color) = if goal.checking {
+            (
+                format!(
+                    " ◎ goal checking {}/{} ",
+                    goal.turns,
+                    super::goal::MAX_TURNS
+                ),
+                Color::Magenta,
+            )
+        } else if goal.paused {
+            (
+                format!(" ◎ goal paused {}/{} ", goal.turns, super::goal::MAX_TURNS),
+                Color::DarkGray,
+            )
+        } else {
+            (
+                format!(" ◎ goal {}/{} ", goal.turns, super::goal::MAX_TURNS),
+                Color::Magenta,
+            )
+        };
+        let width = (area.width as usize).saturating_sub(label.width()).max(10);
+        let first = goal.condition.lines().next().unwrap_or("");
+        let line = Line::from(vec![
+            Span::from(label).fg(color),
+            Span::from(truncate_chars(first, width)).fg(Color::DarkGray),
+        ]);
+        frame.render_widget(Paragraph::new(line), area);
+    }
 }
 
 /// Messages typed during a turn are listed above the input until the model gets them.

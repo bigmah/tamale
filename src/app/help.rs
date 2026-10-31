@@ -16,6 +16,10 @@ const COMMANDS: &[(&str, &str)] = &[
         "Switch directly to a model, e.g. /model claude-opus-5-5",
     ),
     (
+        "/goal <condition>",
+        "Keep working, turn after turn, until the condition holds (/goal shows it; clear, resume)",
+    ),
+    (
         "/compact [focus]",
         "Summarize the conversation to free up context (optional focus instructions)",
     ),

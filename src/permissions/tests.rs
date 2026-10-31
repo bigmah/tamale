@@ -203,3 +203,35 @@ fn rules_and_modes_parse() {
     assert_eq!(Mode::parse("yolo"), None);
     assert_eq!(Mode::Ask.next().next().next(), Mode::Ask);
 }
+
+#[test]
+fn read_only_copies_deny_edits_and_keep_the_mode_and_rules() {
+    let mut original = policy(Mode::Ask, &["bash:cargo *"], &[]);
+    original.allow_for_session(&["bash:git status*".into()]);
+    let read_only = original.read_only();
+    let edit = json!({ "path": "src/lib.rs", "content": "" });
+    assert!(matches!(
+        read_only.check("write_file", &edit),
+        Decision::Deny(_)
+    ));
+    assert!(matches!(
+        read_only.check("edit_file", &edit),
+        Decision::Deny(_)
+    ));
+    assert!(matches!(
+        read_only.check("bash", &bash("cargo test")),
+        Decision::Allow
+    ));
+    assert!(matches!(
+        read_only.check("bash", &bash("git status")),
+        Decision::Allow
+    ));
+    assert!(matches!(
+        read_only.check("bash", &bash("make")),
+        Decision::Ask { .. }
+    ));
+    assert!(matches!(
+        original.check("write_file", &edit),
+        Decision::Ask { .. }
+    ));
+}
