@@ -411,6 +411,13 @@ impl App {
                     .entries
                     .push(Entry::Error("Usage: /browser [on|off]".into())),
             },
+            "/web" => match cmd.split_whitespace().nth(1) {
+                None | Some("on") => self.web_request = Some(BrowserRequest::Open),
+                Some("off") => self.web_request = Some(BrowserRequest::Close),
+                Some(_) => self
+                    .entries
+                    .push(Entry::Error("Usage: /web [on|off]".into())),
+            },
             other => self.entries.push(Entry::Error(format!(
                 "Unknown command: {other} (type /help to see all commands)"
             ))),

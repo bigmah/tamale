@@ -10,6 +10,7 @@ mod diff;
 mod permissions;
 mod session;
 mod tools;
+mod web;
 mod workspace;
 
 use std::time::Duration;
@@ -25,6 +26,9 @@ use tokio::sync::mpsc;
 
 use crate::app::{App, BrowserRequest};
 use crate::backend::Backend;
+
+/// Shortest time between syncs of the web UI.
+const WEB_FRAME: Duration = Duration::from_millis(40);
 
 fn main() -> Result<()> {
     let cli = cli::Cli::parse(std::env::args().skip(1))?;
@@ -222,6 +226,39 @@ async fn browser_event(browser: &mut Option<Browser>) -> Option<browser::ClientE
     }
 }
 
+async fn web_event(web: &mut Option<web::Server>) -> Option<web::WebEvent> {
+    match web {
+        Some(web) => web.events.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Starts or stops serving the web UI, as `/web` asked.
+async fn web_request(app: &mut App, web: &mut Option<web::Server>, request: BrowserRequest) {
+    match request {
+        BrowserRequest::Open => {
+            if web.is_none() {
+                match web::Server::start().await {
+                    Ok(server) => *web = Some(server),
+                    Err(e) => app.on_web(Err(format!("Couldn't serve the web UI: {e:#}"))),
+                }
+            }
+            if let Some(server) = web {
+                browser::open(&server.url);
+                app.on_web(Ok(format!(
+                    "Serving the web UI at {} (opening it in your browser). It shows this \
+                     session alongside the terminal; /web off stops it.",
+                    server.url
+                )));
+            }
+        }
+        BrowserRequest::Close => app.on_web(match web.take() {
+            Some(_) => Ok("Stopped serving the web UI.".into()),
+            None => Err("The web UI isn't being served.".into()),
+        }),
+    }
+}
+
 async fn run(
     terminal: &mut ratatui::DefaultTerminal,
     (mut app, mut rx): (App, mpsc::UnboundedReceiver<app::AppEvent>),
@@ -233,6 +270,10 @@ async fn run(
     let mut next_frame = tokio::time::Instant::now();
     let mut browser: Option<Browser> = None;
     let mut surface = Surface::Terminal;
+    let mut web: Option<web::Server> = None;
+    // The web UI syncs at most every `WEB_FRAME`, since it renders markdown to HTML.
+    let mut web_dirty = false;
+    let mut next_web = tokio::time::Instant::now();
 
     let result = async {
         while !app.should_quit {
@@ -292,6 +333,11 @@ async fn run(
                 }
                 dirty = true;
             }
+            if let Some(request) = app.take_web_request() {
+                web_request(&mut app, &mut web, request).await;
+                dirty = true;
+            }
+            web_dirty |= dirty;
             tokio::select! {
                 Some(ev) = events.next() => {
                     let ev = ev?;
@@ -328,6 +374,20 @@ async fn run(
                     }
                     dirty = true;
                 }
+                Some(ev) = web_event(&mut web) => {
+                    match ev {
+                        web::WebEvent::Connected(id) => {
+                            if let Some(web) = &mut web {
+                                web.sync(app.web_view());
+                                web.welcome(id);
+                            }
+                        }
+                        web::WebEvent::Send(text) => app.web_send(text),
+                        web::WebEvent::Interrupt => app.web_interrupt(),
+                        web::WebEvent::Approve(choice, reason) => app.web_approve(choice, reason),
+                    }
+                    dirty = true;
+                }
                 Some(ev) = rx.recv() => {
                     app.on_app_event(ev);
                     // Preserve event order while amortizing a burst of streamed tokens
@@ -341,6 +401,13 @@ async fn run(
                 _ = tick.tick(), if app.is_busy() => {
                     app.on_tick();
                     dirty = true;
+                }
+                _ = tokio::time::sleep_until(next_web), if web_dirty && web.is_some() => {
+                    if let Some(web) = &mut web {
+                        web.sync(app.web_view());
+                    }
+                    web_dirty = false;
+                    next_web = tokio::time::Instant::now() + WEB_FRAME;
                 }
                 _ = tokio::time::sleep_until(next_frame), if dirty => {
                     draw(terminal, &mut browser, surface, &mut app)?;

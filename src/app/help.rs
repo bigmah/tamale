@@ -83,6 +83,10 @@ const COMMANDS: &[(&str, &str)] = &[
         "/browser [off]",
         "Use tamale from a browser tab too (keys in either switch to it); /browser off stops it",
     ),
+    (
+        "/web [off]",
+        "Open a chat-first web UI with a code browser (/code there); /web off stops it",
+    ),
     ("/clear", "Clear the conversation and start fresh"),
     ("/quit, /exit", "Quit tamale"),
 ];

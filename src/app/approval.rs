@@ -22,10 +22,10 @@ const KEY_GUARD: Duration = Duration::from_millis(300);
 const MAX_CALL_LINES: usize = 12;
 
 pub(super) struct Prompt {
-    name: String,
-    summary: String,
-    description: String,
-    always: Vec<String>,
+    pub(super) name: String,
+    pub(super) summary: String,
+    pub(super) description: String,
+    pub(super) always: Vec<String>,
     reply: Option<oneshot::Sender<Approval>>,
     selected: usize,
     /// `Some` while typing what to tell the model.
@@ -132,15 +132,7 @@ impl App {
         };
         match choice {
             Some(Choice::Yes) => self.answer(Approval::Allow),
-            Some(Choice::Always) => {
-                let rules = prompt.always.clone();
-                self.permissions.lock().unwrap().allow_for_session(&rules);
-                self.entries.push(Entry::Info(format!(
-                    "Allowed for this session: {}",
-                    rules.join(", ")
-                )));
-                self.answer(Approval::Allow);
-            }
+            Some(Choice::Always) => self.allow_always(),
             Some(Choice::No) => {
                 prompt.selected = last;
                 prompt.reason = Some(String::new());
@@ -149,7 +141,23 @@ impl App {
         }
     }
 
-    fn answer(&mut self, approval: Approval) {
+    /// Allows the pending call and, for the rest of the session, calls like it.
+    pub(super) fn allow_always(&mut self) {
+        let Some(prompt) = &self.approval else {
+            return;
+        };
+        let rules = prompt.always.clone();
+        if !rules.is_empty() {
+            self.permissions.lock().unwrap().allow_for_session(&rules);
+            self.entries.push(Entry::Info(format!(
+                "Allowed for this session: {}",
+                rules.join(", ")
+            )));
+        }
+        self.answer(Approval::Allow);
+    }
+
+    pub(super) fn answer(&mut self, approval: Approval) {
         if let Some(reply) = self.approval.take().and_then(|mut p| p.reply.take()) {
             let _ = reply.send(approval);
         }

@@ -17,6 +17,7 @@ mod tests;
 mod markdown;
 mod transcript;
 mod view;
+mod web;
 
 use rig_core::completion::Message;
 use rig_core::providers::anthropic;
@@ -58,7 +59,7 @@ pub enum AppEvent {
     Diff(u64, Result<Vec<crate::diff::FileDiff>, String>),
 }
 
-/// What `/browser` asks the event loop to do.
+/// What `/browser` and `/web` ask the event loop to do.
 pub enum BrowserRequest {
     Open,
     Close,
@@ -138,6 +139,8 @@ pub struct App {
     login_request: Option<backends::LoginRequest>,
     /// Set by `/browser`; the event loop starts or stops serving the TUI to a browser.
     browser_request: Option<BrowserRequest>,
+    /// Set by `/web`; the event loop starts or stops serving the web UI.
+    web_request: Option<BrowserRequest>,
     settings: Settings,
     tx: mpsc::UnboundedSender<AppEvent>,
     /// `None` until the list has been fetched.
@@ -232,6 +235,7 @@ impl App {
             logins,
             login_request: None,
             browser_request: None,
+            web_request: None,
             settings,
             tx,
             models: None,
@@ -311,9 +315,14 @@ impl App {
         if text.is_empty() {
             return;
         }
-        self.prompts.add(&text);
         self.input.clear();
         self.cursor = 0;
+        self.submit_text(text);
+    }
+
+    /// Sends a prompt or runs a slash command, typed here or in the web UI.
+    fn submit_text(&mut self, text: String) {
+        self.prompts.add(&text);
         self.scroll_back = 0;
 
         if text.starts_with('/') {

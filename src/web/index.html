@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tamale</title>
+<!-- 🫔, percent-encoded: <svg …><text …>🫔</text></svg> -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Ctext%20x='50'%20y='50'%20font-size='88'%20text-anchor='middle'%20dominant-baseline='central'%3E%F0%9F%AB%94%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/app.css">
+<script type="module" src="/app.js"></script>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">🫔</span><span class="brand-name">tamale</span></div>
+    <div class="wschip" id="project">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.75 3h4.1l1.4 1.5h7a.75.75 0 0 1 .75.75v7.5a.75.75 0 0 1-.75.75H1.75a.75.75 0 0 1-.75-.75v-9A.75.75 0 0 1 1.75 3Z"/></svg>
+      <span id="project-name">…</span><span class="wschip-dirs" id="project-dirs"></span>
+    </div>
+    <div class="spacer"></div>
+    <div class="meters">
+      <button class="pill mode" id="mode" title="Permission mode (click to cycle)"></button>
+      <button class="pill model" id="model" title="Model (click to switch)"></button>
+      <span class="ctx" id="ctx"><span class="ctx-bar"><span class="ctx-fill" id="ctx-fill"></span></span><span id="ctx-label"></span></span>
+      <span class="cost" id="cost"></span>
+    </div>
+    <button class="iconbtn" id="toggle-code" title="Browse code  /code  ⌘B">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.6 4.2 1.8 8l3.8 3.8M10.4 4.2 14.2 8l-3.8 3.8"/></svg>
+    </button>
+    <span class="conn" id="conn" title="Connecting…"></span>
+  </header>
+
+  <main class="main" id="main">
+    <section class="chat">
+      <div class="scroller" id="scroller">
+        <div class="thread" id="thread">
+          <div class="hero" id="hero">
+            <div class="hero-mark">🫔</div>
+            <h1>What should we work on?</h1>
+            <p class="hero-sub" id="hero-sub"></p>
+            <div class="hero-chips">
+              <button class="chip" data-prompt="Give me a tour of this codebase: what it does, how it's laid out, and where to start reading.">Give me a tour of this codebase</button>
+              <button class="chip" data-prompt="Look through the code for likely bugs and tell me the most serious ones.">Look for likely bugs</button>
+              <button class="chip" data-command="/code"><kbd>/code</kbd> Browse files</button>
+            </div>
+          </div>
+        </div>
+        <div class="activity" id="activity" hidden>
+          <span class="spark"></span><span class="act-label" id="act-label">Thinking</span>
+          <span class="act-time" id="act-time"></span>
+          <span class="act-hint"><kbd>esc</kbd> to interrupt</span>
+        </div>
+      </div>
+
+      <div class="dock">
+        <button class="jump" id="jump" hidden>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3.5 8.5 8 13l4.5-4.5"/></svg>Latest
+        </button>
+        <div class="toast" id="toast" hidden></div>
+        <div class="queued" id="queued"></div>
+        <div class="approval" id="approval" hidden></div>
+        <div class="composer" id="composer">
+          <div class="slash" id="slash" hidden></div>
+          <textarea id="input" rows="1" spellcheck="true" placeholder="Ask tamale anything…   / for commands" autofocus></textarea>
+          <button class="send" id="send" title="Send (⏎)">
+            <svg class="i-send" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5"/></svg>
+            <svg class="i-stop" viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.5"/></svg>
+          </button>
+        </div>
+        <div class="hints">
+          <span id="hint-left"></span>
+          <span><kbd>⏎</kbd> send <kbd>⇧⏎</kbd> newline <kbd>/</kbd> commands <kbd>⌘P</kbd> files</span>
+        </div>
+      </div>
+    </section>
+
+    <div class="splitter" id="splitter" hidden></div>
+
+    <section class="code" id="code" hidden>
+      <aside class="side">
+        <div class="side-hdr">
+          <div class="seg" id="seg">
+            <button data-mode="files" class="on">Files</button>
+            <button data-mode="search">Search</button>
+          </div>
+          <button class="iconbtn sm" id="code-refresh" title="Reload files">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 6.3A5.3 5.3 0 1 0 13 10M13.5 2.8v3.7H9.8"/></svg>
+          </button>
+        </div>
+        <div class="side-find"><input id="find" placeholder="Filter files…" spellcheck="false" autocomplete="off"></div>
+        <div class="tree" id="tree"></div>
+      </aside>
+      <div class="viewer">
+        <div class="tabstrip" id="tabs"></div>
+        <div class="viewhdr">
+          <div class="crumbs" id="crumbs"></div>
+          <div class="spacer"></div>
+          <button class="askbtn" id="ask" hidden></button>
+          <span class="vmeta" id="vmeta"></span>
+          <button class="iconbtn sm" id="copy-path" title="Copy path">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5v-.75A1.25 1.25 0 0 0 9.25 1.5h-5.5A1.25 1.25 0 0 0 2.5 2.75v5.5A1.25 1.25 0 0 0 3.75 9.5h.75"/></svg>
+          </button>
+          <button class="iconbtn sm" id="close-code" title="Close code browser">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+          </button>
+        </div>
+        <div class="codewrap" id="codewrap"></div>
+      </div>
+    </section>
+  </main>
+
+  <div class="pickmask" id="picker" hidden>
+    <div class="pickbox">
+      <input class="pickinput" id="pick-input" placeholder="Go to file…" spellcheck="false" autocomplete="off">
+      <div class="picklist" id="pick-list"></div>
+    </div>
+  </div>
+
+  <div class="pickmask" id="help" hidden>
+    <div class="pickbox helpbox" id="help-body"></div>
+  </div>
+</div>
+</body>
+</html>

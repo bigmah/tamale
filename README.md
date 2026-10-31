@@ -497,6 +497,7 @@ the fact that it didn't exist) are saved under the session's directory,
 - `/undo` and `/rewind` restore files and rewind the conversation (see [Checkpoints](#checkpoints-and-undo))
 - `/diff [args]` opens the diff viewer (see [Diff viewer](#diff-viewer))
 - `/browser [off]` serves tamale to a browser tab (see [Browser](#browser))
+- `/web [off]` opens a chat-first web UI with a code browser (see [Web UI](#web-ui))
 - `/permissions [mode]` shows the mode and rules, or sets `ask`, `accept-edits` or `auto`
 - `/clear` resets the conversation, `/quit` (or `/exit`) quits
 
@@ -584,11 +585,53 @@ building tamale doesn't need the WebAssembly toolchain. After changing `web/clie
 target and the `wasm-bindgen` CLI version pinned in `web/client/Cargo.toml`; it says how to
 install them), then rebuild tamale. `cargo test --workspace` also runs the protocol's tests.
 
+## Web UI
+
+`/web` opens the session in a browser tab as a web page rather than a copy of the
+terminal. The page centres on the chat, and you can browse the code next to it. It shows
+the same session as the terminal, live, and both stay usable at the same time. Any number
+of tabs can be open. `/web` again shows the address, and `/web off` stops serving
+(closing tamale does too).
+
+- **Chat.** Replies are rendered as markdown, with highlighted code blocks and copy
+  buttons. Tool calls appear as compact steps that open to show their output; long runs
+  fold. Type `/` for a menu of commands. `Enter` sends (or queues while the agent works),
+  `Shift+Enter` adds a new line, `↑`/`↓` recall earlier prompts and `Esc` interrupts.
+  Approvals appear above the prompt: answer with the buttons or `y`, `a` and `n`.
+  The top bar shows the permission mode (click to cycle), the model, context use and
+  cost.
+- **Code.** `/code` (or `⌘B`) opens the code browser beside the chat, with a file tree,
+  a filter box, a text search (`/search <text>`) and tabs. `⌘P` (or `/files`) goes to a
+  file by name, and `/code <path>` opens one directly. File paths in replies and in
+  read/edit steps link to it. Click line numbers to select lines (shift-click or drag
+  for a range), then press **Ask** (`⌘⏎`) to quote them into the prompt. The open file
+  and the tree reload as the agent changes files. The browser reads only files inside
+  the workspace (the working directory and `/add-dir` directories), and skips
+  ignored files and `.git`.
+- Commands that open a picker in the terminal (`/model`, `/effort`, `/resume`,
+  `/backend` with no arguments, `/rewind`, `/diff`) explain their argument forms
+  instead. `/login` still runs in the terminal.
+
+The address works the same way as `/browser`'s: the server listens only on 127.0.0.1
+with a random token, and checks the `Host` and `Origin` headers. The page also sends a
+strict Content Security Policy, and model output is never treated as HTML.
+
+**How it works.** `src/web.rs` sends JSON over a WebSocket. Assistant markdown is turned
+into HTML in tamale (`src/web/render.rs`, which uses pulldown-cmark), and code is
+highlighted with syntect into token classes that the stylesheet colours. Each sync sends
+only the entries that changed since the last one, at most every 40 ms. File reads, the tree
+and searches are answered by the server task itself (`src/web/files.rs`). The page is
+plain HTML, CSS and JavaScript (`src/web/index.html`, `app.css`, `app.js`). It is
+embedded in the binary, so there is no build step.
+
 ## Layout
 
 - `src/main.rs` – startup, terminal setup, event loop and one-shot output
 - `src/browser.rs`, `src/browser/` – `/browser`: the local server, the page, the backend
   that records changed cells, and input translation; `dist/` holds the built client
+- `src/web.rs`, `src/web/` – `/web`: the server and session sync, markdown and code
+  rendering, workspace file reads, and the page itself (HTML, CSS, JavaScript)
+- `src/app/web.rs` – what the web UI shows of the session, and its input back to the app
 - `web/protocol` – the messages between tamale and its browser client
 - `web/client` – the browser client (Rust, compiled to WebAssembly by `web/build.sh`)
 - `src/cli.rs` – command-line parsing and overrides
