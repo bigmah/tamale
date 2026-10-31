@@ -1,0 +1,10 @@
+[package]
+name = "tamale-web-protocol"
+version = "0.1.0"
+edition = "2024"
+description = "Messages between tamale and its browser client"
+
+[dependencies]
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+ratatui-core = { version = "0.1", default-features = false }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }

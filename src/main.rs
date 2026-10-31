@@ -311,7 +311,7 @@ async fn run(
                         }
                         browser::ClientEvent::Resize(cols, rows) => {
                             if let Some(web) = &mut browser.terminal {
-                                web.resize(ratatui::layout::Rect::new(0, 0, cols, rows))?;
+                                web.backend_mut().resize(cols, rows);
                             }
                         }
                         browser::ClientEvent::Input(ev) => {

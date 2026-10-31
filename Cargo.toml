@@ -3,6 +3,11 @@ name = "tamale"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = ["web/protocol"]
+# Built for wasm32 by web/build.sh.
+exclude = ["web/client"]
+
 [dependencies]
 anyhow = "1.0.104"
 axum = { version = "0.8", default-features = false, features = ["ws", "http1", "tokio"] }
@@ -12,13 +17,14 @@ getrandom = "0.3"
 globset = "0.4"
 ignore = "0.4"
 pulldown-cmark = { version = "0.13", default-features = false }
-ratatui = { version = "0.30", features = ["unstable-backend-writer", "unstable-rendered-line-info"] }
+ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 regex = "1"
 reqwest = { version = "0.13", features = ["query", "json", "gzip"] }
 rig-core = "0.42"
 scraper = "0.20"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+tamale-web-protocol = { path = "web/protocol" }
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "regex-fancy"] }
 tokio = { version = "1.54.1", features = ["full"] }
 toml = { version = "1.1", default-features = false, features = ["parse", "serde", "std"] }
