@@ -4,22 +4,42 @@ A small Claude Code–style coding agent for the terminal, written in pure Rust 
 [rig](https://rig.rs) and [ratatui](https://ratatui.rs). Inference comes from the Anthropic
 API or from your Claude Code or Codex sign-in (see [Backends](#backends)).
 
+## Install
+
+```sh
+cargo install --path .
+```
+
+This builds a release binary and installs it as `~/.cargo/bin/tamale`, so `tamale` works from
+any directory; the directory you launch it in becomes the workspace. The installed copy doesn't
+track the repo: after changing the code, run `cargo install --path .` again to update it.
+`cargo uninstall tamale` removes it.
+
+To skip reinstalling, symlink the build output instead, and every `cargo build --release` updates
+the `tamale` command (a broken build then breaks it too):
+
+```sh
+ln -sf "$PWD/target/release/tamale" ~/.cargo/bin/tamale
+```
+
+During development, `cargo run --release -- <args>` works in place of `tamale <args>`.
+
 ## Usage
 
 ```sh
 export ANTHROPIC_API_KEY=sk-ant-...
-cargo run --release                          # interactive TUI
-cargo run --release -- --backend claude-code # use your Claude Code sign-in instead of an API key
-cargo run --release -- --backend codex       # use your Codex (ChatGPT) sign-in
-cargo run --release -- --model claude-opus-5-5
-cargo run --release -- --effort low          # less thorough, faster, cheaper
-cargo run --release -- --thinking off        # disable adaptive thinking
-cargo run --release -- -p "summarize src/"   # one-shot, non-interactive
-cargo run --release -- -p "fix the tests" --yes  # one-shot, approve calls that would prompt
-cargo run --release -- --continue            # resume the latest session in this directory
-cargo run --release -- --resume              # pick a saved session to resume
-cargo run --release -- --config dev.toml    # add settings from a TOML file
-cargo run --release -- --add-dir ../shared --add-dir ~/dev/api
+tamale                       # interactive TUI
+tamale --backend claude-code # use your Claude Code sign-in instead of an API key
+tamale --backend codex       # use your Codex (ChatGPT) sign-in
+tamale --model claude-opus-5-5
+tamale --effort low          # less thorough, faster, cheaper
+tamale --thinking off        # disable adaptive thinking
+tamale -p "summarize src/"   # one-shot, non-interactive
+tamale -p "fix the tests" --yes  # one-shot, approve calls that would prompt
+tamale --continue            # resume the latest session in this directory
+tamale --resume              # pick a saved session to resume
+tamale --config dev.toml     # add settings from a TOML file
+tamale --add-dir ../shared --add-dir ~/dev/api
 ```
 
 ## Backends
