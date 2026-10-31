@@ -1,6 +1,7 @@
 mod agent;
 mod app;
 mod backend;
+mod browser;
 mod checkpoint;
 mod cli;
 mod clipboard;
@@ -22,7 +23,7 @@ use crossterm::execute;
 use futures::StreamExt;
 use tokio::sync::mpsc;
 
-use crate::app::App;
+use crate::app::{App, BrowserRequest};
 use crate::backend::Backend;
 
 fn main() -> Result<()> {
@@ -201,6 +202,26 @@ fn resume_terminal(mouse: bool) -> Result<ratatui::DefaultTerminal> {
     Ok(terminal)
 }
 
+/// Where the TUI is in use; the other screen shows a notice.
+#[derive(Clone, Copy, PartialEq)]
+enum Surface {
+    Terminal,
+    Browser,
+}
+
+struct Browser {
+    server: browser::Server,
+    /// Present while a tab is connected.
+    terminal: Option<browser::WebTerminal>,
+}
+
+async fn browser_event(browser: &mut Option<Browser>) -> Option<browser::ClientEvent> {
+    match browser {
+        Some(browser) => browser.server.events.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
 async fn run(
     terminal: &mut ratatui::DefaultTerminal,
     (mut app, mut rx): (App, mpsc::UnboundedReceiver<app::AppEvent>),
@@ -210,11 +231,23 @@ async fn run(
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut dirty = true;
     let mut next_frame = tokio::time::Instant::now();
+    let mut browser: Option<Browser> = None;
+    let mut surface = Surface::Terminal;
 
     let result = async {
         while !app.should_quit {
             if let Some(mut request) = app.take_login_request() {
                 // The sign-in prompt needs the real terminal (and its keyboard input).
+                if let Some(Browser {
+                    server,
+                    terminal: Some(web),
+                }) = &mut browser
+                {
+                    web.draw(|f| {
+                        browser::draw_notice(f, "Finish signing in in the terminal tamale runs in.")
+                    })?;
+                    server.flush(web);
+                }
                 drop(events);
                 let mouse = app.mouse_enabled();
                 suspend_terminal();
@@ -224,9 +257,75 @@ async fn run(
                 app.on_login(request, result);
                 dirty = true;
             }
+            if let Some(request) = app.take_browser_request() {
+                match request {
+                    BrowserRequest::Open => {
+                        if browser.is_none() {
+                            match browser::Server::start().await {
+                                Ok(server) => {
+                                    browser = Some(Browser {
+                                        server,
+                                        terminal: None,
+                                    })
+                                }
+                                Err(e) => app.on_browser(Err(format!(
+                                    "Couldn't serve tamale to a browser: {e:#}"
+                                ))),
+                            }
+                        }
+                        if let Some(Browser { server, .. }) = &browser {
+                            browser::open(&server.url);
+                            app.on_browser(Ok(format!(
+                                "Serving tamale at {} (opening it in your browser). Keys pressed \
+                                 in the tab or here switch between them; /browser off stops it.",
+                                server.url
+                            )));
+                        }
+                    }
+                    BrowserRequest::Close => {
+                        app.on_browser(match browser.take() {
+                            Some(_) => Ok("Stopped serving tamale to the browser.".into()),
+                            None => Err("tamale isn't being served to a browser.".into()),
+                        });
+                        surface = Surface::Terminal;
+                    }
+                }
+                dirty = true;
+            }
             tokio::select! {
                 Some(ev) = events.next() => {
-                    app.on_event(ev?);
+                    let ev = ev?;
+                    if surface == Surface::Terminal {
+                        app.on_event(ev);
+                    } else if browser::takes_over(&ev) {
+                        surface = Surface::Terminal;
+                    }
+                    dirty = true;
+                }
+                Some(ev) = browser_event(&mut browser) => {
+                    let Some(browser) = &mut browser else { continue };
+                    match ev {
+                        browser::ClientEvent::Connected(cols, rows) => {
+                            browser.terminal = Some(browser::terminal(cols, rows));
+                            surface = Surface::Browser;
+                        }
+                        browser::ClientEvent::Resize(cols, rows) => {
+                            if let Some(web) = &mut browser.terminal {
+                                web.resize(ratatui::layout::Rect::new(0, 0, cols, rows))?;
+                            }
+                        }
+                        browser::ClientEvent::Input(ev) => {
+                            if surface == Surface::Browser {
+                                app.on_event(ev);
+                            } else if browser::takes_over(&ev) {
+                                surface = Surface::Browser;
+                            }
+                        }
+                        browser::ClientEvent::Disconnected => {
+                            browser.terminal = None;
+                            surface = Surface::Terminal;
+                        }
+                    }
                     dirty = true;
                 }
                 Some(ev) = rx.recv() => {
@@ -244,7 +343,7 @@ async fn run(
                     dirty = true;
                 }
                 _ = tokio::time::sleep_until(next_frame), if dirty => {
-                    terminal.draw(|f| app.draw(f))?;
+                    draw(terminal, &mut browser, surface, &mut app)?;
                     dirty = false;
                     next_frame = tokio::time::Instant::now() + Duration::from_millis(16);
                 }
@@ -256,4 +355,40 @@ async fn run(
     app.save_session();
     app.finish_saves().await;
     result
+}
+
+/// Draws the TUI on the screen in use and a notice on the other.
+fn draw(
+    terminal: &mut ratatui::DefaultTerminal,
+    browser: &mut Option<Browser>,
+    surface: Surface,
+    app: &mut App,
+) -> Result<()> {
+    let Some(Browser {
+        server,
+        terminal: Some(web),
+    }) = browser
+    else {
+        terminal.draw(|f| app.draw(f))?;
+        return Ok(());
+    };
+    if surface == Surface::Browser {
+        web.draw(|f| app.draw(f))?;
+        terminal.draw(|f| {
+            browser::draw_notice(
+                f,
+                "tamale is in use in a browser tab. Press any key to use it here.",
+            )
+        })?;
+    } else {
+        terminal.draw(|f| app.draw(f))?;
+        web.draw(|f| {
+            browser::draw_notice(
+                f,
+                "tamale is in use in the terminal. Press any key or click to use it here.",
+            )
+        })?;
+    }
+    server.flush(web);
+    Ok(())
 }

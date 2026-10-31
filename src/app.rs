@@ -58,6 +58,12 @@ pub enum AppEvent {
     Diff(u64, Result<Vec<crate::diff::FileDiff>, String>),
 }
 
+/// What `/browser` asks the event loop to do.
+pub enum BrowserRequest {
+    Open,
+    Close,
+}
+
 #[derive(Clone)]
 pub struct ModelInfo {
     id: String,
@@ -130,6 +136,8 @@ pub struct App {
     logins: Vec<Backend>,
     /// Set by `/login` and the picker; the event loop suspends the TUI to run the sign-in.
     login_request: Option<backends::LoginRequest>,
+    /// Set by `/browser`; the event loop starts or stops serving the TUI to a browser.
+    browser_request: Option<BrowserRequest>,
     settings: Settings,
     tx: mpsc::UnboundedSender<AppEvent>,
     /// `None` until the list has been fetched.
@@ -223,6 +231,7 @@ impl App {
             thread: None,
             logins,
             login_request: None,
+            browser_request: None,
             settings,
             tx,
             models: None,

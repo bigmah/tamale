@@ -79,6 +79,10 @@ const COMMANDS: &[(&str, &str)] = &[
         "/login",
         "Sign in to Claude Code or Codex (their backends; the footer shows where inference comes from)",
     ),
+    (
+        "/browser [off]",
+        "Use tamale from a browser tab too (keys in either switch to it); /browser off stops it",
+    ),
     ("/clear", "Clear the conversation and start fresh"),
     ("/quit, /exit", "Quit tamale"),
 ];

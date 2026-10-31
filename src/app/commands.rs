@@ -1,7 +1,10 @@
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyEvent};
 use crossterm::execute;
 
-use super::{App, AppEvent, EFFORT_CHOICES, FALLBACK_MODELS, ModelInfo, ModelPicker, effort_label};
+use super::{
+    App, AppEvent, BrowserRequest, EFFORT_CHOICES, FALLBACK_MODELS, ModelInfo, ModelPicker,
+    effort_label,
+};
 use crate::session::Entry;
 use crate::{agent, permissions, session};
 
@@ -340,6 +343,18 @@ impl App {
         )));
     }
 
+    pub fn take_browser_request(&mut self) -> Option<BrowserRequest> {
+        self.browser_request.take()
+    }
+
+    /// Reports the outcome of a `/browser` request.
+    pub fn on_browser(&mut self, result: Result<String, String>) {
+        self.entries.push(match result {
+            Ok(message) => Entry::Info(message),
+            Err(message) => Entry::Error(message),
+        });
+    }
+
     pub(super) fn command(&mut self, cmd: &str) {
         match cmd.split_whitespace().next().unwrap_or("") {
             "/quit" | "/exit" => self.should_quit = true,
@@ -389,6 +404,13 @@ impl App {
             "/rewind" => self.open_rewind_picker(),
             "/diff" => self.open_diff(cmd["/diff".len()..].trim()),
             "/permissions" => self.set_permission_mode(cmd.split_whitespace().nth(1)),
+            "/browser" => match cmd.split_whitespace().nth(1) {
+                None | Some("on") => self.browser_request = Some(BrowserRequest::Open),
+                Some("off") => self.browser_request = Some(BrowserRequest::Close),
+                Some(_) => self
+                    .entries
+                    .push(Entry::Error("Usage: /browser [on|off]".into())),
+            },
             other => self.entries.push(Entry::Error(format!(
                 "Unknown command: {other} (type /help to see all commands)"
             ))),

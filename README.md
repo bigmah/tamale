@@ -496,6 +496,7 @@ the fact that it didn't exist) are saved under the session's directory,
 - `/resume [n|id]` continues a saved session (see [Sessions](#sessions))
 - `/undo` and `/rewind` restore files and rewind the conversation (see [Checkpoints](#checkpoints-and-undo))
 - `/diff [args]` opens the diff viewer (see [Diff viewer](#diff-viewer))
+- `/browser [off]` serves tamale to a browser tab (see [Browser](#browser))
 - `/permissions [mode]` shows the mode and rules, or sets `ask`, `accept-edits` or `auto`
 - `/clear` resets the conversation, `/quit` (or `/exit`) quits
 
@@ -545,9 +546,35 @@ the chat with the selected lines quoted in the prompt, as the file path, line nu
 and a `diff` block, ready for your question; nothing is sent until you press `Enter`
 again. `y` copies the quote to the clipboard instead, and `Esc` cancels the selection.
 
+## Browser
+
+`/browser` lets you use the session from a browser tab as well. Everything works there
+as it does in the terminal, because the browser shows the same screen: tamale serves a
+page that runs [xterm.js](https://xtermjs.org) and sends it the output it would write to
+a terminal. tamale prints the address and opens it in your default browser.
+
+The tab and the terminal take turns. Opening the tab moves the session to it, and the
+terminal shows a notice; pressing a key in the terminal moves the session back, and a key
+or click in the tab moves it there again. One tab is connected at a time: opening the
+address in another tab disconnects the first. `/browser` again shows the address, and
+`/browser off` stops serving (closing tamale does too).
+
+- Cmd shortcuts stay with the browser (Cmd+C copies a selection and Cmd+V pastes into
+  the prompt); other keys go to tamale. Browsers keep a few Ctrl shortcuts, like Ctrl+W,
+  for themselves. The mouse wheel scrolls and clicks work as in the terminal; drag to
+  select text.
+- `/login` still signs in through the terminal tamale runs in.
+- `/copy` and `/paste` use the clipboard of the machine tamale runs on.
+
+The server only listens on 127.0.0.1, and each address has a random token. Requests
+without it are refused, as are pages from other sites (checked with the `Origin` and
+`Host` headers), so only you can drive the session. Treat the address like a password:
+anyone with it and access to your machine can run the agent.
+
 ## Layout
 
 - `src/main.rs` – startup, terminal setup, event loop and one-shot output
+- `src/browser.rs`, `src/browser/` – `/browser`: the local server, page and key translation
 - `src/cli.rs` – command-line parsing and overrides
 - `src/config.rs`, `config/default.toml` – typed settings, defaults, file discovery and merging
 - `src/backend.rs` – backend selection (API, Claude Code or Codex) and dispatch
