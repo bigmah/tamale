@@ -5,6 +5,7 @@ mod checkpoint;
 mod cli;
 mod clipboard;
 mod config;
+mod diff;
 mod permissions;
 mod session;
 mod tools;
@@ -94,6 +95,7 @@ async fn start(cli: cli::Cli) -> Result<()> {
     }
     let (mut app, rx) = App::new_with_channel(backend, settings, workspace);
     app.load_prompt_history();
+    app.preload_diff();
     match cli.resume {
         Some(cli::Resume::Latest) => match session::list(Some(&std::env::current_dir()?)).first() {
             Some(latest) => app.resume(&latest.id),

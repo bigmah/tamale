@@ -385,6 +385,7 @@ impl App {
             "/login" => self.login(),
             "/backend" => self.switch_backend(cmd.split_whitespace().nth(1)),
             "/rewind" => self.open_rewind_picker(),
+            "/diff" => self.open_diff(cmd["/diff".len()..].trim()),
             "/permissions" => self.set_permission_mode(cmd.split_whitespace().nth(1)),
             other => self.entries.push(Entry::Error(format!(
                 "Unknown command: {other} (type /help to see all commands)"

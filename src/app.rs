@@ -4,6 +4,7 @@
 mod approval;
 mod backends;
 mod commands;
+mod diff;
 mod help;
 mod input;
 mod prompts;
@@ -50,6 +51,8 @@ pub enum AppEvent {
     Logins(Vec<Backend>, Vec<String>),
     /// An added CLI account was removed (its label), or why it couldn't be.
     LoginRemoved(Result<String, String>),
+    /// A `/diff` load finished (tagged with the viewer's load generation).
+    Diff(u64, Result<Vec<crate::diff::FileDiff>, String>),
 }
 
 #[derive(Clone)]
@@ -134,6 +137,10 @@ pub struct App {
     backend_picker: Option<backends::Picker>,
     resume_picker: Option<ResumePicker>,
     rewind_picker: Option<rewind::Picker>,
+    /// The `/diff` viewer, while it is open.
+    diff: Option<diff::Viewer>,
+    /// Whether the Diff tab is showing instead of the chat.
+    diff_open: bool,
     /// The tool call waiting for the user's approval.
     approval: Option<approval::Prompt>,
     /// Shared with running turns, so mode changes apply to the next tool call.
@@ -215,6 +222,8 @@ impl App {
             backend_picker: None,
             resume_picker: None,
             rewind_picker: None,
+            diff: None,
+            diff_open: false,
             approval: None,
             permissions,
             checkpoints: Vec::new(),
@@ -269,6 +278,7 @@ impl App {
         self.is_running()
             || (self.picker.is_some() && self.models.is_none())
             || self.backend_picker.as_ref().is_some_and(|p| p.loading)
+            || self.diff_loading()
     }
 
     pub fn on_tick(&mut self) {
@@ -427,6 +437,7 @@ impl App {
             AppEvent::Backend(result) => self.on_backend(result),
             AppEvent::Logins(logins, errors) => self.on_logins(logins, errors),
             AppEvent::LoginRemoved(result) => self.on_login_removed(result),
+            AppEvent::Diff(generation, result) => self.on_diff(generation, result),
             AppEvent::SessionSaved(id, result) => self.on_session_saved(&id, result),
             AppEvent::ClipboardPasted(Ok(text)) => self.on_paste(&text),
             AppEvent::ClipboardCopied(Ok(())) => self
@@ -571,6 +582,8 @@ impl App {
                     *slot = Some((output, is_error));
                     self.transcript.invalidate_from(i);
                 }
+                // An open diff viewer follows the agent's edits.
+                self.reload_diff();
             }
             AgentEvent::History(h) => {
                 self.attempt_entry = None;
@@ -589,6 +602,7 @@ impl App {
                 self.approval = None;
                 self.compacting = false;
                 self.save_session();
+                self.reload_diff();
                 self.send_queued();
             }
         }

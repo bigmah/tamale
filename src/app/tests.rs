@@ -1095,3 +1095,260 @@ fn screen(app: &mut App) -> String {
         .map(|cell| cell.symbol())
         .collect()
 }
+
+fn screen_lines(app: &mut App, width: u16, height: u16) -> Vec<String> {
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    let buffer = terminal.backend().buffer();
+    (0..height)
+        .map(|y| {
+            (0..width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn diff_viewer_browses_files_hunks_and_follows_edits() {
+    let work = std::env::temp_dir().join(format!("tamale-diff-view-{}", session::new_id()));
+    std::fs::create_dir_all(work.join("src/app")).unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&work)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+    };
+    git(&["init", "-q"]);
+    let body: String = (1..=40).map(|i| format!("line {i}\n")).collect();
+    std::fs::write(work.join("src/app/view.rs"), &body).unwrap();
+    std::fs::write(work.join("README.md"), "hello\n").unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-qm", "init"]);
+    std::fs::write(
+        work.join("src/app/view.rs"),
+        body.replace("line 3\n", "line three\n")
+            .replace("line 30\n", "line 30\nline 30.5\n"),
+    )
+    .unwrap();
+    std::fs::write(work.join("notes.txt"), "new\n").unwrap();
+
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let workspace = Workspace {
+        cwd: work.clone(),
+        additional_dirs: Vec::new(),
+    };
+    let (mut app, mut rx) = App::new_with_channel(client, test_settings("test-model"), workspace);
+    app.command("/diff");
+    assert!(app.is_busy());
+    let event = rx.recv().await.unwrap();
+    app.on_app_event(event);
+    assert!(!app.is_busy());
+
+    let lines = screen_lines(&mut app, 110, 24);
+    let text = lines.join("\n");
+    println!("{text}");
+    assert!(text.contains("working tree vs HEAD · 2 files +3 −1"), "{text}");
+    assert!(text.contains("src/app/"), "directory chains are merged:\n{text}");
+    assert!(text.contains("U notes.txt"), "{text}");
+    // The first file in tree order (directories first) is shown.
+    assert!(text.contains("view.rs modified"), "{text}");
+    assert!(text.contains("@@ -1,6 +1,6 @@"), "{text}");
+    assert!(text.contains("  3     - line 3"), "{text}");
+    assert!(text.contains("      3 + line three"), "{text}");
+    assert!(text.contains(" 2 hunks "), "{text}");
+    // Changed lines are tinted across the pane, not just under their text.
+    let row = lines.iter().position(|l| l.contains("+ line three")).unwrap() as u16;
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 24)).unwrap();
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    assert_eq!(terminal.backend().buffer()[(100, row)].bg, diff::ADDED_BG);
+
+    // In a short pane, n walks the hunks and then moves on to the next file.
+    let small = screen_lines(&mut app, 110, 12).join("\n");
+    assert!(small.contains("hunk 1/2"), "{small}");
+    app.on_event(key(KeyCode::Char('n')));
+    assert!(screen_lines(&mut app, 110, 12).join("\n").contains("hunk 2/2"));
+    app.on_event(key(KeyCode::Char('n')));
+    let text = screen_lines(&mut app, 110, 24).join("\n");
+    assert!(text.contains("notes.txt untracked"), "{text}");
+    assert!(text.contains("+ new"), "{text}");
+
+    // Collapsing a directory hides its files but keeps the shown diff.
+    app.on_event(key(KeyCode::Home));
+    app.on_event(key(KeyCode::Left));
+    let text = screen_lines(&mut app, 110, 24).join("\n");
+    assert!(text.contains("▸ src/app/") && !text.contains("M view.rs"), "{text}");
+
+    // Edits show up after a refresh, and the selected file stays selected.
+    std::fs::write(work.join("README.md"), "hello\nworld\n").unwrap();
+    app.on_event(key(KeyCode::Char('r')));
+    let event = rx.recv().await.unwrap();
+    app.on_app_event(event);
+    let text = screen_lines(&mut app, 110, 24).join("\n");
+    assert!(text.contains("3 files +4 −1"), "{text}");
+    assert!(text.contains("notes.txt untracked"), "{text}");
+
+    app.on_event(key(KeyCode::Char('q')));
+    assert!(!app.diff_open);
+    let _ = std::fs::remove_dir_all(&work);
+}
+
+#[tokio::test]
+async fn diff_outside_a_repository_reports_an_error() {
+    let work = std::env::temp_dir().join(format!("tamale-no-repo-{}", session::new_id()));
+    std::fs::create_dir_all(&work).unwrap();
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let workspace = Workspace {
+        cwd: work.clone(),
+        additional_dirs: Vec::new(),
+    };
+    let (mut app, mut rx) = App::new_with_channel(client, test_settings("test-model"), workspace);
+    app.command("/diff");
+    let event = rx.recv().await.unwrap();
+    app.on_app_event(event);
+    assert!(!app.diff_open);
+    assert!(matches!(app.entries.last(), Some(Entry::Error(e)) if e.contains("not inside a git repository")));
+    // Without a repository there is no Diff tab.
+    assert!(app.tab_spans().is_none());
+    let _ = std::fs::remove_dir_all(&work);
+}
+
+#[tokio::test]
+async fn arrow_keys_switch_between_chat_and_diff_tabs() {
+    let work = std::env::temp_dir().join(format!("tamale-diff-tabs-{}", session::new_id()));
+    std::fs::create_dir_all(work.join("src")).unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&work)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+    };
+    git(&["init", "-q"]);
+    std::fs::write(work.join("top.txt"), "one\n").unwrap();
+    std::fs::write(work.join("src/lib.rs"), "fn a() {}\n").unwrap();
+
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let workspace = Workspace {
+        cwd: work.clone(),
+        additional_dirs: Vec::new(),
+    };
+    let (mut app, mut rx) = App::new_with_channel(client, test_settings("test-model"), workspace);
+    app.preload_diff();
+    let event = rx.recv().await.unwrap();
+    app.on_app_event(event);
+    assert!(!app.diff_open, "preloading stays on the chat");
+    let footer = screen_lines(&mut app, 100, 30)[28].clone();
+    assert!(footer.contains(" Chat  Diff 2 +2 −0 →"), "{footer}");
+
+    // While typing, → moves the cursor; with an empty prompt it opens the Diff tab.
+    type_text(&mut app, "hi");
+    app.on_event(key(KeyCode::Left));
+    app.on_event(key(KeyCode::Right));
+    assert!(!app.diff_open);
+    assert_eq!(app.cursor, 2);
+    app.input.clear();
+    app.cursor = 0;
+    app.on_event(key(KeyCode::Right));
+    assert!(app.diff_open);
+    let event = rx.recv().await.unwrap();
+    app.on_app_event(event);
+    let text = screen_lines(&mut app, 100, 30).join("\n");
+    assert!(text.contains(" ←  Chat  Diff "), "{text}");
+
+    // ← walks out of the diff pane, up the tree, then back to the chat.
+    app.on_event(key(KeyCode::Tab));
+    app.on_event(key(KeyCode::Left));
+    app.on_event(key(KeyCode::Left));
+    assert!(app.diff_open, "first ← selects the parent directory");
+    app.on_event(key(KeyCode::Left));
+    assert!(app.diff_open, "then folds it");
+    app.on_event(key(KeyCode::Left));
+    assert!(!app.diff_open);
+    // Coming back keeps the selection.
+    app.on_event(key(KeyCode::Right));
+    let event = rx.recv().await.unwrap();
+    app.on_app_event(event);
+    let text = screen_lines(&mut app, 100, 30).join("\n");
+    assert!(text.contains("▸ src/"), "{text}");
+    let _ = std::fs::remove_dir_all(&work);
+}
+
+#[tokio::test]
+async fn diff_viewer_expands_unchanged_lines() {
+    let work = std::env::temp_dir().join(format!("tamale-diff-expand-{}", session::new_id()));
+    std::fs::create_dir_all(&work).unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&work)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+    };
+    git(&["init", "-q"]);
+    let mut body: String = (1..=40).map(|i| format!("line {i}\n")).collect();
+    body.insert_str(0, "fn main() {\n");
+    std::fs::write(work.join("a.rs"), &body).unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-qm", "init"]);
+    std::fs::write(
+        work.join("a.rs"),
+        body.replace("line 3\n", "line three\n")
+            .replace("line 35\n", "line thirty-five\n"),
+    )
+    .unwrap();
+
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let workspace = Workspace {
+        cwd: work.clone(),
+        additional_dirs: Vec::new(),
+    };
+    let (mut app, mut rx) = App::new_with_channel(client, test_settings("test-model"), workspace);
+    app.command("/diff");
+    let event = rx.recv().await.unwrap();
+    app.on_app_event(event);
+    app.on_event(key(KeyCode::Tab));
+    let text = screen_lines(&mut app, 110, 60).join("\n");
+    // Lines 8–32 are hidden between the changes, 40–41 after them.
+    assert!(
+        text.contains("↕ 25 unchanged lines  @@ -33,7 +33,7 @@ line 31  ⏎ expand"),
+        "{text}"
+    );
+    assert!(text.contains("↕ 2 unchanged lines"), "{text}");
+    assert!(!text.contains("line 17"), "{text}");
+
+    // A large gap opens next to the changes on both sides first.
+    app.on_event(key(KeyCode::Enter));
+    let text = screen_lines(&mut app, 110, 60).join("\n");
+    assert!(text.contains("line 16") && text.contains("line 22"), "{text}");
+    assert!(text.contains("↕ 5 unchanged lines  @@") && !text.contains("line 19"), "{text}");
+    app.on_event(key(KeyCode::Enter));
+    let text = screen_lines(&mut app, 110, 60).join("\n");
+    assert!(text.contains(" 20  20   line 19"), "{text}");
+    // The next gap on screen is now the trailing one.
+    assert!(text.contains("↕ 2 unchanged lines  ⏎ expand"), "{text}");
+
+    // Expansions survive a reload; E toggles the whole file and back.
+    app.on_event(key(KeyCode::Char('r')));
+    let event = rx.recv().await.unwrap();
+    app.on_app_event(event);
+    assert!(screen_lines(&mut app, 110, 60).join("\n").contains("line 17"));
+    app.on_event(key(KeyCode::Char('E')));
+    let text = screen_lines(&mut app, 110, 60).join("\n");
+    assert!(text.contains("line 17") && !text.contains("↕"), "{text}");
+    app.on_event(key(KeyCode::Char('E')));
+    let text = screen_lines(&mut app, 110, 60).join("\n");
+    assert!(!text.contains("line 17") && text.contains("↕ 25 unchanged lines"), "{text}");
+    let _ = std::fs::remove_dir_all(&work);
+}

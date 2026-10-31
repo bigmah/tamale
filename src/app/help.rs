@@ -60,6 +60,10 @@ const COMMANDS: &[(&str, &str)] = &[
         "Pick a turn to return to; restores files from it and every later turn",
     ),
     (
+        "/diff [args]",
+        "Open the Diff tab (or press → with an empty prompt); args go to git diff, e.g. /diff main",
+    ),
+    (
         "/permissions [mode]",
         "Show the permission mode and rules, or set ask, accept-edits or auto",
     ),
@@ -104,6 +108,7 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
                 "Mouse wheel",
                 "Scroll chat by 3 lines (also scrolls help and pickers)",
             ),
+            ("→ (empty prompt)", "Switch to the Diff tab; Esc or ← comes back"),
             ("Esc", "Interrupt the agent (unsent queued messages return to the input)"),
             (
                 "Shift+Tab",

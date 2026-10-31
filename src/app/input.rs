@@ -9,6 +9,9 @@ impl App {
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
             Event::Paste(text) => self.on_paste(&text),
+            Event::Mouse(mouse) if self.diff_open && self.approval.is_none() => {
+                self.on_diff_mouse(mouse)
+            }
             Event::Mouse(mouse) => match mouse.kind {
                 MouseEventKind::ScrollUp => self.on_wheel(true),
                 MouseEventKind::ScrollDown => self.on_wheel(false),
@@ -77,6 +80,11 @@ impl App {
         // A waiting tool call takes the keyboard from everything else.
         if self.approval.is_some() {
             self.on_approval_key(key, ctrl);
+            return;
+        }
+
+        if self.diff_open {
+            self.on_diff_key(key, ctrl);
             return;
         }
 
@@ -164,6 +172,8 @@ impl App {
                     self.input.drain(self.cursor..next);
                 }
             }
+            // With nothing typed, → switches to the Diff tab.
+            KeyCode::Right if self.input.is_empty() => self.show_diff(),
             KeyCode::Left => self.cursor = self.prev_boundary().unwrap_or(self.cursor),
             KeyCode::Right => self.cursor = self.next_boundary().unwrap_or(self.cursor),
             KeyCode::Home => self.cursor = self.line_start(),
@@ -234,6 +244,7 @@ impl App {
             && self.effort_picker.is_none()
             && self.backend_picker.is_none()
             && self.rewind_picker.is_none()
+            && !self.diff_open
         {
             self.insert_str(&text);
         }

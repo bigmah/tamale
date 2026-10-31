@@ -57,6 +57,9 @@ impl App {
         if self.rewind_picker.is_some() {
             self.draw_rewind_picker(frame, chat_area);
         }
+        if self.diff_open {
+            self.draw_diff(frame);
+        }
         if self.approval.is_some() {
             self.draw_approval(frame, chat_area);
         }
@@ -455,7 +458,10 @@ impl App {
             0 => String::new(),
             n => format!(" +{n} dirs"),
         };
-        let fixed = " cwd: ".len() + dirs.width() + " · via ".len() + backend.width();
+        let tabs = self.tab_spans();
+        let tabs_width: usize = tabs.iter().flatten().map(|s| s.content.width()).sum();
+        let fixed =
+            " cwd: ".len() + dirs.width() + " · via ".len() + backend.width() + tabs_width + 1;
         let cwd = truncate_start(
             &self.workspace.cwd.display().to_string(),
             (area.width as usize).saturating_sub(fixed).max(10),
@@ -558,6 +564,9 @@ impl App {
             Span::from(format!("· {hint}")).fg(Color::DarkGray),
         ]);
         frame.render_widget(Paragraph::new(vec![cwd_line, line]), area);
+        if let Some(tabs) = tabs {
+            frame.render_widget(Line::from(tabs).right_aligned(), area);
+        }
     }
 }
 

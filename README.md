@@ -426,6 +426,7 @@ the fact that it didn't exist) are saved under the session's directory,
   and appears in the chat at that point; `/undo` puts it back in the input box with the
   turn's prompt. Messages still queued when the turn ends are sent as the next prompt.
   Slash commands still run immediately.
+- `→` with an empty prompt switches to the Diff tab (see [Diff viewer](#diff-viewer))
 - `Esc` interrupt the agent; queued messages that weren't delivered return to the input box
 - `Shift+Tab` cycle the permission mode (see [Permissions](#permissions))
 - `PgUp/PgDn`, `Shift+↑/↓`, mouse wheel scroll (a scrollbar and "↓ N more lines" badge show while scrolled up)
@@ -462,12 +463,48 @@ the fact that it didn't exist) are saved under the session's directory,
 - `/add-dir [path]` adds a directory to the agent's scope, or lists the current scope
 - `/resume [n|id]` continues a saved session (see [Sessions](#sessions))
 - `/undo` and `/rewind` restore files and rewind the conversation (see [Checkpoints](#checkpoints-and-undo))
+- `/diff [args]` opens the diff viewer (see [Diff viewer](#diff-viewer))
 - `/permissions [mode]` shows the mode and rules, or sets `ask`, `accept-edits` or `auto`
 - `/clear` resets the conversation, `/quit` (or `/exit`) quits
 
 Direct clipboard commands use `pbcopy`/`pbpaste` on macOS, PowerShell on Windows,
 or `wl-copy`/`wl-paste`, `xclip`, or `xsel` on Linux (install one of those on Linux).
 Your terminal's native copy/paste shortcuts also work without these utilities, including over SSH.
+
+## Diff viewer
+
+The chat and the diff viewer are two tabs. The right end of the footer shows
+`Chat  Diff 3 +40 −12 →` (changed files and lines, kept up to date in the background);
+press `→` with an empty prompt to switch to the Diff tab, and `Esc`, `q` or `←` to come
+back. The viewer keeps its place between visits. `/diff` also opens it.
+
+The Diff tab is a full-screen view of your uncommitted changes: a file tree of changed
+files on the left (status letter and `+added −removed` per file, directories folded
+into single rows like `src/app/`) and the selected file's diff on the right, with old
+and new line numbers, tinted added/removed lines and the changed part of edited lines
+highlighted.
+
+- `/diff` compares the working tree (staged and unstaged) with `HEAD` and includes
+  untracked files; before the first commit it compares with an empty tree.
+- `/diff <args>` passes the arguments to `git diff` instead, e.g. `/diff --staged`,
+  `/diff main` or `/diff main...feature` (untracked files aren't included).
+- The view refreshes after each tool result and when a turn ends, so it can stay
+  open while the agent works; `r` refreshes by hand.
+
+Keys: `Tab` switches between the file tree and the diff. In the tree, `↑/↓` (`j/k`)
+select a file, `←/→` (`h/l`) fold or unfold directories and `Enter` opens the diff. In
+the diff, `↑/↓` scroll, `←/→` pan long lines (`←` at the left edge returns to the tree)
+and `g/G` jump to the top or bottom.
+Unchanged lines more than 3 lines from a change fold into `↕ 25 unchanged lines` rows:
+`Enter` (or `e`) expands the first one on screen (marked `⏎ expand`) by 20 lines next
+to the changes, small gaps open fully, and clicking a row expands that one. `E` shows
+the whole file, and pressing it again goes back to just the changes. Expanded lines stay
+open across refreshes. Anywhere: `PgUp/PgDn`/`Space`/`Ctrl+U/D` scroll
+the diff, `n`/`p` jump between hunks (past the last hunk, `n` moves to the next file),
+`]`/`[` move between files, and `q` or `Esc` returns to the chat. `←` also leads back:
+from the diff to the tree, up through parent directories, and from the top of the tree
+to the chat. The mouse wheel scrolls
+whichever pane it's over, and clicking a tree row selects it.
 
 ## Layout
 
@@ -486,12 +523,14 @@ Your terminal's native copy/paste shortcuts also work without these utilities, i
 - `src/tools.rs` – tool definitions and implementations
 - `src/permissions.rs` – permission modes and allow/deny rule matching
 - `src/checkpoint.rs` – file snapshots for `/undo` and `/rewind`
+- `src/diff.rs` – running and parsing `git diff` for the diff viewer
 - `src/tools/search.rs`, `src/tools/web.rs` – built-in repository search and web tools
 - `src/tools/shell.rs` – running `bash` commands in a process group
 - `src/app.rs` – conversation state and agent event handling
 - `src/app/{input,commands,sessions,view,help}.rs` – key/clipboard input, commands and pickers,
   session actions, rendering and help content
 - `src/app/{approval,rewind}.rs` – the approval popup, `/undo` and the rewind picker
+- `src/app/diff.rs` – the `/diff` viewer: file tree, diff rendering and navigation
 - `src/app/prompts.rs` – prompt history for ↑/↓ recall
 - `src/clipboard.rs` – system clipboard access
 - `src/session.rs` – saving, listing and loading sessions
