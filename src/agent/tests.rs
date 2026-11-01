@@ -108,7 +108,7 @@ async fn token_limits_continue_text_thinking_and_empty_responses() {
 
     let requests = model.requests.lock().unwrap();
     assert_eq!(requests.len(), 4);
-    assert!(requests.iter().all(|r| r.max_tokens == Some(16000)));
+    assert!(requests.iter().all(|r| r.max_tokens == Some(64000)));
     assert!(history.iter().any(|message| matches!(message, Message::Assistant { content, .. }
         if content.iter().any(|c| matches!(c, AssistantContent::Reasoning(r) if r.content == vec![signed.clone()])))));
     let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
@@ -929,4 +929,15 @@ async fn queued_user_messages_are_delivered_with_the_next_tool_result() {
     assert!(message.contains("use tabs, not spaces"));
     assert!(steering.lock().unwrap().is_empty());
     assert!(matches!(rx.try_recv(), Ok(AgentEvent::Steered(m)) if m == ["use tabs, not spaces"]));
+}
+
+#[test]
+fn open_fences_are_detected_only_until_closed() {
+    let open = ends_in_open_fence;
+    assert!(open("Hi\n\n```html artifact\n<p>x"));
+    assert!(!open("Hi\n\n```html artifact\n<p>x</p>\n```"));
+    assert!(open("````md\n```\nstill inside\n"));
+    assert!(!open("````md\n```\n````\n"));
+    assert!(!open("just `inline` code"));
+    assert!(open("~~~\n```\n"));
 }

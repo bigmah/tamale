@@ -208,6 +208,9 @@ pub struct App {
     /// Whether `/web` has taken over: replies are written for the web UI (see
     /// `web::ARTIFACT_PROMPT`) and the terminal only shows the session's address.
     web_session: bool,
+    /// A reply being continued in place after a token limit cut it off inside a code
+    /// block: its entry and its length before the continuation.
+    joining: Option<(usize, usize)>,
     pub should_quit: bool,
 }
 
@@ -285,6 +288,7 @@ impl App {
             tick: 0,
             busy_since: None,
             web_session: false,
+            joining: None,
             should_quit: false,
         }
     }
@@ -450,6 +454,7 @@ impl App {
         self.compacting = false;
         self.turn_failed = false;
         self.attempt_entry = None;
+        self.joining = None;
         let turn = self.turn;
         let (atx, mut arx) = mpsc::unbounded_channel();
         let tx = self.tx.clone();
@@ -543,6 +548,17 @@ impl App {
             return;
         }
         match event {
+            AgentEvent::TextDelta(delta) if self.joining.is_some() => {
+                let (i, _) = self.joining.unwrap();
+                if let Some(Entry::Assistant(text)) = self.entries.get_mut(i) {
+                    text.push_str(&delta);
+                }
+                if i + 1 == self.entries.len() {
+                    self.transcript.append_to(i);
+                } else {
+                    self.transcript.invalidate_from(i);
+                }
+            }
             AgentEvent::TextDelta(delta) => match self.entries.last_mut() {
                 Some(Entry::Assistant(text)) => {
                     text.push_str(&delta);
@@ -559,6 +575,7 @@ impl App {
                 description,
             } => {
                 self.attempt_entry = None;
+                self.joining = None;
                 self.entries.push(Entry::Tool {
                     name,
                     summary,
@@ -571,6 +588,14 @@ impl App {
                 delay,
                 error,
             } => {
+                // A failed attempt at continuing a joined reply drops only what it added.
+                if let Some((i, len)) = self.joining
+                    && let Some(Entry::Assistant(text)) = self.entries.get_mut(i)
+                    && text.len() > len
+                {
+                    text.truncate(len);
+                    self.transcript.invalidate_from(i);
+                }
                 if let Some(i) = self.attempt_entry.take()
                     && matches!(self.entries.get(i), Some(Entry::Assistant(_)))
                 {
@@ -590,7 +615,14 @@ impl App {
             }
             AgentEvent::Continuing(reason) => {
                 self.attempt_entry = None;
-                self.entries.push(Entry::Info(reason));
+                // A reply cut off inside a code block (usually an artifact) continues in the
+                // same entry, so the block is whole; see `agent::CONTINUE_IN_FENCE`.
+                match self.entries.last() {
+                    Some(Entry::Assistant(text)) if agent::ends_in_open_fence(text) => {
+                        self.joining = Some((self.entries.len() - 1, text.len()));
+                    }
+                    _ => self.entries.push(Entry::Info(reason)),
+                }
             }
             AgentEvent::Approve {
                 name,

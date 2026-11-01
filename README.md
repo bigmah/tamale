@@ -160,7 +160,7 @@ thinking = "adaptive"
 # context_window = 1000000 # otherwise inferred from the selected model
 
 [agent]
-max_tokens = 16000
+max_tokens = 64000
 compact_max_tokens = 8000
 auto_compact_percent = 80
 max_retries = 5

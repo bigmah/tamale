@@ -1552,3 +1552,46 @@ async fn web_sessions_ask_for_artifacts_but_show_the_prompt_as_typed() {
     unsafe { std::env::remove_var("TAMALE_SESSIONS_DIR") };
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[tokio::test]
+async fn a_reply_cut_off_inside_a_code_block_continues_in_the_same_entry() {
+    let (mut app, _rx) = App::new_with_channel(
+        Backend::Api(anthropic::Client::new("test-key").unwrap()),
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    app.task = Some(tokio::spawn(std::future::pending()));
+    let delta =
+        |app: &mut App, text: &str| app.on_agent(app.turn, AgentEvent::TextDelta(text.into()));
+    delta(
+        &mut app,
+        "Here.\n\n```html artifact\n<title>T</title>\n<p>he",
+    );
+    app.on_agent(app.turn, AgentEvent::Continuing("Continuing…".into()));
+    delta(&mut app, "llo</p>\n```");
+    app.on_agent(
+        app.turn,
+        AgentEvent::Retry {
+            attempt: 1,
+            delay: std::time::Duration::ZERO,
+            error: "timeout".into(),
+        },
+    );
+    delta(&mut app, "llo</p>\n```\n");
+    let replies: Vec<&String> = app
+        .entries
+        .iter()
+        .filter_map(|e| match e {
+            Entry::Assistant(t) => Some(t),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        replies,
+        ["Here.\n\n```html artifact\n<title>T</title>\n<p>hello</p>\n```\n"]
+    );
+
+    // Cut off outside a code block, the continuation is a reply of its own.
+    app.on_agent(app.turn, AgentEvent::Continuing("Continuing…".into()));
+    assert!(matches!(app.entries.last(), Some(Entry::Info(_))));
+}

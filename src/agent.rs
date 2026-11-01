@@ -381,7 +381,14 @@ where
             .collect();
         if let Some(continuation) = continuation {
             force_compact = matches!(continuation, Continuation::ContextLimit);
-            append_continuation(history, content, continuation.prompt());
+            let cut_in_fence = matches!(continuation, Continuation::TokenLimit)
+                && ends_in_open_fence(&response_text(&content));
+            let prompt = if cut_in_fence {
+                Some(CONTINUE_IN_FENCE)
+            } else {
+                continuation.prompt()
+            };
+            append_continuation(history, content, prompt);
             let _ = tx.send(AgentEvent::History(history.clone()));
             let _ = tx.send(AgentEvent::Continuing(continuation.status().into()));
             continue;
@@ -529,6 +536,46 @@ Summary of the conversation so far:\n\n{}\n\n\
 Continue from where it left off; if a task was in progress, carry on with it.",
         summary.trim()
     ))]
+}
+
+/// Asks for the rest of a reply cut off inside a fenced block (typically an HTML artifact),
+/// so the two halves join into one block (the UI shows them as one reply).
+const CONTINUE_IN_FENCE: &str = "Your previous response hit the output token limit in the \
+middle of a fenced code block. Continue it from the exact character where it stopped, as if \
+there had been no interruption: no preamble, no repeated text, and don't open a new fence; \
+the first thing you write is the next character of the block. Close the block when it's done, \
+then finish the reply.";
+
+/// The text of a response, joined.
+fn response_text(content: &[AssistantContent]) -> String {
+    content
+        .iter()
+        .filter_map(|c| match c {
+            AssistantContent::Text(t) => Some(t.text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether markdown `text` ends inside a fenced code block that was never closed.
+pub(crate) fn ends_in_open_fence(text: &str) -> bool {
+    let mut open: Option<(char, usize)> = None;
+    for line in text.lines() {
+        let line = line.trim_start();
+        let Some(mark) = line.chars().next().filter(|c| *c == '`' || *c == '~') else {
+            continue;
+        };
+        let run = line.chars().take_while(|c| *c == mark).count();
+        if run < 3 {
+            continue;
+        }
+        match open {
+            None => open = Some((mark, run)),
+            Some((m, n)) if m == mark && run >= n && line[run..].trim().is_empty() => open = None,
+            Some(_) => {}
+        }
+    }
+    open.is_some()
 }
 
 enum Continuation {
