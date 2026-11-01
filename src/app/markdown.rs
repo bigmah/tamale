@@ -99,6 +99,8 @@ enum Container {
 struct Code {
     lang: String,
     text: String,
+    /// An HTML artifact for the web UI, shown collapsed to one line here.
+    artifact: bool,
 }
 
 struct Table {
@@ -204,15 +206,17 @@ impl Renderer<'_, '_> {
             }
             Tag::CodeBlock(kind) => {
                 self.start_block();
-                let lang = match kind {
-                    CodeBlockKind::Fenced(info) => {
-                        info.split([' ', ',', '{']).next().unwrap_or("").to_string()
-                    }
-                    CodeBlockKind::Indented => String::new(),
+                let (lang, artifact) = match kind {
+                    CodeBlockKind::Fenced(info) => (
+                        info.split([' ', ',', '{']).next().unwrap_or("").to_string(),
+                        crate::web::is_artifact(&info),
+                    ),
+                    CodeBlockKind::Indented => (String::new(), false),
                 };
                 self.code = Some(Code {
                     lang,
                     text: String::new(),
+                    artifact,
                 });
             }
             Tag::List(start) => {
@@ -480,6 +484,32 @@ impl Renderer<'_, '_> {
     }
 
     fn code_block(&mut self, code: &Code) {
+        if code.artifact {
+            let title = crate::web::artifact_title(&code.text);
+            let lines = code.text.lines().count();
+            let mut spans = vec![
+                Span::styled("▸ ", FRAME),
+                Span::styled("HTML artifact", Style::new().fg(Color::Magenta)),
+            ];
+            if let Some(title) = title {
+                spans.push(Span::styled(" · ", FRAME));
+                spans.push(Span::styled(
+                    title,
+                    Style::new().add_modifier(Modifier::BOLD),
+                ));
+            }
+            spans.push(Span::styled(
+                format!(
+                    " · {lines} line{} · /web to view",
+                    if lines == 1 { "" } else { "s" }
+                ),
+                FRAME,
+            ));
+            for row in wrap(&spans, self.avail().max(1)) {
+                self.emit(row);
+            }
+            return;
+        }
         let label = if code.lang.is_empty() {
             "╭─".to_string()
         } else {
@@ -938,6 +968,28 @@ mod tests {
                 "",
                 "────────────",
             ]
+        );
+    }
+
+    #[test]
+    fn html_artifacts_collapse_to_one_line() {
+        assert_eq!(
+            text(
+                "Here.\n\n```html artifact\n<title>Sync flow</title>\n<p>x</p>\n```\n\nDone.",
+                80
+            ),
+            [
+                "Here.",
+                "",
+                "▸ HTML artifact · Sync flow · 2 lines · /web to view",
+                "",
+                "Done.",
+            ]
+        );
+        // Still streaming in: collapsed as well.
+        assert_eq!(
+            text("```html artifact\n<p>x", 80),
+            ["▸ HTML artifact · 1 line · /web to view"]
         );
     }
 

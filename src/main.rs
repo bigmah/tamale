@@ -17,8 +17,8 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 use crossterm::event::{
-    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    EventStream,
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
+    EventStream, KeyCode, KeyEventKind, KeyModifiers,
 };
 use crossterm::execute;
 use futures::StreamExt;
@@ -243,19 +243,42 @@ async fn web_request(app: &mut App, web: &mut Option<web::Server>, request: Brow
                     Err(e) => app.on_web(Err(format!("Couldn't serve the web UI: {e:#}"))),
                 }
             }
+            // The terminal shows the address instead of the conversation from now on.
             if let Some(server) = web {
                 browser::open(&server.url);
-                app.on_web(Ok(format!(
-                    "Serving the web UI at {} (opening it in your browser). It shows this \
-                     session alongside the terminal; /web off stops it.",
-                    server.url
-                )));
+                app.set_web_session(true);
             }
         }
-        BrowserRequest::Close => app.on_web(match web.take() {
-            Some(_) => Ok("Stopped serving the web UI.".into()),
-            None => Err("The web UI isn't being served.".into()),
-        }),
+        BrowserRequest::Close => {
+            app.set_web_session(false);
+            app.on_web(match web.take() {
+                Some(_) => Ok("Stopped serving the web UI; the session continues here.".into()),
+                None => Err("The web UI isn't being served.".into()),
+            })
+        }
+    }
+}
+
+/// Keys pressed in the terminal during a web session, which only has a few.
+async fn web_session_key(app: &mut App, web: &mut Option<web::Server>, event: &Event) {
+    let Event::Key(key) = event else { return };
+    if key.kind == KeyEventKind::Release {
+        return;
+    }
+    let Some(server) = web else { return };
+    match key.code {
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.should_quit = true;
+        }
+        KeyCode::Char('o') => browser::open(&server.url),
+        KeyCode::Char('c') => {
+            let url = server.url.clone();
+            tokio::spawn(async move { clipboard::write(&url).await });
+        }
+        KeyCode::Esc | KeyCode::Char('q') => {
+            web_request(app, web, BrowserRequest::Close).await;
+        }
+        _ => {}
     }
 }
 
@@ -341,7 +364,9 @@ async fn run(
             tokio::select! {
                 Some(ev) = events.next() => {
                     let ev = ev?;
-                    if surface == Surface::Terminal {
+                    if web.is_some() {
+                        web_session_key(&mut app, &mut web, &ev).await;
+                    } else if surface == Surface::Terminal {
                         app.on_event(ev);
                     } else if browser::takes_over(&ev) {
                         surface = Surface::Terminal;
@@ -360,6 +385,7 @@ async fn run(
                                 web.backend_mut().resize(cols, rows);
                             }
                         }
+                        browser::ClientEvent::Input(_) if web.is_some() => {}
                         browser::ClientEvent::Input(ev) => {
                             if surface == Surface::Browser {
                                 app.on_event(ev);
@@ -382,6 +408,7 @@ async fn run(
                                 web.welcome(id);
                             }
                         }
+                        web::WebEvent::Disconnected => {}
                         web::WebEvent::Send(text) => app.web_send(text),
                         web::WebEvent::Interrupt => app.web_interrupt(),
                         web::WebEvent::Approve(choice, reason) => app.web_approve(choice, reason),
@@ -410,7 +437,8 @@ async fn run(
                     next_web = tokio::time::Instant::now() + WEB_FRAME;
                 }
                 _ = tokio::time::sleep_until(next_frame), if dirty => {
-                    draw(terminal, &mut browser, surface, &mut app)?;
+                    let session = web.as_ref().map(|w| (w.url.as_str(), w.tabs()));
+                    draw(terminal, &mut browser, surface, session, &mut app)?;
                     dirty = false;
                     next_frame = tokio::time::Instant::now() + Duration::from_millis(16);
                 }
@@ -424,13 +452,27 @@ async fn run(
     result
 }
 
-/// Draws the TUI on the screen in use and a notice on the other.
+/// Draws the TUI on the screen in use and a notice on the other. During a web session
+/// (its address and open tabs in `session`) the terminal shows only that.
 fn draw(
     terminal: &mut ratatui::DefaultTerminal,
     browser: &mut Option<Browser>,
     surface: Surface,
+    session: Option<(&str, usize)>,
     app: &mut App,
 ) -> Result<()> {
+    if let Some((url, tabs)) = session {
+        terminal.draw(|f| app.draw_web_session(f, url, tabs))?;
+        if let Some(Browser {
+            server,
+            terminal: Some(web),
+        }) = browser
+        {
+            web.draw(|f| browser::draw_notice(f, "tamale is in use in the web UI (/web)."))?;
+            server.flush(web);
+        }
+        return Ok(());
+    }
     let Some(Browser {
         server,
         terminal: Some(web),

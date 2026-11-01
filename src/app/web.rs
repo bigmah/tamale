@@ -1,6 +1,13 @@
-//! What the `/web` UI shows of the session, and the input it sends back.
+//! What the `/web` UI shows of the session, and the input it sends back, and the
+//! terminal's screen while it is served.
 
-use super::{App, BrowserRequest};
+use ratatui::Frame;
+use ratatui::layout::{Alignment, Constraint, Layout};
+use ratatui::style::{Color, Style, Stylize};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Paragraph, Wrap};
+
+use super::{App, BrowserRequest, SPINNER};
 use crate::permissions::Approval;
 use crate::session::Entry;
 use crate::web;
@@ -78,6 +85,84 @@ impl App {
         if !text.is_empty() {
             self.submit_text(text);
         }
+    }
+
+    /// Starts or ends the web session: while it lasts, prompts ask for replies written
+    /// for the web UI, and the terminal shows [`Self::draw_web_session`] instead.
+    pub fn set_web_session(&mut self, on: bool) {
+        self.web_session = on;
+    }
+
+    /// The terminal's screen during a web session: where the session is, what it's doing,
+    /// and the few keys that work here.
+    pub fn draw_web_session(&self, frame: &mut Frame, url: &str, tabs: usize) {
+        let dim = Style::new().fg(Color::DarkGray);
+        let key = |k: &'static str| Span::from(k).fg(Color::Cyan).bold();
+        let state = if self.approval.is_some() {
+            Line::from(vec![
+                Span::from("● ").fg(Color::Yellow),
+                Span::from("Waiting for approval in the browser").fg(Color::Yellow),
+            ])
+        } else if self.is_running() {
+            let elapsed = self.busy_since.map_or(0, |s| s.elapsed().as_secs());
+            Line::from(vec![
+                Span::from(format!("{} ", SPINNER[self.tick % SPINNER.len()])).fg(Color::Magenta),
+                Span::from("Working").fg(Color::Magenta),
+                Span::styled(format!("  {elapsed}s"), dim),
+            ])
+        } else {
+            Line::from(vec![
+                Span::from("○ ").fg(Color::Green),
+                Span::styled("Idle", dim),
+            ])
+        };
+        let tabs = match tabs {
+            0 => "No browser tab connected".to_string(),
+            1 => "1 browser tab connected".to_string(),
+            n => format!("{n} browser tabs connected"),
+        };
+        let lines = vec![
+            Line::from(vec![
+                Span::from("🫔 tamale").bold(),
+                Span::styled("  ·  web session", dim),
+            ]),
+            Line::default(),
+            Line::styled("This session is running in your browser at", dim),
+            Line::from(Span::from(url.to_string()).fg(Color::Blue).underlined()),
+            Line::default(),
+            state,
+            Line::styled(
+                format!(
+                    "{tabs} · {} · ${:.2}",
+                    self.backend.model_label(&self.settings.model.name),
+                    self.cost
+                ),
+                dim,
+            ),
+            Line::default(),
+            Line::from(vec![
+                key("o"),
+                Span::styled(" open in browser   ", dim),
+                key("c"),
+                Span::styled(" copy link   ", dim),
+                key("esc"),
+                Span::styled(" back to the terminal   ", dim),
+                key("ctrl+c"),
+                Span::styled(" quit", dim),
+            ]),
+        ];
+        let area = frame.area();
+        let body = Paragraph::new(lines)
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: false });
+        let height = body.line_count(area.width) as u16;
+        let [_, middle, _] = Layout::vertical([
+            Constraint::Fill(1),
+            Constraint::Length(height),
+            Constraint::Fill(1),
+        ])
+        .areas(area);
+        frame.render_widget(body, middle);
     }
 
     pub fn web_interrupt(&mut self) {

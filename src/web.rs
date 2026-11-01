@@ -7,9 +7,16 @@
 //! prompts, interrupts and approvals, which the event loop hands to the app, and asks
 //! for files, which this server reads itself (see `files`). Any number of tabs can be
 //! open; they all show the same session.
+//!
+//! Assistant replies may end in an interactive HTML artifact (a ```` ```html artifact ````
+//! block; prompts sent from the page ask for one). Each finished artifact is stored under
+//! an unguessable id and served from `/artifact/<id>` with a sandboxing CSP, so it runs in
+//! an opaque origin that can't reach the session; the page embeds it in an iframe.
 
 mod files;
 mod render;
+
+pub use render::{artifact_title, is_artifact};
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -19,8 +26,8 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use axum::Router;
-use axum::extract::State;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -38,10 +45,68 @@ const SCRIPT: &str = include_str!("web/app.js");
 /// Tool output sent per call; the rest is cut.
 const MAX_TOOL_OUTPUT: usize = 24_000;
 
+/// Added to every prompt during a web session: replies are a line or two of prose and an
+/// HTML artifact that carries the answer.
+pub const ARTIFACT_PROMPT: &str = "\n\n<web-ui>The user is working in tamale's web UI, \
+which shows every reply as a short note followed by an HTML artifact. Use tools as usual to \
+do the work, then write your final reply in exactly this shape:\n\
+1. At most one very brief paragraph (one to three sentences) of plain prose: the answer in a \
+nutshell. No headings, lists, tables or code blocks outside the artifact.\n\
+2. Then exactly one fenced code block whose info string is exactly `html artifact`, holding a \
+complete, self-contained HTML document with a <title> that presents the full answer. If you \
+changed code, it shows what changed and why.\n\
+Make the artifact genuinely well designed: clear hierarchy, comfortable spacing, good \
+typography, a dark theme (background #17181d, panels #1e2026, text #d4d8e0, muted #9aa0b0, \
+accent #5c9cf5) and a layout that fits any frame width without horizontal scrolling. Use \
+inline SVG diagrams where structure or flow matters, and <pre> blocks for code. Make it \
+interactive (tabs, step-throughs, toggles, hover or click details, sliders, filters) when \
+that helps the user understand or explore; a well laid out static page is fine otherwise. \
+Inline all CSS and JS; load libraries only from https CDNs, and only if needed. It runs in \
+a sandboxed iframe with no access to tamale or the files, so embed all data it shows.\
+</web-ui>";
+
+/// Script added to each artifact so the page can size its iframe to fit.
+const ARTIFACT_RESIZER: &str = "<script>(()=>{const post=()=>parent.postMessage(\
+{tamaleArtifactHeight:Math.ceil(document.documentElement.scrollHeight)},'*');\
+addEventListener('load',post);new ResizeObserver(post).observe(document.documentElement);\
+post();})();</script>";
+
+/// Artifacts by id, and the id given to each document, so a re-rendered reply keeps its URLs.
+#[derive(Default)]
+struct Artifacts {
+    ids: HashMap<u64, String>,
+    pages: HashMap<String, Arc<str>>,
+}
+
+impl Artifacts {
+    /// The URL `html` is served from, storing it if new.
+    fn register(&mut self, html: &str) -> String {
+        let mut h = DefaultHasher::new();
+        html.hash(&mut h);
+        let id = self
+            .ids
+            .entry(h.finish())
+            .or_insert_with(|| {
+                let mut bytes = [0u8; 16];
+                // Without randomness, fall back to the hash: still served only by this host.
+                if getrandom::fill(&mut bytes).is_err() {
+                    bytes[..8].copy_from_slice(&h.finish().to_le_bytes());
+                }
+                bytes.iter().map(|b| format!("{b:02x}")).collect()
+            })
+            .clone();
+        self.pages
+            .entry(id.clone())
+            .or_insert_with(|| format!("{html}\n{ARTIFACT_RESIZER}").into());
+        format!("/artifact/{id}")
+    }
+}
+
 /// What a tab asked for that the app has to handle.
 pub enum WebEvent {
     /// A tab connected and needs the whole session; see [`Server::welcome`].
     Connected(u64),
+    Disconnected,
     /// A prompt or slash command.
     Send(String),
     Interrupt,
@@ -126,6 +191,7 @@ struct Shared {
     next_id: AtomicU64,
     /// The directories the code browser may read.
     roots: Mutex<Vec<PathBuf>>,
+    artifacts: Arc<Mutex<Artifacts>>,
 }
 
 impl Shared {
@@ -167,6 +233,7 @@ impl Server {
         let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
         let url = format!("http://{host}/?t={token}");
         let (tx, events) = mpsc::unbounded_channel();
+        let mirror = Mirror::default();
         let shared = Arc::new(Shared {
             token,
             host,
@@ -174,12 +241,14 @@ impl Server {
             clients: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(0),
             roots: Mutex::new(Vec::new()),
+            artifacts: mirror.artifacts.clone(),
         });
         let router = Router::new()
             .route("/", get(page))
             .route("/ws", get(socket))
             .route("/app.css", get(style))
             .route("/app.js", get(script))
+            .route("/artifact/{id}", get(artifact))
             .with_state(shared.clone());
         let task = tokio::spawn(async move {
             let _ = axum::serve(listener, router).await;
@@ -188,7 +257,7 @@ impl Server {
             url,
             events,
             shared,
-            mirror: Mirror::default(),
+            mirror,
             task,
         })
     }
@@ -233,6 +302,13 @@ impl Server {
     }
 }
 
+impl Server {
+    /// How many tabs are open.
+    pub fn tabs(&self) -> usize {
+        self.shared.clients.lock().unwrap().len()
+    }
+}
+
 impl Drop for Server {
     fn drop(&mut self) {
         self.task.abort();
@@ -251,6 +327,7 @@ struct Mirror {
     entries: Vec<(u64, String)>,
     status: String,
     approval: String,
+    artifacts: Arc<Mutex<Artifacts>>,
 }
 
 impl Mirror {
@@ -265,7 +342,8 @@ impl Mirror {
         if same < keys.len() || same < self.entries.len() {
             self.entries.truncate(same);
             for (key, entry) in keys[same..].iter().zip(&view.entries[same..]) {
-                self.entries.push((*key, entry_json(entry).to_string()));
+                let json = entry_json(entry, &self.artifacts).to_string();
+                self.entries.push((*key, json));
             }
             out.push(self.entries_message(same));
         }
@@ -324,10 +402,14 @@ fn entry_key(entry: &Entry) -> u64 {
     h.finish()
 }
 
-fn entry_json(entry: &Entry) -> Value {
+fn entry_json(entry: &Entry, artifacts: &Mutex<Artifacts>) -> Value {
     match entry {
         Entry::User(text) => json!({ "kind": "user", "text": text }),
-        Entry::Assistant(text) => json!({ "kind": "assistant", "html": render::markdown(text) }),
+        Entry::Assistant(text) => {
+            let mut artifacts = artifacts.lock().unwrap();
+            let mut register = |html: &str| artifacts.register(html);
+            json!({ "kind": "assistant", "html": render::markdown_with(text, Some(&mut register)) })
+        }
         Entry::Note(text) => json!({ "kind": "note", "html": render::markdown(text) }),
         Entry::Info(text) => json!({ "kind": "info", "text": text }),
         Entry::Error(text) => json!({ "kind": "error", "text": text }),
@@ -412,6 +494,39 @@ async fn script(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Respon
         .into_response()
 }
 
+/// An artifact, sandboxed: scripts run, but in an opaque origin that can't read this
+/// server's pages or open its socket, even if opened in a tab of its own.
+async fn artifact(
+    State(shared): State<Arc<Shared>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    if !shared.own_host(&headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Some(page) = shared.artifacts.lock().unwrap().pages.get(&id).cloned() else {
+        return (
+            StatusCode::NOT_FOUND,
+            "No such artifact; it may be from an earlier run.",
+        )
+            .into_response();
+    };
+    let headers = [
+        (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+        (header::CACHE_CONTROL, "no-store"),
+        (header::REFERRER_POLICY, "no-referrer"),
+        (
+            header::CONTENT_SECURITY_POLICY,
+            "sandbox allow-scripts allow-popups allow-modals allow-forms; \
+             default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https:; \
+             style-src 'unsafe-inline' https:; img-src data: blob: https:; \
+             font-src data: https:; media-src data: blob: https:; connect-src https:; \
+             frame-ancestors 'self'",
+        ),
+    ];
+    (headers, page.to_string()).into_response()
+}
+
 async fn socket(
     State(shared): State<Arc<Shared>>,
     uri: Uri,
@@ -466,6 +581,7 @@ async fn client(ws: WebSocket, shared: Arc<Shared>) {
         }
     }
     shared.clients.lock().unwrap().remove(&id);
+    let _ = shared.events.send(WebEvent::Disconnected);
 }
 
 /// A read of the workspace, given its roots, done off the async runtime.
@@ -568,16 +684,96 @@ mod tests {
     }
 
     #[test]
+    fn artifacts_keep_their_url_across_renders() {
+        let mut mirror = Mirror::default();
+        let reply = "Sure.\n\n```html artifact\n<title>T</title>\n```";
+        let mut entries = vec![Entry::Assistant(reply.into())];
+        let first = mirror.update(&view(&entries));
+        let url = first[0]
+            .split("data-src=\\\"")
+            .nth(1)
+            .and_then(|rest| rest.split("\\\"").next())
+            .expect("an embed")
+            .to_string();
+        let id = url.strip_prefix("/artifact/").unwrap();
+        assert_eq!(id.len(), 32);
+        let page = mirror.artifacts.lock().unwrap().pages[id].clone();
+        assert!(page.starts_with("<title>T</title>") && page.contains("tamaleArtifactHeight"));
+
+        entries[0] = Entry::Assistant(format!("{reply}\n\nMore."));
+        let again = mirror.update(&view(&entries));
+        assert!(again[0].contains(&url), "{}", again[0]);
+        assert_eq!(mirror.artifacts.lock().unwrap().pages.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn artifacts_are_served_sandboxed_to_this_host_only() {
+        let mut server = Server::start().await.unwrap();
+        let entries = vec![Entry::Assistant(
+            "```html artifact\n<title>T</title><script>1</script>\n```".into(),
+        )];
+        server.sync(view(&entries));
+        let id = server
+            .shared
+            .artifacts
+            .lock()
+            .unwrap()
+            .pages
+            .keys()
+            .next()
+            .unwrap()
+            .clone();
+        let base = server.url.split("/?").next().unwrap().to_string();
+        let client = reqwest::Client::new();
+
+        let response = client
+            .get(format!("{base}/artifact/{id}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let csp = response.headers()[header::CONTENT_SECURITY_POLICY]
+            .to_str()
+            .unwrap();
+        assert!(csp.starts_with("sandbox allow-scripts "), "{csp}");
+        assert!(!csp.contains("allow-same-origin"), "{csp}");
+        assert!(
+            response
+                .text()
+                .await
+                .unwrap()
+                .contains("<script>1</script>")
+        );
+
+        let missing = client
+            .get(format!("{base}/artifact/nope"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), 404);
+        let rebound = client
+            .get(format!("{base}/artifact/{id}"))
+            .header(header::HOST, "evil.example")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(rebound.status(), 403);
+    }
+
+    #[test]
     fn tool_output_is_clipped_at_a_character_boundary() {
         let (text, cut) = clip("aé", 2);
         assert_eq!((text, cut), ("a", true));
         assert_eq!(clip("abc", 10), ("abc", false));
-        let tool = entry_json(&Entry::Tool {
-            name: "read_file".into(),
-            summary: "src/main.rs".into(),
-            description: "Read src/main.rs".into(),
-            output: Some(("x".repeat(MAX_TOOL_OUTPUT + 5), false)),
-        });
+        let tool = entry_json(
+            &Entry::Tool {
+                name: "read_file".into(),
+                summary: "src/main.rs".into(),
+                description: "Read src/main.rs".into(),
+                output: Some(("x".repeat(MAX_TOOL_OUTPUT + 5), false)),
+            },
+            &Mutex::default(),
+        );
         assert_eq!(tool["cut"], true);
         assert_eq!(tool["output"].as_str().unwrap().len(), MAX_TOOL_OUTPUT);
     }

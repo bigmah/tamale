@@ -244,26 +244,42 @@ fn safe_href(url: &str) -> bool {
     }
 }
 
-/// Assistant markdown as HTML.
+/// The info string that marks a fenced block as an HTML artifact for the page to run.
+pub const ARTIFACT_INFO: &str = "html artifact";
+
+/// Assistant markdown as HTML, with artifacts shown as code.
 pub fn markdown(text: &str) -> String {
+    markdown_with(text, None)
+}
+
+/// Assistant markdown as HTML. With `artifact`, finished ```` ```html artifact ```` blocks
+/// are handed to it, and it returns the URL the page loads the document from; they are
+/// shown as an embed of that URL, or as a placeholder while still streaming in.
+pub fn markdown_with(text: &str, mut artifact: Option<&mut dyn FnMut(&str) -> String>) -> String {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS
         | Options::ENABLE_GFM;
     let mut out = String::with_capacity(text.len() * 3 / 2);
-    // The code block being collected: its language token and text.
-    let mut code: Option<(String, String)> = None;
+    // The code block being collected: its language token, text and whether its closing
+    // fence has arrived.
+    let mut code: Option<(String, String, bool)> = None;
     let mut table: Vec<Alignment> = Vec::new();
     let mut in_head = false;
     let mut cell = 0usize;
-    for event in Parser::new_ext(text, options) {
-        if let Some((_, body)) = &mut code {
+    let mut finish =
+        |out: &mut String, (lang, body, closed): (String, String, bool)| match artifact.as_mut() {
+            Some(register) if is_artifact(&lang) => {
+                let url = closed.then(|| register(&body));
+                push_artifact(out, &body, url.as_deref());
+            }
+            _ => push_code_block(out, &lang, &body),
+        };
+    for (event, range) in Parser::new_ext(text, options).into_offset_iter() {
+        if let Some((_, body, _)) = &mut code {
             match event {
                 Event::Text(t) => body.push_str(&t),
-                Event::End(TagEnd::CodeBlock) => {
-                    let (lang, body) = code.take().unwrap();
-                    push_code_block(&mut out, &lang, &body);
-                }
+                Event::End(TagEnd::CodeBlock) => finish(&mut out, code.take().unwrap()),
                 _ => {}
             }
             continue;
@@ -291,11 +307,20 @@ pub fn markdown(text: &str) -> String {
                     None => out.push_str("<blockquote>"),
                 },
                 Tag::CodeBlock(kind) => {
-                    let lang = match kind {
-                        CodeBlockKind::Fenced(lang) => lang.to_string(),
-                        CodeBlockKind::Indented => String::new(),
+                    let (lang, closed) = match kind {
+                        CodeBlockKind::Fenced(lang) => {
+                            let block = text[range].trim_end();
+                            let fence = block.trim_start().chars().next().unwrap_or('`');
+                            let closed = block.contains('\n')
+                                && block.lines().last().is_some_and(|l| {
+                                    let l = l.trim();
+                                    l.len() >= 3 && l.chars().all(|c| c == fence)
+                                });
+                            (lang.to_string(), closed)
+                        }
+                        CodeBlockKind::Indented => (String::new(), true),
                     };
-                    code = Some((lang, String::new()));
+                    code = Some((lang, String::new(), closed));
                 }
                 Tag::List(Some(1)) => out.push_str("<ol>"),
                 Tag::List(Some(start)) => {
@@ -412,10 +437,52 @@ pub fn markdown(text: &str) -> String {
         }
     }
     // A code block still streaming in.
-    if let Some((lang, body)) = code {
-        push_code_block(&mut out, &lang, &body);
+    if let Some(block) = code {
+        finish(&mut out, block);
     }
     out
+}
+
+pub fn is_artifact(lang: &str) -> bool {
+    lang.split_whitespace().collect::<Vec<_>>().join(" ") == ARTIFACT_INFO
+}
+
+/// The document's `<title>`, if it has one.
+pub fn artifact_title(html: &str) -> Option<String> {
+    let lower = html.to_ascii_lowercase();
+    let start = lower.find("<title")?;
+    let start = start + lower[start..].find('>')? + 1;
+    let end = start + lower[start..].find("</title")?;
+    let title = html[start..end].trim();
+    (!title.is_empty()).then(|| title.to_string())
+}
+
+/// An artifact: an embed the page fills in once `url` is known, a placeholder before.
+fn push_artifact(out: &mut String, body: &str, url: Option<&str>) {
+    let title = artifact_title(body).unwrap_or_else(|| "Artifact".into());
+    match url {
+        Some(url) => {
+            out.push_str("<div class=\"artifact\" data-src=\"");
+            escape_into(out, url);
+            out.push_str("\" data-title=\"");
+            escape_into(out, &title);
+            out.push_str("\"></div>");
+        }
+        None => {
+            let lines = body.lines().count();
+            let _ = write!(
+                out,
+                "<div class=\"artifact building\"><div class=\"artifact-bar\">\
+                 <span class=\"artifact-spark\"></span><span class=\"artifact-title\">Building "
+            );
+            escape_into(out, &title);
+            let _ = write!(
+                out,
+                "…</span><span class=\"artifact-meta\">{lines} line{}</span></div></div>",
+                if lines == 1 { "" } else { "s" }
+            );
+        }
+    }
 }
 
 fn push_code_block(out: &mut String, lang: &str, body: &str) {
@@ -481,6 +548,33 @@ mod tests {
         );
         let open = markdown("```python\nx = 1");
         assert!(open.contains("<span class=\"t-n\">1</span>"), "{open}");
+    }
+
+    #[test]
+    fn artifacts_embed_once_their_fence_closes() {
+        let seen = std::cell::RefCell::new(Vec::new());
+        let mut register = |body: &str| {
+            seen.borrow_mut().push(body.to_string());
+            "/artifact/abc".to_string()
+        };
+        let doc = "Here:\n\n```html artifact\n<title>A <b></title><p>hi</p>\n```\n\nDone.";
+        let html = markdown_with(doc, Some(&mut register));
+        assert!(
+            html.contains("data-src=\"/artifact/abc\" data-title=\"A &lt;b&gt;\""),
+            "{html}"
+        );
+        assert!(html.contains("<p>Done.</p>"), "{html}");
+        assert_eq!(*seen.borrow(), vec!["<title>A <b></title><p>hi</p>\n"]);
+
+        let streaming = markdown_with("```html artifact\n<p>hi</p>\n``", Some(&mut register));
+        assert!(streaming.contains("artifact building"), "{streaming}");
+        assert!(!streaming.contains("data-src"), "{streaming}");
+        assert_eq!(seen.borrow().len(), 1);
+
+        // Without a registry (and for plain html blocks) it's just code.
+        assert!(markdown(doc).contains("codeblock"));
+        let plain = markdown_with("```html\n<p>x</p>\n```", Some(&mut register));
+        assert!(plain.contains("codeblock"), "{plain}");
     }
 
     #[test]

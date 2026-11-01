@@ -179,7 +179,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 
 .scroller { flex: 1; overflow-y: auto; overscroll-behavior: contain; scroll-padding-bottom: 24px; }
 .thread {
-  max-width: 800px;
+  max-width: 960px;
   margin: 0 auto;
   padding: 28px 28px 8px;
   display: flex;
@@ -324,6 +324,64 @@ body.resizing { cursor: col-resize; user-select: none; }
 .codeblock:hover .copybtn, .copybtn.done { opacity: 1; }
 .copybtn:hover { background: var(--bg-3); color: var(--fg); }
 .codeblock:not(:has(.codeblock-lang)) .copybtn { top: 6px; }
+
+/* ---------- artifacts ---------- */
+
+.prose .artifact { margin: 0 0 0.8em; }
+.artifact {
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--bg-1);
+  overflow: hidden;
+  animation: risein 180ms var(--ease);
+}
+.artifact-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 6px 0 12px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 12px;
+}
+.artifact.building .artifact-bar { border-bottom: none; }
+.artifact-icon { display: inline-flex; color: var(--violet); }
+.artifact-icon svg { width: 13px; height: 13px; fill: currentColor; stroke: none; }
+.artifact-title { color: var(--fg-bright); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact.building .artifact-title {
+  background: linear-gradient(90deg, var(--fg-dim) 0%, var(--fg-bright) 50%, var(--fg-dim) 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 2s linear infinite;
+}
+.artifact-meta { color: var(--fg-faint); font-family: var(--mono); font-size: 11px; margin-left: auto; padding-right: 6px; }
+.artifact-spark { width: 7px; height: 7px; border-radius: 50%; background: var(--violet); animation: pulse 1.4s ease-in-out infinite; flex: none; }
+.artifact-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-sm);
+  color: var(--fg-dim);
+  transition: background var(--quick) var(--ease), color var(--quick) var(--ease);
+}
+.artifact-btn:hover { background: var(--bg-3); color: var(--fg); }
+.artifact-btn svg { width: 14px; height: 14px; }
+.artifact iframe { display: block; width: 100%; height: 420px; border: none; background: var(--bg); }
+.artifact.full {
+  position: fixed;
+  inset: 16px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.55), 0 20px 60px rgba(0, 0, 0, 0.5);
+  animation: fadein 140ms var(--ease);
+}
+.artifact.full iframe { flex: 1; height: auto !important; }
 
 .table { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--r-lg); }
 .prose table { border-collapse: collapse; width: 100%; font-size: 13px; }

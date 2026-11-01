@@ -1520,3 +1520,35 @@ async fn visual_selection_in_the_diff_quotes_lines_into_the_prompt() {
     assert!(app.history.is_empty(), "nothing is sent until you add a question");
     let _ = std::fs::remove_dir_all(&work);
 }
+
+#[tokio::test]
+async fn web_sessions_ask_for_artifacts_but_show_the_prompt_as_typed() {
+    let _env = SESSIONS_ENV.lock().await;
+    let root = std::env::temp_dir().join(format!("tamale-web-test-{}", session::new_id()));
+    unsafe { std::env::set_var("TAMALE_SESSIONS_DIR", root.join("sessions")) };
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    let last_prompt = |app: &App| match app.history.last() {
+        Some(Message::User { content }) => format!("{:?}", content.iter().last()),
+        _ => String::new(),
+    };
+
+    app.set_web_session(true);
+    app.web_send("how does sync work?".into());
+    assert!(matches!(app.entries.last(), Some(Entry::User(t)) if t == "how does sync work?"));
+    assert!(last_prompt(&app).contains("html artifact"));
+    app.task.take().unwrap().abort();
+    app.on_agent(app.turn, AgentEvent::Done);
+
+    app.set_web_session(false);
+    app.web_send("and now?".into());
+    assert!(!last_prompt(&app).contains("html artifact"));
+    app.task.take().unwrap().abort();
+    app.finish_saves().await;
+    unsafe { std::env::remove_var("TAMALE_SESSIONS_DIR") };
+    let _ = std::fs::remove_dir_all(root);
+}

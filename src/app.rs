@@ -205,6 +205,9 @@ pub struct App {
     tick: usize,
     /// When the current run began, for the activity animation and elapsed time.
     busy_since: Option<std::time::Instant>,
+    /// Whether `/web` has taken over: replies are written for the web UI (see
+    /// `web::ARTIFACT_PROMPT`) and the terminal only shows the session's address.
+    web_session: bool,
     pub should_quit: bool,
 }
 
@@ -281,6 +284,7 @@ impl App {
             attempt_entry: None,
             tick: 0,
             busy_since: None,
+            web_session: false,
             should_quit: false,
         }
     }
@@ -351,7 +355,12 @@ impl App {
     }
 
     fn send_prompt(&mut self, text: String) {
-        self.send_prompt_as(text.clone(), text);
+        let prompt = if self.web_session {
+            format!("{text}{}", crate::web::ARTIFACT_PROMPT)
+        } else {
+            text.clone()
+        };
+        self.send_prompt_as(text, prompt);
     }
 
     /// Sends `prompt` to the model while showing (and keeping for `/undo`) `shown`.

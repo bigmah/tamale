@@ -587,11 +587,11 @@ install them), then rebuild tamale. `cargo test --workspace` also runs the proto
 
 ## Web UI
 
-`/web` opens the session in a browser tab as a web page rather than a copy of the
-terminal. The page centres on the chat, and you can browse the code next to it. It shows
-the same session as the terminal, live, and both stay usable at the same time. Any number
-of tabs can be open. `/web` again shows the address, and `/web off` stops serving
-(closing tamale does too).
+`/web` moves the session into a browser tab, as a web page rather than a copy of the
+terminal. From then on the terminal shows only the address, whether the agent is working,
+how many tabs are open and the cost. There, `o` opens the page again, `c` copies its
+address, `Esc` (or `/web off` in the page) ends the web session and brings the conversation
+back to the terminal, and `Ctrl+C` quits. Any number of tabs can be open.
 
 - **Chat.** Replies are rendered as markdown, with highlighted code blocks and copy
   buttons. Tool calls appear as compact steps that open to show their output; long runs
@@ -608,13 +608,24 @@ of tabs can be open. `/web` again shows the address, and `/web off` stops servin
   and the tree reload as the agent changes files. The browser reads only files inside
   the workspace (the working directory and `/add-dir` directories), and skips
   ignored files and `.git`.
+- **Artifacts.** During a web session every prompt asks the model to answer in a
+  sentence or three and put the full answer in an HTML artifact below it: a designed
+  page, interactive when that helps (diagrams, step-throughs, tabs, sliders). The model
+  writes it as a fenced ```` ```html artifact ```` block. While the block streams in,
+  the page shows a placeholder, and when it is done the page loads it in a frame sized
+  to fit. The bar above it can reload it, expand it (`Esc` closes) or open it in a new
+  tab. Back in the terminal, each artifact is collapsed to one line with its title.
 - Commands that open a picker in the terminal (`/model`, `/effort`, `/resume`,
   `/backend` with no arguments, `/rewind`, `/diff`) explain their argument forms
   instead. `/login` still runs in the terminal.
 
 The address works the same way as `/browser`'s: the server listens only on 127.0.0.1
 with a random token, and checks the `Host` and `Origin` headers. The page also sends a
-strict Content Security Policy, and model output is never treated as HTML.
+strict Content Security Policy, and model output is never treated as HTML in the page
+itself. Artifacts are the exception: each one is served from its own unguessable
+`/artifact/<id>` URL with a `sandbox` CSP that leaves out `allow-same-origin`. Its scripts
+run in an opaque origin that can't read the page, the token or the socket, even when the
+artifact is opened in a tab of its own. Scripts and styles may load from https CDNs.
 
 **How it works.** `src/web.rs` sends JSON over a WebSocket. Assistant markdown is turned
 into HTML in tamale (`src/web/render.rs`, which uses pulldown-cmark), and code is

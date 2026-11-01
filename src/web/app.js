@@ -30,6 +30,9 @@ const ICON = {
   chev: '<svg viewBox="0 0 16 16"><path d="m6 3.5 4.5 4.5L6 12.5"/></svg>',
   open: '<svg viewBox="0 0 16 16"><path d="M9.5 2.5h4v4M13.5 2.5 7.5 8.5M12 9.5v3.25c0 .41-.34.75-.75.75h-8a.75.75 0 0 1-.75-.75v-8c0-.41.34-.75.75-.75H6.5"/></svg>',
   close: '<svg viewBox="0 0 16 16"><path d="m4 4 8 8M12 4l-8 8"/></svg>',
+  spark: '<svg viewBox="0 0 16 16"><path d="M8 1.5 9.6 6.4 14.5 8 9.6 9.6 8 14.5 6.4 9.6 1.5 8l4.9-1.6Z"/></svg>',
+  reload: '<svg viewBox="0 0 16 16"><path d="M13.2 6.3A5.3 5.3 0 1 0 13 10M13.5 2.8v3.7H9.8"/></svg>',
+  expand: '<svg viewBox="0 0 16 16"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg>',
 };
 
 const fmtTokens = (n) =>
@@ -271,8 +274,7 @@ function patchEntry(i) {
     case 'assistant':
     case 'note':
       node.classList.add('prose');
-      node.innerHTML = e.html;
-      decorate(node);
+      patchProse(node, e.html);
       break;
     case 'info':
       node.hidden = isGreeting(e, i);
@@ -364,9 +366,102 @@ function renderToolOutput(node) {
   out.innerHTML = parts.join('');
 }
 
+/**
+ * Sets a reply's HTML, replacing only the top-level blocks that changed, so streaming
+ * text doesn't reload artifacts above it or undo what the reader did in them.
+ */
+function patchProse(node, html) {
+  const fresh = h('template', { html }).content;
+  const blocks = [...fresh.children];
+  // Text outside elements (rare) can't be matched up; start over then.
+  if (fresh.childNodes.length !== blocks.length) {
+    node.innerHTML = html;
+    decorate(node);
+    mountArtifacts(node);
+    return;
+  }
+  [...node.childNodes].forEach((c) => c.nodeType !== Node.ELEMENT_NODE && c.remove());
+  const old = [...node.children];
+  blocks.forEach((block, i) => {
+    const source = block.outerHTML;
+    if (old[i]?._source === source) return;
+    block._source = source;
+    if (old[i]) old[i].replaceWith(block);
+    else node.append(block);
+    decorate(block);
+    mountArtifacts(block);
+  });
+  for (let i = blocks.length; i < old.length; i++) old[i].remove();
+}
+
+/** Turns `.artifact[data-src]` placeholders into sandboxed embeds with a toolbar. */
+function mountArtifacts(scope) {
+  const found = scope.matches?.('.artifact[data-src]') ? [scope] : scope.querySelectorAll('.artifact[data-src]');
+  for (const box of found) {
+    if (box.querySelector('iframe')) continue;
+    const src = box.dataset.src;
+    const frame = h('iframe', {
+      src,
+      title: box.dataset.title,
+      sandbox: 'allow-scripts allow-popups allow-modals allow-forms',
+      referrerpolicy: 'no-referrer',
+      loading: 'lazy',
+    });
+    const bar = h(
+      'div',
+      { class: 'artifact-bar' },
+      h('span', { class: 'artifact-icon', html: ICON.spark }),
+      h('span', { class: 'artifact-title', text: box.dataset.title }),
+      h('span', { class: 'spacer' }),
+      h('button', {
+        class: 'artifact-btn',
+        title: 'Reload',
+        html: ICON.reload,
+        onclick: () => (frame.src = src),
+      }),
+      h('button', {
+        class: 'artifact-btn',
+        title: 'Expand',
+        html: ICON.expand,
+        onclick: () => box.classList.toggle('full'),
+      }),
+      h('a', {
+        class: 'artifact-btn',
+        title: 'Open in a new tab',
+        href: src,
+        target: '_blank',
+        rel: 'noopener noreferrer',
+        html: ICON.open,
+      }),
+    );
+    box.append(bar, frame);
+  }
+}
+
+// Artifacts report their height (see ARTIFACT_RESIZER in src/web.rs).
+addEventListener('message', (ev) => {
+  const height = ev.data?.tamaleArtifactHeight;
+  if (typeof height !== 'number') return;
+  for (const frame of thread.querySelectorAll('.artifact iframe')) {
+    if (frame.contentWindow !== ev.source) continue;
+    const stick = nearBottom();
+    frame.style.height = `${Math.max(120, Math.min(height, 2400))}px`;
+    if (stick) scrollToBottom();
+  }
+});
+
+addEventListener('keydown', (ev) => {
+  const full = thread.querySelector('.artifact.full');
+  if (ev.key === 'Escape' && full) {
+    full.classList.remove('full');
+    ev.stopPropagation();
+  }
+}, true);
+
 /** Copy buttons on code blocks, and file paths in `code` linked to the code browser. */
 function decorate(node) {
-  for (const block of node.querySelectorAll('.codeblock')) {
+  const blocks = node.matches('.codeblock') ? [node] : node.querySelectorAll('.codeblock');
+  for (const block of blocks) {
     const button = h('button', { class: 'copybtn', text: 'Copy' });
     button.onclick = () => {
       copyText(block.querySelector('code').textContent, 'Copied code.');
