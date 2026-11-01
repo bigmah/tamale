@@ -24,7 +24,7 @@ use crossterm::execute;
 use futures::StreamExt;
 use tokio::sync::mpsc;
 
-use crate::app::{App, BrowserRequest};
+use crate::app::{App, BrowserRequest, WebRequest};
 use crate::backend::Backend;
 
 /// Shortest time between syncs of the web UI.
@@ -234,11 +234,15 @@ async fn web_event(web: &mut Option<web::Server>) -> Option<web::WebEvent> {
 }
 
 /// Starts or stops serving the web UI, as `/web` asked.
-async fn web_request(app: &mut App, web: &mut Option<web::Server>, request: BrowserRequest) {
+async fn web_request(app: &mut App, web: &mut Option<web::Server>, request: WebRequest) {
     match request {
-        BrowserRequest::Open => {
+        WebRequest::Open { lan } => {
+            // Switching between local and LAN serving restarts on the other address.
+            if web.as_ref().is_some_and(|w| w.lan != lan) {
+                *web = None;
+            }
             if web.is_none() {
-                match web::Server::start().await {
+                match web::Server::start(lan).await {
                     Ok(server) => *web = Some(server),
                     Err(e) => app.on_web(Err(format!("Couldn't serve the web UI: {e:#}"))),
                 }
@@ -249,7 +253,7 @@ async fn web_request(app: &mut App, web: &mut Option<web::Server>, request: Brow
                 app.set_web_session(true);
             }
         }
-        BrowserRequest::Close => {
+        WebRequest::Close => {
             app.set_web_session(false);
             app.on_web(match web.take() {
                 Some(_) => Ok("Stopped serving the web UI; the session continues here.".into()),
@@ -276,7 +280,7 @@ async fn web_session_key(app: &mut App, web: &mut Option<web::Server>, event: &E
             tokio::spawn(async move { clipboard::write(&url).await });
         }
         KeyCode::Esc | KeyCode::Char('q') => {
-            web_request(app, web, BrowserRequest::Close).await;
+            web_request(app, web, WebRequest::Close).await;
         }
         _ => {}
     }

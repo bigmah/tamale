@@ -7,13 +7,13 @@ use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 
-use super::{App, BrowserRequest, SPINNER};
+use super::{App, SPINNER, WebRequest};
 use crate::permissions::Approval;
 use crate::session::Entry;
 use crate::web;
 
 impl App {
-    pub fn take_web_request(&mut self) -> Option<BrowserRequest> {
+    pub fn take_web_request(&mut self) -> Option<WebRequest> {
         self.web_request.take()
     }
 
@@ -122,7 +122,7 @@ impl App {
             1 => "1 browser tab connected".to_string(),
             n => format!("{n} browser tabs connected"),
         };
-        let lines = vec![
+        let mut lines = vec![
             Line::from(vec![
                 Span::from("🫔 tamale").bold(),
                 Span::styled("  ·  web session", dim),
@@ -131,6 +131,17 @@ impl App {
             Line::styled("This session is running in your browser at", dim),
             Line::from(Span::from(url.to_string()).fg(Color::Blue).underlined()),
             Line::default(),
+        ];
+        // Served to the network: a code to scan beats typing the token on a phone.
+        if !url.starts_with("http://127.0.0.1") {
+            lines.push(Line::styled(
+                "Scan to open it on a device on this network (anyone on it who sees the link can use it)",
+                dim,
+            ));
+            lines.extend(qr_lines(url));
+            lines.push(Line::default());
+        }
+        lines.extend([
             state,
             Line::styled(
                 format!(
@@ -151,7 +162,7 @@ impl App {
                 key("ctrl+c"),
                 Span::styled(" quit", dim),
             ]),
-        ];
+        ]);
         let area = frame.area();
         let body = Paragraph::new(lines)
             .alignment(Alignment::Center)
@@ -180,4 +191,38 @@ impl App {
             web::Choice::No => self.answer(Approval::Deny { reason }),
         }
     }
+}
+
+/// `text` as a QR code in half-block characters, dark on light so it scans on any theme.
+fn qr_lines(text: &str) -> Vec<Line<'static>> {
+    let Ok(code) = qrcode::QrCode::new(text) else {
+        return Vec::new();
+    };
+    let width = code.width();
+    let colors = code.to_colors();
+    // A quiet zone of two modules on each side, which scanners need.
+    let quiet = 2;
+    let dark = |x: usize, y: usize| {
+        x >= quiet
+            && y >= quiet
+            && x - quiet < width
+            && y - quiet < width
+            && colors[(y - quiet) * width + x - quiet] == qrcode::Color::Dark
+    };
+    let size = width + 2 * quiet;
+    let style = Style::new().fg(Color::Black).bg(Color::White);
+    (0..size)
+        .step_by(2)
+        .map(|y| {
+            let row: String = (0..size)
+                .map(|x| match (dark(x, y), dark(x, y + 1)) {
+                    (true, true) => '█',
+                    (true, false) => '▀',
+                    (false, true) => '▄',
+                    (false, false) => ' ',
+                })
+                .collect();
+            Line::styled(row, style)
+        })
+        .collect()
 }

@@ -3,7 +3,7 @@ use crossterm::execute;
 
 use super::{
     App, AppEvent, BrowserRequest, EFFORT_CHOICES, FALLBACK_MODELS, ModelInfo, ModelPicker,
-    effort_label,
+    WebRequest, effort_label,
 };
 use crate::session::Entry;
 use crate::{agent, permissions, session};
@@ -445,11 +445,12 @@ impl App {
             },
             "/artifacts" => self.list_artifacts(),
             "/web" => match cmd.split_whitespace().nth(1) {
-                None | Some("on") => self.web_request = Some(BrowserRequest::Open),
-                Some("off") => self.web_request = Some(BrowserRequest::Close),
+                None | Some("on") => self.web_request = Some(WebRequest::Open { lan: false }),
+                Some("lan") => self.web_request = Some(WebRequest::Open { lan: true }),
+                Some("off") => self.web_request = Some(WebRequest::Close),
                 Some(_) => self
                     .entries
-                    .push(Entry::Error("Usage: /web [on|off]".into())),
+                    .push(Entry::Error("Usage: /web [on|lan|off]".into())),
             },
             other => self.entries.push(Entry::Error(format!(
                 "Unknown command: {other} (type /help to see all commands)"

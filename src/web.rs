@@ -20,6 +20,7 @@ pub use render::{artifact_title, is_artifact};
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -206,6 +207,8 @@ pub struct View<'a> {
 
 pub struct Server {
     pub url: String,
+    /// Whether it listens on the local network instead of only this machine.
+    pub lan: bool,
     pub events: mpsc::UnboundedReceiver<WebEvent>,
     shared: Arc<Shared>,
     mirror: Mirror,
@@ -265,12 +268,18 @@ impl Shared {
 }
 
 impl Server {
-    /// Starts serving on a free port of 127.0.0.1.
-    pub async fn start() -> Result<Self> {
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+    /// Starts serving on a free port of 127.0.0.1, or with `lan` of this machine's
+    /// local-network address, so other devices on the network can open it.
+    pub async fn start(lan: bool) -> Result<Self> {
+        let ip = if lan {
+            lan_ip().context("couldn't find this machine's local-network address")?
+        } else {
+            IpAddr::from([127, 0, 0, 1])
+        };
+        let listener = tokio::net::TcpListener::bind((ip, 0))
             .await
-            .context("couldn't listen on 127.0.0.1")?;
-        let host = format!("127.0.0.1:{}", listener.local_addr()?.port());
+            .with_context(|| format!("couldn't listen on {ip}"))?;
+        let host = format!("{ip}:{}", listener.local_addr()?.port());
         let mut bytes = [0u8; 16];
         getrandom::fill(&mut bytes).context("couldn't generate an access token")?;
         let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
@@ -299,6 +308,7 @@ impl Server {
         });
         Ok(Self {
             url,
+            lan,
             events,
             shared,
             mirror,
@@ -352,6 +362,19 @@ impl Server {
     pub fn tabs(&self) -> usize {
         self.shared.clients.lock().unwrap().len()
     }
+}
+
+/// The address this machine reaches the local network from: connecting a UDP socket
+/// sends nothing, but picks the interface a packet to the internet would leave by.
+fn lan_ip() -> Result<IpAddr> {
+    let socket = std::net::UdpSocket::bind(("0.0.0.0", 0))?;
+    socket.connect(("8.8.8.8", 80))?;
+    let ip = socket.local_addr()?.ip();
+    anyhow::ensure!(
+        !ip.is_loopback() && !ip.is_unspecified(),
+        "not on a network"
+    );
+    Ok(ip)
 }
 
 impl Drop for Server {
@@ -882,7 +905,7 @@ mod tests {
 
     #[tokio::test]
     async fn artifacts_are_served_sandboxed_to_this_host_only() {
-        let mut server = Server::start().await.unwrap();
+        let mut server = Server::start(false).await.unwrap();
         let entries = vec![Entry::Assistant(
             "```html artifact\n<title>T</title><script>1</script>\n```".into(),
         )];

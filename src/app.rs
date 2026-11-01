@@ -65,6 +65,13 @@ pub enum BrowserRequest {
     Close,
 }
 
+/// What `/web` asked of the event loop.
+pub enum WebRequest {
+    /// Serve the web UI; with `lan`, to other devices on the local network too.
+    Open { lan: bool },
+    Close,
+}
+
 #[derive(Clone)]
 pub struct ModelInfo {
     id: String,
@@ -140,7 +147,7 @@ pub struct App {
     /// Set by `/browser`; the event loop starts or stops serving the TUI to a browser.
     browser_request: Option<BrowserRequest>,
     /// Set by `/web`; the event loop starts or stops serving the web UI.
-    web_request: Option<BrowserRequest>,
+    web_request: Option<WebRequest>,
     settings: Settings,
     tx: mpsc::UnboundedSender<AppEvent>,
     /// `None` until the list has been fetched.
