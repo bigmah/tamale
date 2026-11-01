@@ -35,7 +35,89 @@ const ICON = {
   expand: '<svg viewBox="0 0 16 16"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg>',
   edit: '<svg viewBox="0 0 16 16"><path d="M10.5 2.5 13.5 5.5 6 13H3v-3ZM9 4l3 3"/></svg>',
   download: '<svg viewBox="0 0 16 16"><path d="M8 2.5v8M4.5 7.5 8 11l3.5-3.5M3 13.5h10"/></svg>',
+  shrink: '<svg viewBox="0 0 16 16"><path d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5"/></svg>',
+  chat: '<svg viewBox="0 0 16 16"><path d="M2.5 3.75c0-.69.56-1.25 1.25-1.25h8.5c.69 0 1.25.56 1.25 1.25v6c0 .69-.56 1.25-1.25 1.25H7l-3 2.5V11h-.25c-.69 0-1.25-.56-1.25-1.25Z"/></svg>',
+  back: '<svg viewBox="0 0 16 16"><path d="M10 3.5 5.5 8l4.5 4.5"/></svg>',
 };
+
+// ---------------------------------------------------------------- touch screens
+
+/** A phone or tablet: no hover, a finger for a pointer, an on-screen keyboard. */
+const touch = matchMedia('(hover: none) and (pointer: coarse)');
+/** Too narrow for side-by-side panes. */
+const narrow = matchMedia('(max-width: 760px)');
+
+/**
+ * Sizes the app to the visible part of the page. iOS doesn't shrink the layout viewport
+ * for the on-screen keyboard (it pans the page instead), so without this the composer
+ * hides behind the keyboard and the top bar scrolls away.
+ */
+function fitViewport() {
+  const vv = window.visualViewport;
+  if (!vv || Math.abs(vv.scale - 1) > 0.01) return; // pinch-zoomed: leave the layout alone
+  const height = `${Math.round(vv.height)}px`;
+  const root = document.documentElement.style;
+  if (root.getPropertyValue('--app-h') !== height) {
+    const stick = nearBottom();
+    root.setProperty('--app-h', height);
+    if (stick) requestAnimationFrame(() => scrollToBottom());
+  }
+  if (scrollY) scrollTo(0, 0);
+}
+
+/**
+ * Overlays the browser's Back button closes (the artifacts gallery, a full-screen
+ * artifact), innermost first. On a phone Back is the natural way out; leaving the page
+ * by accident would drop the session view.
+ */
+const layers = [];
+/** History entries pushed for layers and not yet gone back over. */
+let entries = 0;
+let skipPops = 0;
+let syncing = false;
+/**
+ * Brings the history entries in line with the open layers once the current change is done,
+ * so closing one overlay and opening another reuses the entry rather than racing Back
+ * (which is asynchronous) against a push.
+ */
+function syncHistory() {
+  if (syncing) return;
+  syncing = true;
+  queueMicrotask(() => {
+    syncing = false;
+    while (entries < layers.length) window.history.pushState({ tamaleLayer: ++entries }, '');
+    if (entries > layers.length) {
+      skipPops++;
+      window.history.go(layers.length - entries);
+      entries = layers.length;
+    }
+  });
+}
+function pushLayer(close) {
+  layers.push(close);
+  syncHistory();
+}
+/**
+ * Forgets `close` when its overlay is closed some other way, rewinding the entry it added.
+ * When Back closed it, popstate has already taken it off, so this does nothing.
+ */
+function dropLayer(close) {
+  const at = layers.lastIndexOf(close);
+  if (at < 0) return;
+  layers.splice(at, 1);
+  syncHistory();
+}
+addEventListener('popstate', () => {
+  if (skipPops) return void skipPops--;
+  if (!entries) return;
+  entries--;
+  layers.pop()?.();
+});
+
+/** Focuses the prompt, except on touch screens, where that would pop up the keyboard. */
+function focusPrompt() {
+  if (!touch.matches) input.focus();
+}
 
 const fmtTokens = (n) =>
   n < 1000 ? `${n}` : n < 1e6 ? `${(n / 1000).toFixed(n < 1e4 ? 1 : 0)}k` : `${(n / 1e6).toFixed(1)}M`;
@@ -403,6 +485,35 @@ function patchProse(node, html) {
 const slug = (title) =>
   title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'artifact';
 
+/** The artifact shown full screen, and how to close it. */
+let fullArtifact = null;
+function closeFullArtifact() {
+  const box = fullArtifact;
+  if (!box) return;
+  fullArtifact = null;
+  box.classList.remove('full');
+  document.body.classList.remove('artifact-open');
+  const btn = box.querySelector('.artifact-expand');
+  if (btn) {
+    btn.innerHTML = ICON.expand;
+    btn.title = 'Full screen';
+  }
+  dropLayer(closeFullArtifact);
+}
+function openFullArtifact(box) {
+  if (fullArtifact === box) return;
+  closeFullArtifact();
+  fullArtifact = box;
+  box.classList.add('full');
+  document.body.classList.add('artifact-open');
+  const btn = box.querySelector('.artifact-expand');
+  if (btn) {
+    btn.innerHTML = ICON.shrink;
+    btn.title = 'Exit full screen (esc)';
+  }
+  pushLayer(closeFullArtifact);
+}
+
 /** Turns `.artifact[data-src]` placeholders into sandboxed embeds with a toolbar. */
 function mountArtifacts(scope) {
   const found = scope.matches?.('.artifact[data-src]') ? [scope] : scope.querySelectorAll('.artifact[data-src]');
@@ -416,39 +527,35 @@ function mountArtifacts(scope) {
       referrerpolicy: 'no-referrer',
       loading: 'lazy',
     });
+    const toggleFull = () => (box.classList.contains('full') ? closeFullArtifact() : openFullArtifact(box));
     const bar = h(
       'div',
       { class: 'artifact-bar' },
       h('span', { class: 'artifact-icon', html: ICON.spark }),
-      h('span', { class: 'artifact-title', text: box.dataset.title }),
+      // On a phone the title is the biggest target there is: tap it for full screen.
+      h('button', { class: 'artifact-title', text: box.dataset.title, title: box.dataset.title, onclick: toggleFull }),
       h('span', { class: 'spacer' }),
       h('button', {
         class: 'artifact-btn',
         title: 'Revise this artifact',
         html: ICON.edit,
         onclick: () => {
-          box.classList.remove('full');
+          closeFullArtifact();
           setInput(`Revise the "${box.dataset.title}" artifact: `);
         },
       }),
       h('a', {
-        class: 'artifact-btn',
+        class: 'artifact-btn wide-only',
         title: 'Download as HTML (also saved with the session; /artifacts lists them)',
         href: src,
         download: `${slug(box.dataset.title)}.html`,
         html: ICON.download,
       }),
       h('button', {
-        class: 'artifact-btn',
+        class: 'artifact-btn wide-only',
         title: 'Reload',
         html: ICON.reload,
         onclick: () => (frame.src = src),
-      }),
-      h('button', {
-        class: 'artifact-btn',
-        title: 'Expand',
-        html: ICON.expand,
-        onclick: () => box.classList.toggle('full'),
       }),
       h('a', {
         class: 'artifact-btn',
@@ -458,27 +565,44 @@ function mountArtifacts(scope) {
         rel: 'noopener noreferrer',
         html: ICON.open,
       }),
+      h('button', {
+        class: 'artifact-btn artifact-expand',
+        title: 'Full screen',
+        html: ICON.expand,
+        onclick: toggleFull,
+      }),
     );
     box.append(bar, frame);
   }
 }
 
-// Artifacts report their height (see ARTIFACT_RESIZER in src/web.rs).
+// Artifacts report their height (see ARTIFACT_RESIZER in src/web.rs). Narrow screens make
+// them tall, so the cap is generous: a frame that scrolls inside a scrolling page is
+// awkward to use with a finger.
+//
+// A page sized in viewport units (`min-height: 100vh` plus a margin) grows a little every
+// time its frame does; after a run of small, quick steps the frame stops following it.
 addEventListener('message', (ev) => {
   const height = ev.data?.tamaleArtifactHeight;
   if (typeof height !== 'number') return;
   for (const frame of thread.querySelectorAll('.artifact iframe')) {
     if (frame.contentWindow !== ev.source) continue;
+    const now = performance.now();
+    const step = height - (parseFloat(frame.style.height) || 0);
+    const run = (frame._growth ??= { count: 0, at: 0 });
+    if (step > 0 && step <= 48 && now - run.at < 400) run.count++;
+    else if (step !== 0) run.count = 0;
+    run.at = now;
+    if (step > 0 && run.count >= 6) continue;
     const stick = nearBottom();
-    frame.style.height = `${Math.max(120, Math.min(height, 2400))}px`;
+    frame.style.height = `${Math.max(120, Math.min(height, 8000))}px`;
     if (stick) scrollToBottom();
   }
 });
 
 addEventListener('keydown', (ev) => {
-  const full = thread.querySelector('.artifact.full');
-  if (ev.key === 'Escape' && full) {
-    full.classList.remove('full');
+  if (ev.key === 'Escape' && fullArtifact) {
+    closeFullArtifact();
     ev.stopPropagation();
   }
 }, true);
@@ -739,6 +863,8 @@ function submit() {
   }
   if (send({ t: 'send', text })) {
     setInput('');
+    // Put the keyboard away so the reply has the screen.
+    if (touch.matches) input.blur();
     scrollToBottom(true);
   }
 }
@@ -899,7 +1025,8 @@ input.addEventListener('keydown', (ev) => {
       return;
     }
   }
-  if (ev.key === 'Enter' && !ev.shiftKey && !ev.altKey) {
+  // On a touch keyboard Return is the only way to start a new line; the button sends.
+  if (ev.key === 'Enter' && !ev.shiftKey && !ev.altKey && !touch.matches) {
     ev.preventDefault();
     submit();
     return;
@@ -982,7 +1109,7 @@ function closeCode() {
   $('splitter').hidden = true;
   $('toggle-code').classList.remove('on');
   saveCode();
-  input.focus();
+  focusPrompt();
 }
 
 const toggleCode = () => (code.open ? closeCode() : openCode(!activeTab()));
@@ -1585,7 +1712,7 @@ for (const mask of document.querySelectorAll('.pickmask')) {
 // ---------------------------------------------------------------- artifacts gallery
 
 /** Saved artifacts by session, from the server, and which one is shown. */
-const gallery = { sessions: [], rows: [], at: -1 };
+const gallery = { sessions: [], rows: [], at: -1, viewing: false };
 
 function ago(secs) {
   const d = Math.max(0, Date.now() / 1000 - secs);
@@ -1597,19 +1724,44 @@ function ago(secs) {
 }
 
 function openArtifacts() {
+  if (!$('artifacts').hidden) return;
+  closeFullArtifact();
   $('artifacts').hidden = false;
   $('art-find').value = '';
   $('art-list').innerHTML = '<div class="pickempty">Loading…</div>';
+  showArtifactPane(false);
   if (gallery.at < 0) showArtifact(null);
   request('artifacts');
-  $('art-find').focus();
+  if (!touch.matches) $('art-find').focus();
+  pushLayer(closeArtifacts);
 }
 
 function closeArtifacts() {
+  if ($('artifacts').hidden) return;
+  // Back from an artifact on a phone returns to the list first.
+  if (gallery.viewing) {
+    dropLayer(closeArtifactPane);
+    gallery.viewing = false;
+  }
   $('artifacts').hidden = true;
   $('art-view').innerHTML = '';
   gallery.at = -1;
-  input.focus();
+  dropLayer(closeArtifacts);
+  focusPrompt();
+}
+
+/**
+ * On narrow screens the gallery shows the list or one artifact, not both; this switches
+ * between them. Wide screens always show both.
+ */
+function showArtifactPane(on) {
+  $('art-box').classList.toggle('viewing', on);
+}
+function closeArtifactPane() {
+  if (!gallery.viewing) return;
+  gallery.viewing = false;
+  showArtifactPane(false);
+  dropLayer(closeArtifactPane);
 }
 
 function applyArtifacts(sessions) {
@@ -1637,7 +1789,7 @@ function renderArtifactList() {
       const index = gallery.rows.length;
       gallery.rows.push({ ...item, current: session.current });
       list.append(
-        h('button', { class: 'art-row', 'data-i': index, title: item.title, onclick: () => selectArtifact(index) },
+        h('button', { class: 'art-row', 'data-i': index, title: item.title, onclick: () => selectArtifact(index, true) },
           h('span', { html: ICON.spark }),
           h('span', { class: 't', text: item.title }),
           h('span', { class: 'ago', text: ago(item.modified) })),
@@ -1650,7 +1802,8 @@ function renderArtifactList() {
     showArtifact(null);
     return;
   }
-  if (gallery.at < 0) selectArtifact(0);
+  // A phone shows the list first; loading the first artifact behind it would be wasted.
+  if (gallery.at < 0 && !narrow.matches) selectArtifact(0);
   else markArtifact();
 }
 
@@ -1662,13 +1815,18 @@ function markArtifact() {
   }
 }
 
-function selectArtifact(index) {
+function selectArtifact(index, tapped = false) {
   if (index < 0 || index >= gallery.rows.length) return;
   if (index !== gallery.at) {
     gallery.at = index;
     showArtifact(gallery.rows[index]);
   }
   markArtifact();
+  if (tapped && narrow.matches && !gallery.viewing) {
+    gallery.viewing = true;
+    showArtifactPane(true);
+    pushLayer(closeArtifactPane);
+  }
 }
 
 /** The chat's embed of an artifact, if it's in the conversation on screen. */
@@ -1685,14 +1843,16 @@ function showArtifact(item) {
     return;
   }
   const embed = inChat(item.url);
-  const btn = (title, icon, onclick) => h('button', { class: 'artifact-btn', title, html: icon, onclick });
+  const btn = (title, icon, onclick, extra = '') =>
+    h('button', { class: `artifact-btn ${extra}`, title, html: icon, onclick });
   view.append(
     h('div', { class: 'artifact-bar' },
+      btn('Back to the list', ICON.back, closeArtifactPane, 'art-back'),
       h('span', { class: 'artifact-icon', html: ICON.spark }),
-      h('span', { class: 'artifact-title', text: item.title }),
+      h('span', { class: 'artifact-title', text: item.title, title: item.title }),
       h('span', { class: 'art-path', title: item.file, text: item.file }),
       h('span', { class: 'spacer' }),
-      embed && btn('Show in the chat', ICON.chev, () => {
+      embed && btn('Show in the chat', ICON.chat, () => {
         closeArtifacts();
         embed.scrollIntoView({ block: 'start', behavior: 'smooth' });
       }),
@@ -1702,7 +1862,7 @@ function showArtifact(item) {
           ? `Revise the "${item.title}" artifact: `
           : `Revise the "${item.title}" artifact from an earlier session (saved at ${item.file}; read it first): `);
       }),
-      h('a', { class: 'artifact-btn', title: 'Download as HTML', href: item.url, download: `${slug(item.title)}.html`, html: ICON.download }),
+      h('a', { class: 'artifact-btn wide-only', title: 'Download as HTML', href: item.url, download: `${slug(item.title)}.html`, html: ICON.download }),
       h('a', { class: 'artifact-btn', title: 'Open in a new tab', href: item.url, target: '_blank', rel: 'noopener noreferrer', html: ICON.open }),
     ),
     h('iframe', {
@@ -1797,6 +1957,10 @@ addEventListener('keydown', (ev) => {
 
 // ---------------------------------------------------------------- start
 
+window.visualViewport?.addEventListener('resize', fitViewport);
+window.visualViewport?.addEventListener('scroll', fitViewport);
+fitViewport();
+if (touch.matches) input.placeholder = 'Ask tamale anything…';
 if (store.get('codeOpen', false)) openCode();
 renderView();
 autosize();

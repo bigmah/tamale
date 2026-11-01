@@ -42,11 +42,20 @@
   --quick: 110ms;
   --ease: cubic-bezier(0.2, 0, 0, 1);
   --chat-w: 44%;
+  /* Side padding of the thread and dock; artifacts bleed into it on phones. */
+  --gutter: 28px;
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
   color-scheme: dark;
 }
 
 html, body { height: 100%; overflow: hidden; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
   background: var(--bg);
   color: var(--fg);
   font-family: var(--sans);
@@ -56,6 +65,8 @@ body {
 :focus { outline: none; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; user-select: none; }
+/* No double-tap zoom (and its tap delay) on controls. */
+button, a, input, textarea, .row, .pickrow, .art-row { touch-action: manipulation; }
 input, textarea { font: inherit; color: inherit; }
 [hidden] { display: none !important; }
 kbd {
@@ -82,7 +93,8 @@ svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width:
 @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 @keyframes flash { from { background-color: var(--accent-soft); } to { background-color: transparent; } }
 
-.app { display: flex; flex-direction: column; height: 100vh; }
+/* --app-h is the visible height, keyboard excluded, where the browser reports it (app.js). */
+.app { display: flex; flex-direction: column; height: 100vh; height: var(--app-h, 100dvh); }
 .spacer { flex: 1; }
 
 /* ---------- top bar ---------- */
@@ -91,8 +103,8 @@ svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width:
   display: flex;
   align-items: center;
   gap: 8px;
-  height: var(--bar);
-  padding: 0 10px 0 14px;
+  height: calc(var(--bar) + var(--safe-t));
+  padding: var(--safe-t) calc(10px + var(--safe-r)) 0 calc(14px + var(--safe-l));
   background: var(--bg-1);
   border-bottom: 1px solid var(--border);
   flex: none;
@@ -181,7 +193,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .thread {
   max-width: 960px;
   margin: 0 auto;
-  padding: 28px 28px 8px;
+  padding: 28px calc(var(--gutter) + var(--safe-r)) 8px calc(var(--gutter) + var(--safe-l));
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -339,6 +351,8 @@ body.resizing { cursor: col-resize; user-select: none; }
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: none;
+  min-width: 0;
   height: 34px;
   padding: 0 6px 0 12px;
   background: var(--bg-2);
@@ -348,7 +362,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 .artifact.building .artifact-bar { border-bottom: none; }
 .artifact-icon { display: inline-flex; color: var(--violet); }
 .artifact-icon svg { width: 13px; height: 13px; fill: currentColor; stroke: none; }
-.artifact-title { color: var(--fg-bright); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-title { color: var(--fg-bright); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; text-align: left; }
+button.artifact-title { padding: 4px 0; flex: 0 1 auto; }
 .artifact.building .artifact-title {
   background: linear-gradient(90deg, var(--fg-dim) 0%, var(--fg-bright) 50%, var(--fg-dim) 100%);
   background-size: 200% 100%;
@@ -374,14 +389,18 @@ body.resizing { cursor: col-resize; user-select: none; }
 .artifact iframe { display: block; width: 100%; height: 420px; border: none; background: var(--bg); }
 .artifact.full {
   position: fixed;
-  inset: 16px;
+  inset: calc(16px + var(--safe-t)) calc(16px + var(--safe-r)) calc(16px + var(--safe-b)) calc(16px + var(--safe-l));
   z-index: 50;
   display: flex;
   flex-direction: column;
+  margin: 0 !important;
   box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.55), 0 20px 60px rgba(0, 0, 0, 0.5);
   animation: fadein 140ms var(--ease);
 }
-.artifact.full iframe { flex: 1; height: auto !important; }
+.artifact.full iframe { flex: 1; height: auto !important; min-height: 0; }
+/* Nothing behind a full-screen artifact scrolls or takes a tap. */
+body.artifact-open .scroller { overflow: hidden; }
+body.artifact-open .app::after { content: ""; position: fixed; inset: 0; z-index: 49; }
 
 .table { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--r-lg); }
 .prose table { border-collapse: collapse; width: 100%; font-size: 13px; }
@@ -485,7 +504,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .activity {
   max-width: 800px;
   margin: 0 auto;
-  padding: 6px 28px 20px;
+  padding: 6px calc(var(--gutter) + var(--safe-r)) 20px calc(var(--gutter) + var(--safe-l));
   display: flex;
   align-items: center;
   gap: 10px;
@@ -517,7 +536,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   width: 100%;
   max-width: 800px;
   margin: 0 auto;
-  padding: 0 28px 10px;
+  padding: 0 calc(var(--gutter) + var(--safe-r)) max(10px, var(--safe-b)) calc(var(--gutter) + var(--safe-l));
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -663,6 +682,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   color: var(--fg-bright);
 }
 .composer textarea::placeholder { color: var(--fg-faint); }
+.composer textarea:focus-visible { outline: none; }
 .send {
   position: absolute;
   right: 8px;
@@ -916,10 +936,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .art-view iframe { flex: 1; width: 100%; border: none; background: var(--bg); }
 .art-path { color: var(--fg-faint); font-family: var(--mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; min-width: 0; }
 .art-empty { margin: auto; padding: 24px; color: var(--fg-faint); text-align: center; line-height: 1.6; max-width: 360px; }
-@media (max-width: 760px) {
-  .art-body { grid-template-columns: 1fr; grid-template-rows: 38% 1fr; }
-  .art-list { border-right: none; border-bottom: 1px solid var(--border); }
-}
+.art-back { display: none; }
 
 /* ---------- syntax (see src/web/render.rs for the kinds) ---------- */
 
@@ -950,9 +967,120 @@ body.resizing { cursor: col-resize; user-select: none; }
   .meters .ctx, .meters .cost { display: none; }
   .side { width: 210px; }
 }
+
+/* ---------- touch screens: no hover, finger-sized targets ---------- */
+
+@media (hover: none) {
+  /* Controls that appear on hover are always there. */
+  .copybtn, .tool-open, .tabx { opacity: 1; }
+  .keys-only { display: none !important; }
+}
+
+@media (pointer: coarse) {
+  :root { --ctl: 40px; --hdr: 42px; }
+  /* Under 16px, iOS zooms the page into a field when it's focused. */
+  input, textarea, .composer textarea, .pickinput, .side-find input, .ap-reason input { font-size: 16px; }
+  .composer textarea { padding: 12px 54px 12px 15px; min-height: 50px; }
+  .send { width: 38px; height: 38px; border-radius: 11px; right: 6px; bottom: 6px; }
+  .pill { height: 32px; padding: 0 12px; }
+  .iconbtn.sm { width: 36px; height: 36px; }
+  .iconbtn svg { width: 17px; height: 17px; }
+  .btn { height: 40px; padding: 0 14px; font-size: 14px; }
+  .chip { padding: 10px 15px; }
+  .copybtn { height: 30px; padding: 0 12px; font-size: 12px; }
+
+  .artifact-bar { height: 44px; padding: 0 4px 0 12px; gap: 2px; font-size: 13px; }
+  .artifact-btn { width: 38px; height: 38px; }
+  .artifact-btn svg { width: 16px; height: 16px; }
+  button.artifact-title { padding: 10px 6px 10px 4px; }
+
+  .tool-head { min-height: 38px; }
+  .slash-row { padding: 11px 12px; }
+  .pickrow { padding: 11px 12px; }
+  .art-row { padding: 12px; font-size: 14px; }
+  .row { height: 34px; font-size: 14px; }
+  .seg button { height: 30px; font-size: 13px; }
+  .side-find input { height: 36px; }
+  .pickinput { height: 50px; }
+  .tab { padding: 0 4px 0 14px; }
+  .tabx { width: 30px; height: 30px; }
+}
+
+/* ---------- phones ---------- */
+
 @media (max-width: 640px) {
-  .thread, .dock, .activity { padding-left: 14px; padding-right: 14px; }
+  :root { --gutter: 12px; --bar: 50px; }
+  .thread { padding-top: 16px; gap: 12px; }
   .wschip, .pill.model { display: none; }
-  .hints > span:last-child { display: none; }
-  .side { display: none; }
+  .hero { padding-top: 9vh; }
+  .hero h1 { font-size: 21px; }
+  .hero-chips { flex-direction: column; align-items: stretch; }
+  .msg.user { max-width: 88%; }
+  .tool-desc { max-width: 70%; }
+  .tool-out { margin-left: 14px; }
+  .activity { padding-bottom: 12px; }
+
+  /* Artifacts take the full width of the screen: every pixel counts at 375px. */
+  .prose .artifact {
+    margin-left: calc(-1 * (var(--gutter) + var(--safe-l)));
+    margin-right: calc(-1 * (var(--gutter) + var(--safe-r)));
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+  }
+  .artifact-bar { padding-left: calc(12px + var(--safe-l)); padding-right: calc(4px + var(--safe-r)); }
+  .wide-only { display: none !important; }
+  .artifact-meta { display: none; }
+
+  /* Full screen is the whole screen, around the notch and home indicator. */
+  .artifact.full {
+    inset: 0;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    padding-bottom: var(--safe-b);
+    background: var(--bg);
+  }
+  .artifact.full .artifact-bar { height: calc(44px + var(--safe-t)); padding-top: var(--safe-t); }
+
+  .approval { padding: 12px; }
+  .ap-actions .btn { flex: 1 1 auto; justify-content: center; }
+  .ap-reason { flex-wrap: wrap; }
+
+  .slash-desc { display: none; }
+  .jump { bottom: calc(100% + 12px); }
+
+  /* Overlays become sheets that fill the screen. */
+  .pickmask { padding: calc(8px + var(--safe-t)) calc(8px + var(--safe-r)) 8px calc(8px + var(--safe-l)); }
+  .pickbox { max-width: 100%; width: 100%; }
+  .helpbox { max-height: calc(var(--app-h, 100dvh) - 16px - var(--safe-t)); padding: 18px 16px calc(18px + var(--safe-b)); }
+  .helprow { grid-template-columns: 1fr; gap: 2px; padding: 8px 0; }
+
+  /* The code browser: files above, the file below. */
+  .code { flex-direction: column; }
+  .side { display: flex; width: auto; height: 40%; border-right: none; border-bottom: 1px solid var(--border); }
+  .viewhdr { padding-left: 12px; }
+  .vmeta { display: none; }
+  .codeview { padding-bottom: 30vh; }
+  .ln { width: 44px; padding-right: 10px; }
+}
+
+@media (max-width: 380px) {
+  .brand-name { display: none; }
+}
+
+/* ---------- the artifacts gallery on narrow screens: the list, or one artifact ---------- */
+
+@media (max-width: 760px) {
+  .pickmask:has(.artbox) { padding: 0; }
+  .artbox { border: none; border-radius: 0; box-shadow: none; animation: fadein 120ms var(--ease); }
+  .art-hdr { padding-top: var(--safe-t); padding-left: var(--safe-l); padding-right: calc(6px + var(--safe-r)); }
+  .art-body { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+  .art-list { border-right: none; padding-bottom: calc(12px + var(--safe-b)); padding-left: calc(6px + var(--safe-l)); padding-right: calc(6px + var(--safe-r)); }
+  .artbox:not(.viewing) .art-view { display: none; }
+  .artbox.viewing .art-list, .artbox.viewing .art-hdr { display: none; }
+  .artbox.viewing .art-view { padding-bottom: var(--safe-b); }
+  .art-view .artifact-bar { height: calc(44px + var(--safe-t)); padding-top: var(--safe-t); padding-left: calc(4px + var(--safe-l)); padding-right: calc(4px + var(--safe-r)); }
+  .art-back { display: inline-flex; }
+  .art-path { display: none; }
 }

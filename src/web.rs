@@ -108,6 +108,9 @@ const ARTIFACT_RESIZER: &str = "<script>(()=>{const post=()=>parent.postMessage(
 addEventListener('load',post);new ResizeObserver(post).observe(document.documentElement);\
 post();})();</script>";
 
+/// Script added to each artifact so nothing needs sideways scrolling on a narrow screen.
+const ARTIFACT_FIT: &str = concat!("<script>", include_str!("web/artifact-fit.js"), "</script>");
+
 /// Artifacts by id, and the id given to each document, so a re-rendered reply keeps its URLs.
 #[derive(Default)]
 struct Artifacts {
@@ -136,7 +139,7 @@ impl Artifacts {
             if let Some(dir) = dir {
                 let _ = save_artifact(dir, html);
             }
-            format!("{html}\n{ARTIFACT_RESIZER}").into()
+            format!("{html}\n{ARTIFACT_FIT}\n{ARTIFACT_RESIZER}").into()
         });
         format!("/artifact/{id}")
     }

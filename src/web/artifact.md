@@ -17,9 +17,47 @@ should feel like a purpose-built tool for this exact question, not a generic rep
   `localStorage` or the parent page. Embed every byte of data it shows. Inline all CSS and JS.
   Load a library from an https CDN (jsDelivr, unpkg, cdnjs) only when it earns its weight
   (e.g. a real chart or graph layout); never for things a few lines of vanilla JS can do.
-- The frame grows to fit the content, so let the document flow vertically. It must work from
-  ~360px to ~1400px wide with no horizontal page scroll; only `<pre>` and wide tables may
-  scroll, inside their own box.
+- The frame grows to fit the content, so let the document flow vertically. Never size the
+  page with `vh`/`dvh` or `height: 100%` on `html`/`body`: inside a frame that fits its
+  content they mean "as tall as you already are" and can loop. It must work from ~340px to
+  ~1400px wide. Below 640px nothing scrolls sideways, not the page and not any box in it;
+  on wide frames only `<pre>` and wide tables may scroll, inside their own box.
+
+## Phones come first
+
+The web UI is often open on a phone, where the artifact gets the full screen width (about
+360–430px) and is driven by a finger. Design for that width first and widen with
+`@media (min-width: …)`, not the other way round.
+
+- **Layout**: one column below ~640px. Card grids, side-by-side comparisons and
+  list/detail panes stack; a detail pane goes below its list (or replaces it, with a back
+  button). Page padding 16px on narrow frames, 24–32px on wide ones.
+- **Touch targets**: every button, tab, toggle, row and node a reader is meant to tap is at
+  least 40px tall (44px is better) with 8px between neighbours. Set
+  `touch-action: manipulation` on controls.
+- **No hover-only content**: tooltips, hover-to-reveal code and hover highlights must also
+  open on tap (click toggles them; a tap elsewhere closes them). Use `@media (hover: hover)`
+  for purely decorative hover effects.
+- **Type**: body text at least 14px (15px is better on phones), nothing below 12px. Form
+  fields at 16px, or iOS zooms the page into them.
+- **No sideways scrolling on phones**: swiping sideways inside a page that scrolls down is
+  fiddly, so below 640px everything fits the width:
+  - Tables with more than ~3 columns become stacked cards (each row a card of label/value
+    pairs, built with your own media query).
+  - Code and diffs wrap (`white-space: pre-wrap; overflow-wrap: anywhere`), with a hanging
+    indent if you like; line numbers stay in their gutter.
+  - Diagrams get a vertical variant (nodes top to bottom) sized to the width, never a
+    `min-width`. Labels stay ≥ 11px on screen; if they wouldn't, the diagram has too much
+    in it for a phone: split it into steps.
+  - Charts with many categories turn horizontal (one bar per row) instead of getting wider.
+  - Tab rows that don't fit wrap onto two lines or become a `<select>`.
+  - No element has a fixed width or `min-width` above ~320px; grids use
+    `minmax(0, 1fr)` so long content can't widen a column.
+- tamale also wraps code, stacks wide tables and clamps anything wider than the screen when
+  it serves an artifact to a phone, but that's a safety net: a page designed for the width
+  looks far better than one squeezed into it.
+- Test it in your head at 375px: nothing clipped, nothing overlapping, no horizontal scroll,
+  and the first screen still answers the question.
 
 ## Revisions
 
@@ -81,7 +119,7 @@ Use these tokens so artifacts feel native to tamale:
 ## Components worth getting right
 
 - **Code**: `<pre>` on `--panel-2`, 12.5px mono, line numbers in a muted gutter, a filename
-  header, horizontal scroll inside the block. Highlight with a few hand-written spans
+  header, horizontal scroll inside the block on wide frames and wrapped lines on phones. Highlight with a few hand-written spans
   (keywords, strings, comments) rather than pulling in a library for a short snippet.
 - **Diffs**: one row per line; `+` rows on `--green-bg`, `−` rows on `--red-bg`, old/new line
   numbers, hunk headers in muted mono. Show only the relevant hunks with context.
@@ -90,8 +128,8 @@ Use these tokens so artifacts feel native to tamale:
   Lay nodes out on a grid; keep text inside nodes; animate a flow path only if it aids
   understanding.
 - **Charts**: axes and gridlines in `--border-soft`, labels in `--faint`, data in accent
-  (or semantic colors), direct labels instead of legends where possible, a hover tooltip
-  with the exact value.
+  (or semantic colors), direct labels instead of legends where possible, a tooltip with
+  the exact value that opens on hover and on tap.
 - **Tabs / steppers / toggles**: real `<button>`s with `aria-selected`/`aria-expanded`,
   keyboard support (arrows for tabs, Enter/Space), a visible `:focus-visible` ring, and
   150ms ease transitions. Remember state only in memory.
@@ -102,7 +140,7 @@ Use these tokens so artifacts feel native to tamale:
 
 Add interaction when it helps someone understand or explore: switching between files,
 stepping through an execution path, filtering a long list, expanding detail, toggling
-before/after, hovering a diagram node to see its code. Every control must do something real
+before/after, tapping a diagram node to see its code. Every control must do something real
 with embedded data. Static is fine when the content is simple; a dead button is not.
 
 ## Quality bar (check before you finish)
@@ -112,6 +150,7 @@ with embedded data. Static is fine when the content is simple; a dead button is 
   names, numbers and code. No placeholder, lorem ipsum, "TODO", or invented data.
 - Nothing overflows or overlaps at 360px or at 1400px; long paths and identifiers wrap or
   ellipsize (`overflow-wrap:anywhere`, `min-width:0` on flex/grid children).
+- On a phone everything tappable is at least 40px tall and nothing depends on hover.
 - Everything aligns to the grid; spacing is consistent; there is one visual hierarchy.
 - JS has no errors, runs after the DOM exists (put scripts at the end of `<body>`), and
   never blocks on the network for core content.
