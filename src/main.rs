@@ -242,7 +242,16 @@ async fn web_request(app: &mut App, web: &mut Option<web::Server>, request: WebR
                 *web = None;
             }
             if web.is_none() {
-                match web::Server::start(lan).await {
+                let started = match web::Server::start(lan).await {
+                    // Off any network, this machine can still use it.
+                    Err(e) if lan => web::Server::start(false).await.inspect(|_| {
+                        app.on_web(Ok(format!(
+                            "Serving the web UI to this machine only ({e:#})."
+                        )))
+                    }),
+                    started => started,
+                };
+                match started {
                     Ok(server) => *web = Some(server),
                     Err(e) => app.on_web(Err(format!("Couldn't serve the web UI: {e:#}"))),
                 }

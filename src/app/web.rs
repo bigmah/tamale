@@ -17,6 +17,11 @@ impl App {
         self.web_request.take()
     }
 
+    /// Asks to serve the web UI to the local network, as `/web`, ctrl+o and the Web tab do.
+    pub(super) fn open_web(&mut self) {
+        self.web_request = Some(WebRequest::Open { lan: true });
+    }
+
     /// Reports the outcome of a `/web` request.
     pub fn on_web(&mut self, result: Result<String, String>) {
         self.entries.push(match result {

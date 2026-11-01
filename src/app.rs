@@ -65,6 +65,14 @@ pub enum BrowserRequest {
     Close,
 }
 
+/// The footer's tabs, left to right.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FooterTab {
+    Web,
+    Chat,
+    Diff,
+}
+
 /// What `/web` asked of the event loop.
 pub enum WebRequest {
     /// Serve the web UI; with `lan`, to other devices on the local network too.
@@ -148,6 +156,11 @@ pub struct App {
     browser_request: Option<BrowserRequest>,
     /// Set by `/web`; the event loop starts or stops serving the web UI.
     web_request: Option<WebRequest>,
+    /// Where the footer's Web tab was last drawn, so a click on it opens the web UI.
+    web_tab: Option<ratatui::layout::Rect>,
+    /// The footer tab picked with ←/→ after ↓ past the prompt's last line moved the
+    /// keyboard there; Enter or ↓ opens it. `None` while the keyboard is in the prompt.
+    tab_focus: Option<FooterTab>,
     settings: Settings,
     tx: mpsc::UnboundedSender<AppEvent>,
     /// `None` until the list has been fetched.
@@ -249,6 +262,8 @@ impl App {
             login_request: None,
             browser_request: None,
             web_request: None,
+            web_tab: None,
+            tab_focus: None,
             settings,
             tx,
             models: None,

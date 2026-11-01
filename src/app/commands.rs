@@ -445,12 +445,12 @@ impl App {
             },
             "/artifacts" => self.list_artifacts(),
             "/web" => match cmd.split_whitespace().nth(1) {
-                None | Some("on") => self.web_request = Some(WebRequest::Open { lan: false }),
-                Some("lan") => self.web_request = Some(WebRequest::Open { lan: true }),
+                None | Some("on" | "lan") => self.open_web(),
+                Some("local") => self.web_request = Some(WebRequest::Open { lan: false }),
                 Some("off") => self.web_request = Some(WebRequest::Close),
                 Some(_) => self
                     .entries
-                    .push(Entry::Error("Usage: /web [on|lan|off]".into())),
+                    .push(Entry::Error("Usage: /web [local|off]".into())),
             },
             other => self.entries.push(Entry::Error(format!(
                 "Unknown command: {other} (type /help to see all commands)"

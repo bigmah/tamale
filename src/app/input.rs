@@ -1,6 +1,9 @@
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+};
+use ratatui::layout::Position;
 
-use super::{App, AppEvent, EFFORT_CHOICES, WHEEL_LINES};
+use super::{App, AppEvent, EFFORT_CHOICES, FooterTab, WHEEL_LINES};
 use crate::clipboard;
 use crate::session::Entry;
 
@@ -8,13 +11,25 @@ impl App {
     pub fn on_event(&mut self, event: Event) {
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
-            Event::Paste(text) => self.on_paste(&text),
+            Event::Paste(text) => {
+                // Pasting lands in the prompt, so the keyboard goes back there too.
+                self.tab_focus = None;
+                self.on_paste(&text)
+            }
             Event::Mouse(mouse) if self.diff_open && self.approval.is_none() => {
                 self.on_diff_mouse(mouse)
             }
             Event::Mouse(mouse) => match mouse.kind {
                 MouseEventKind::ScrollUp => self.on_wheel(true),
                 MouseEventKind::ScrollDown => self.on_wheel(false),
+                MouseEventKind::Down(MouseButton::Left)
+                    if self.approval.is_none()
+                        && self.web_tab.is_some_and(|tab| {
+                            tab.contains(Position::new(mouse.column, mouse.row))
+                        }) =>
+                {
+                    self.open_web()
+                }
                 _ => {}
             },
             _ => {}
@@ -130,6 +145,29 @@ impl App {
             return;
         }
 
+        if let Some(tab) = self.tab_focus {
+            // ←/→ only highlight a tab; Enter or ↓ opens it, so nothing opens by surprise.
+            let has_diff = self.tab_spans().is_some();
+            match (key.code, tab) {
+                (KeyCode::Left, FooterTab::Chat) => self.tab_focus = Some(FooterTab::Web),
+                (KeyCode::Left, FooterTab::Diff) => self.tab_focus = Some(FooterTab::Chat),
+                (KeyCode::Right, FooterTab::Web) => self.tab_focus = Some(FooterTab::Chat),
+                (KeyCode::Right, FooterTab::Chat) if has_diff => {
+                    self.tab_focus = Some(FooterTab::Diff)
+                }
+                (KeyCode::Enter | KeyCode::Down, FooterTab::Web) => self.open_web(),
+                (KeyCode::Enter | KeyCode::Down, FooterTab::Diff) => self.show_diff(),
+                (KeyCode::Enter | KeyCode::Up | KeyCode::Esc, _) => self.tab_focus = None,
+                (KeyCode::Left | KeyCode::Right | KeyCode::Down, _) => {}
+                // Anything else goes back to the prompt and acts there.
+                _ => {
+                    self.tab_focus = None;
+                    return self.on_key(key);
+                }
+            }
+            return;
+        }
+
         match key.code {
             KeyCode::Char('c') if ctrl => {
                 if self.is_running() {
@@ -142,6 +180,7 @@ impl App {
                 }
             }
             KeyCode::Char('d') if ctrl && self.input.is_empty() => self.should_quit = true,
+            KeyCode::Char('o') if ctrl => self.open_web(),
             KeyCode::Esc if self.is_running() => self.interrupt(),
             KeyCode::BackTab => {
                 let mut policy = self.permissions.lock().unwrap();
@@ -172,8 +211,6 @@ impl App {
                     self.input.drain(self.cursor..next);
                 }
             }
-            // With nothing typed, → switches to the Diff tab.
-            KeyCode::Right if self.input.is_empty() => self.show_diff(),
             KeyCode::Left => self.cursor = self.prev_boundary().unwrap_or(self.cursor),
             KeyCode::Right => self.cursor = self.next_boundary().unwrap_or(self.cursor),
             KeyCode::Home => self.cursor = self.line_start(),
@@ -209,6 +246,9 @@ impl App {
         } else if let Some(prompt) = self.prompts.next() {
             self.input = prompt;
             self.cursor = self.input.len();
+        } else {
+            // Past the last line (and the newest prompt): down to the footer's tabs.
+            self.tab_focus = Some(FooterTab::Chat);
         }
     }
 

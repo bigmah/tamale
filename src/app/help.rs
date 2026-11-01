@@ -84,8 +84,8 @@ const COMMANDS: &[(&str, &str)] = &[
         "Use tamale from a browser tab too (keys in either switch to it); /browser off stops it",
     ),
     (
-        "/web [lan|off]",
-        "Open a chat-first web UI with a code browser (/code there); /web lan serves it to your Wi-Fi, /web off stops it",
+        "/web [local|off]",
+        "Open a chat-first web UI on your Wi-Fi with a code browser (/code there); /web local keeps it to this machine, /web off stops it (ctrl+o or the Web tab opens it too)",
     ),
     (
         "/artifacts",
@@ -124,7 +124,11 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
                 "Mouse wheel",
                 "Scroll chat by 3 lines (also scrolls help and pickers)",
             ),
-            ("→ (empty prompt)", "Switch to the Diff tab; Esc or ← comes back"),
+            (
+                "↓ (below the prompt)",
+                "Focus the tabs: ←/→ pick Web (the web UI, like /web) or Diff, Enter/↓ opens it; ↑ or Esc back",
+            ),
+            ("Ctrl+O / click Web", "Open the web UI on your Wi-Fi, like /web"),
             ("v / V (in a diff)", "Select lines; Enter quotes them into the prompt, y copies"),
             ("Esc", "Interrupt the agent (unsent queued messages return to the input)"),
             (

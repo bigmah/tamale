@@ -914,7 +914,6 @@ impl App {
             spans.push(Span::styled(" Chat ", active));
             spans.push(Span::styled(" Diff", inactive));
             spans.extend(stats);
-            spans.push(Span::from("→ ").fg(Color::DarkGray));
         }
         Some(spans)
     }

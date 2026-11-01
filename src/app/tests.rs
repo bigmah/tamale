@@ -242,6 +242,99 @@ async fn sessions_are_saved_and_resumed() {
 }
 
 #[test]
+fn web_tab_click_ctrl_o_or_down_left_enter_open_the_web_ui() {
+    use super::{FooterTab, WebRequest};
+    use crossterm::event::{MouseButton, MouseEvent};
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("claude-sonnet-4-6"),
+        Workspace::current().unwrap(),
+    );
+    let lines = screen_lines(&mut app, 100, 30);
+    let footer = &lines[28];
+    assert!(footer.ends_with(" ◉ Web  Chat   "), "{footer}");
+
+    let click = |column, row| {
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+    };
+    app.on_event(click(10, 28));
+    assert!(
+        app.take_web_request().is_none(),
+        "a click elsewhere does nothing"
+    );
+    app.on_event(click(88, 28));
+    assert!(matches!(
+        app.take_web_request(),
+        Some(WebRequest::Open { lan: true })
+    ));
+
+    // In the prompt ← and → move the cursor; ↓ past its last line focuses the tabs.
+    type_text(&mut app, "hi");
+    app.on_event(key(KeyCode::Left));
+    assert!(app.take_web_request().is_none());
+    assert_eq!(app.cursor, 1);
+    app.on_event(key(KeyCode::Down));
+    assert_eq!(app.tab_focus, Some(FooterTab::Chat));
+    let footer = screen_lines(&mut app, 100, 30)[28].clone();
+    assert!(footer.ends_with("← ◉ Web  Chat   "), "{footer}");
+    // ← only highlights Web; Enter or ↓ opens it.
+    app.on_event(key(KeyCode::Left));
+    assert_eq!(app.tab_focus, Some(FooterTab::Web));
+    assert!(app.take_web_request().is_none());
+    app.on_event(key(KeyCode::Left));
+    assert_eq!(app.tab_focus, Some(FooterTab::Web), "nothing further left");
+    for open in [KeyCode::Enter, KeyCode::Down] {
+        app.on_event(key(open));
+        assert!(matches!(
+            app.take_web_request(),
+            Some(WebRequest::Open { lan: true })
+        ));
+    }
+    // Without a repository there is no Diff to the right of Chat.
+    app.on_event(key(KeyCode::Right));
+    app.on_event(key(KeyCode::Right));
+    assert_eq!(app.tab_focus, Some(FooterTab::Chat));
+    // Enter on Chat, ↑ and typing all go back to the prompt; typing still types.
+    app.on_event(key(KeyCode::Enter));
+    assert_eq!(app.tab_focus, None);
+    assert!(app.history.is_empty(), "Enter on a tab sends nothing");
+    app.on_event(key(KeyCode::Down));
+    app.on_event(key(KeyCode::Up));
+    assert_eq!(app.tab_focus, None);
+    app.on_event(key(KeyCode::Down));
+    type_text(&mut app, "!");
+    assert_eq!(app.tab_focus, None);
+    assert_eq!(app.input, "h!i");
+    app.input.clear();
+    app.cursor = 0;
+
+    app.on_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('o'),
+        KeyModifiers::CONTROL,
+    )));
+    assert!(matches!(
+        app.take_web_request(),
+        Some(WebRequest::Open { lan: true })
+    ));
+    app.command("/web");
+    assert!(matches!(
+        app.take_web_request(),
+        Some(WebRequest::Open { lan: true })
+    ));
+    app.command("/web local");
+    assert!(matches!(
+        app.take_web_request(),
+        Some(WebRequest::Open { lan: false })
+    ));
+}
+
+#[test]
 fn mouse_wheel_scrolls_chat_help_and_pickers() {
     use crossterm::event::MouseEvent;
     let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
@@ -785,7 +878,11 @@ fn status_shows_where_inference_comes_from_even_with_a_long_cwd() {
         .map(|x| buffer[(x, 10)].symbol().to_string())
         .collect();
     assert!(row.contains(" cwd: …"), "{row}");
-    assert!(row.trim_end().ends_with("· via Anthropic API"), "{row}");
+    assert!(row.contains("· via Anthropic API "), "{row}");
+    assert!(
+        row.ends_with(" ◉ Web  Chat   "),
+        "the tabs stay visible: {row}"
+    );
 }
 
 fn login(email: &str, dir: Option<&str>) -> Backend {
@@ -1351,9 +1448,9 @@ async fn arrow_keys_switch_between_chat_and_diff_tabs() {
     app.on_app_event(event);
     assert!(!app.diff_open, "preloading stays on the chat");
     let footer = screen_lines(&mut app, 100, 30)[28].clone();
-    assert!(footer.contains(" Chat  Diff 2 +2 −0 →"), "{footer}");
+    assert!(footer.contains(" ◉ Web  Chat  Diff 2 +2 −0   "), "{footer}");
 
-    // While typing, → moves the cursor; with an empty prompt it opens the Diff tab.
+    // In the prompt → only moves the cursor, even when empty; from the tabs it opens Diff.
     type_text(&mut app, "hi");
     app.on_event(key(KeyCode::Left));
     app.on_event(key(KeyCode::Right));
@@ -1362,6 +1459,16 @@ async fn arrow_keys_switch_between_chat_and_diff_tabs() {
     app.input.clear();
     app.cursor = 0;
     app.on_event(key(KeyCode::Right));
+    assert!(!app.diff_open);
+    app.on_event(key(KeyCode::Down));
+    let footer = screen_lines(&mut app, 100, 30)[28].clone();
+    assert!(footer.contains("← ◉ Web  Chat  Diff 2 +2 −0 → "), "{footer}");
+    // → highlights Diff without opening it; ↓ (or Enter) opens it.
+    app.on_event(key(KeyCode::Right));
+    assert!(!app.diff_open);
+    let footer = screen_lines(&mut app, 100, 30)[28].clone();
+    assert!(footer.contains("← ◉ Web  Chat  Diff 2 +2 −0   "), "{footer}");
+    app.on_event(key(KeyCode::Down));
     assert!(app.diff_open);
     let event = rx.recv().await.unwrap();
     app.on_app_event(event);
@@ -1377,8 +1484,9 @@ async fn arrow_keys_switch_between_chat_and_diff_tabs() {
     assert!(app.diff_open, "then folds it");
     app.on_event(key(KeyCode::Left));
     assert!(!app.diff_open);
-    // Coming back keeps the selection.
-    app.on_event(key(KeyCode::Right));
+    // Back on the chat Diff stays highlighted, so Enter reopens it with the selection kept.
+    assert_eq!(app.tab_focus, Some(super::FooterTab::Diff));
+    app.on_event(key(KeyCode::Enter));
     let event = rx.recv().await.unwrap();
     app.on_app_event(event);
     let text = screen_lines(&mut app, 100, 30).join("\n");

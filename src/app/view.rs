@@ -13,8 +13,8 @@ use super::backends::Choice;
 use super::help::help_lines;
 use super::markdown;
 use super::{
-    App, EFFORT_CHOICES, QUIET_SUMMARY_CHARS, QUIET_TOOL_CALLS, SPINNER, TOOL_PREVIEW_LINES,
-    effort_label,
+    App, EFFORT_CHOICES, FooterTab, QUIET_SUMMARY_CHARS, QUIET_TOOL_CALLS, SPINNER,
+    TOOL_PREVIEW_LINES, effort_label,
 };
 use crate::permissions;
 use crate::session;
@@ -441,7 +441,7 @@ impl App {
                 Line::from(vec![Span::from(prefix).fg(Color::Cyan), Span::from(row)])
             })
             .collect();
-        let border = if self.is_running() {
+        let border = if self.is_running() || self.tab_focus.is_some() {
             Color::DarkGray
         } else {
             Color::Cyan
@@ -450,21 +450,64 @@ impl App {
             .border_type(BorderType::Rounded)
             .border_style(Style::new().fg(border));
         frame.render_widget(Paragraph::new(lines).block(block), area);
+        // With the tabs focused there is no cursor in the prompt.
+        if self.tab_focus.is_some() {
+            return;
+        }
         frame.set_cursor_position(Position::new(
             area.x + 3 + cursor.1 as u16,
             area.y + 1 + (cursor.0 - skip) as u16,
         ));
     }
 
-    fn draw_status(&self, frame: &mut Frame, area: Rect) {
+    fn draw_status(&mut self, frame: &mut Frame, area: Rect) {
         // Where inference comes from stays visible; a long cwd loses its start instead.
         let backend = self.backend_label();
         let dirs = match self.workspace.additional_dirs.len() {
             0 => String::new(),
             n => format!(" +{n} dirs"),
         };
-        let tabs = self.tab_spans();
-        let tabs_width: usize = tabs.iter().flatten().map(|s| s.content.width()).sum();
+        // Web sits left of Chat, Diff right of it, as ← and → reach them once ↓ has
+        // focused the tabs; a click on Web works too.
+        // The highlighted tab is filled; the others stay quiet, Chat marked as current.
+        let focus = self.tab_focus;
+        let picked = |tab| focus == Some(tab);
+        let style = |tab, color| {
+            if picked(tab) {
+                Style::new().fg(Color::Black).bg(color).bold()
+            } else if tab == FooterTab::Chat {
+                Style::new().fg(Color::Cyan).bold()
+            } else {
+                Style::new().fg(Color::Gray)
+            }
+        };
+        let mut chat = self
+            .tab_spans()
+            .unwrap_or_else(|| vec![Span::from(" Chat ")]);
+        let has_diff = chat.len() > 1;
+        chat[0] = Span::styled(" Chat ", style(FooterTab::Chat, Color::Cyan));
+        if has_diff {
+            // A whole " Diff " fills evenly; the counts after it lose their leading gap.
+            chat[1] = Span::styled(" Diff ", style(FooterTab::Diff, Color::Cyan));
+            if let Some(next) = chat.get_mut(2) {
+                next.content = next.content.trim_start().to_string().into();
+            }
+        }
+        // Arrows show where ← and → can still go.
+        let arrow =
+            |s: &'static str, shown: bool| Span::from(if shown { s } else { " " }).fg(Color::Cyan);
+        let mut tabs = vec![
+            arrow("←", focus.is_some_and(|t| t != FooterTab::Web)),
+            Span::styled(" ◉ Web ", style(FooterTab::Web, Color::Blue)),
+        ];
+        let web_offset = tabs[0].content.width() as u16;
+        tabs.extend(chat);
+        tabs.push(arrow(
+            "→",
+            has_diff && focus.is_some_and(|t| t != FooterTab::Diff),
+        ));
+        tabs.push(Span::from(" "));
+        let tabs_width: usize = tabs.iter().map(|s| s.content.width()).sum();
         let fixed =
             " cwd: ".len() + dirs.width() + " · via ".len() + backend.width() + tabs_width + 1;
         let cwd = truncate_start(
@@ -497,10 +540,16 @@ impl App {
             "↑/↓ move · enter select · d remove · esc cancel"
         } else if self.help_scroll.is_some() {
             "↑/↓ j/k scroll · pgup/pgdn page · esc close"
+        } else if let Some(tab) = self.tab_focus {
+            match tab {
+                FooterTab::Web => "enter/↓ open the web UI · ←/→ choose · ↑ back",
+                FooterTab::Diff => "enter/↓ open the diff · ←/→ choose · ↑ back",
+                FooterTab::Chat => "←/→ choose a tab · enter/↑ back to the prompt",
+            }
         } else if self.is_running() {
             "esc to interrupt"
         } else {
-            "enter send · shift+tab mode · /help"
+            "enter send · shift+tab mode · ↓ tabs · /help"
         };
         let mode = self.permissions.lock().unwrap().mode;
         let mode_color = match mode {
@@ -569,9 +618,11 @@ impl App {
             Span::from(format!("· {hint}")).fg(Color::DarkGray),
         ]);
         frame.render_widget(Paragraph::new(vec![cwd_line, line]), area);
-        if let Some(tabs) = tabs {
-            frame.render_widget(Line::from(tabs).right_aligned(), area);
-        }
+        frame.render_widget(Line::from(tabs).right_aligned(), area);
+        // Clickable where it was drawn, right-aligned with the rest of the tabs.
+        let start = (area.x + area.width).saturating_sub(tabs_width as u16) + web_offset;
+        self.web_tab =
+            Some(Rect::new(start, area.y, " ◉ Web ".width() as u16, 1).intersection(area));
     }
 }
 
