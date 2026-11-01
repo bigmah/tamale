@@ -87,6 +87,10 @@ const COMMANDS: &[(&str, &str)] = &[
         "/web [off]",
         "Open a chat-first web UI with a code browser (/code there); /web off stops it",
     ),
+    (
+        "/artifacts",
+        "List this session's saved HTML artifacts (in /web: browse every session's)",
+    ),
     ("/clear", "Clear the conversation and start fresh"),
     ("/quit, /exit", "Quit tamale"),
 ];

@@ -16,7 +16,9 @@ the work without the original messages. Include:\n\
 Be specific (exact paths, names, snippets where essential) but concise. \
 Respond with the summary only.";
 
-pub fn system_prompt(workspace: &Workspace) -> String {
+/// The system prompt. With `web_ui`, it also carries the artifact design guide (see
+/// [`crate::web::artifact_guide`]), since every reply then ends in an HTML artifact.
+pub fn system_prompt(workspace: &Workspace, web_ui: bool) -> String {
     let mut prompt = format!(
         "You are a coding agent running in the user's terminal. You help with software \
 engineering tasks: reading, writing and editing code, running commands, and answering questions \
@@ -70,6 +72,11 @@ Project-specific instructions apply to files in their respective directories.\n"
                 text.trim()
             ));
         }
+    }
+    if web_ui {
+        prompt.push_str("\n# Web UI artifacts\n\n");
+        prompt.push_str(crate::web::artifact_guide().trim());
+        prompt.push('\n');
     }
     prompt
 }
@@ -138,11 +145,11 @@ mod tests {
             cwd: root.join("app"),
             additional_dirs: Vec::new(),
         };
-        let before = system_prompt(&workspace);
+        let before = system_prompt(&workspace, false);
         assert!(before.contains("App instructions sentinel"));
         assert!(!before.contains("Shared instructions sentinel"));
         workspace.add_dir(Path::new("../shared/nested")).unwrap();
-        let prompt = system_prompt(&workspace);
+        let prompt = system_prompt(&workspace, false);
         assert!(prompt.contains(&workspace.additional_dirs[0].display().to_string()));
         assert!(prompt.contains(&format!("Working directory: {}", workspace.cwd.display())));
         for text in [

@@ -33,6 +33,8 @@ const ICON = {
   spark: '<svg viewBox="0 0 16 16"><path d="M8 1.5 9.6 6.4 14.5 8 9.6 9.6 8 14.5 6.4 9.6 1.5 8l4.9-1.6Z"/></svg>',
   reload: '<svg viewBox="0 0 16 16"><path d="M13.2 6.3A5.3 5.3 0 1 0 13 10M13.5 2.8v3.7H9.8"/></svg>',
   expand: '<svg viewBox="0 0 16 16"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg>',
+  edit: '<svg viewBox="0 0 16 16"><path d="M10.5 2.5 13.5 5.5 6 13H3v-3ZM9 4l3 3"/></svg>',
+  download: '<svg viewBox="0 0 16 16"><path d="M8 2.5v8M4.5 7.5 8 11l3.5-3.5M3 13.5h10"/></svg>',
 };
 
 const fmtTokens = (n) =>
@@ -183,6 +185,9 @@ function onMessage(m) {
       return onFile(m);
     case 'grep':
       if (m.seq === latest.grep) applyGrep(m);
+      return;
+    case 'artifacts':
+      if (m.seq === latest.artifacts) applyArtifacts(m.sessions);
       return;
   }
 }
@@ -394,6 +399,10 @@ function patchProse(node, html) {
   for (let i = blocks.length; i < old.length; i++) old[i].remove();
 }
 
+/** A file name from an artifact's title. */
+const slug = (title) =>
+  title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'artifact';
+
 /** Turns `.artifact[data-src]` placeholders into sandboxed embeds with a toolbar. */
 function mountArtifacts(scope) {
   const found = scope.matches?.('.artifact[data-src]') ? [scope] : scope.querySelectorAll('.artifact[data-src]');
@@ -413,6 +422,22 @@ function mountArtifacts(scope) {
       h('span', { class: 'artifact-icon', html: ICON.spark }),
       h('span', { class: 'artifact-title', text: box.dataset.title }),
       h('span', { class: 'spacer' }),
+      h('button', {
+        class: 'artifact-btn',
+        title: 'Revise this artifact',
+        html: ICON.edit,
+        onclick: () => {
+          box.classList.remove('full');
+          setInput(`Revise the "${box.dataset.title}" artifact: `);
+        },
+      }),
+      h('a', {
+        class: 'artifact-btn',
+        title: 'Download as HTML (also saved with the session; /artifacts lists them)',
+        href: src,
+        download: `${slug(box.dataset.title)}.html`,
+        html: ICON.download,
+      }),
       h('button', {
         class: 'artifact-btn',
         title: 'Reload',
@@ -734,6 +759,7 @@ const COMMANDS = [
   { name: '/add-dir', args: '[path]', desc: "Add a directory to the agent's scope" },
   { name: '/resume', args: '<n|id>', desc: 'Continue a saved session' },
   { name: '/copy', args: '[all]', desc: 'Copy the latest reply to the clipboard' },
+  { name: '/artifacts', desc: 'Browse artifacts from this and earlier sessions', local: true },
   { name: '/clear', desc: 'Clear the conversation and start fresh' },
   { name: '/web off', desc: 'Stop serving this page' },
 ];
@@ -780,6 +806,9 @@ function runLocal(text) {
       return true;
     case '/help':
       openHelp();
+      return true;
+    case '/artifacts':
+      openArtifacts();
       return true;
   }
   if (TERMINAL_ONLY[name] && (!rest.length || ['/rewind', '/diff', '/login', '/paste', '/browser'].includes(name))) {
@@ -1553,6 +1582,152 @@ for (const mask of document.querySelectorAll('.pickmask')) {
   });
 }
 
+// ---------------------------------------------------------------- artifacts gallery
+
+/** Saved artifacts by session, from the server, and which one is shown. */
+const gallery = { sessions: [], rows: [], at: -1 };
+
+function ago(secs) {
+  const d = Math.max(0, Date.now() / 1000 - secs);
+  if (d < 60) return 'just now';
+  if (d < 3600) return `${Math.floor(d / 60)}m ago`;
+  if (d < 86400) return `${Math.floor(d / 3600)}h ago`;
+  if (d < 86400 * 30) return `${Math.floor(d / 86400)}d ago`;
+  return new Date(secs * 1000).toLocaleDateString();
+}
+
+function openArtifacts() {
+  $('artifacts').hidden = false;
+  $('art-find').value = '';
+  $('art-list').innerHTML = '<div class="pickempty">Loading…</div>';
+  if (gallery.at < 0) showArtifact(null);
+  request('artifacts');
+  $('art-find').focus();
+}
+
+function closeArtifacts() {
+  $('artifacts').hidden = true;
+  $('art-view').innerHTML = '';
+  gallery.at = -1;
+  input.focus();
+}
+
+function applyArtifacts(sessions) {
+  gallery.sessions = sessions;
+  renderArtifactList();
+}
+
+function renderArtifactList() {
+  const query = $('art-find').value.trim().toLowerCase();
+  const list = $('art-list');
+  const shown = gallery.rows[gallery.at]?.url;
+  list.innerHTML = '';
+  gallery.rows = [];
+  gallery.at = -1;
+  for (const session of gallery.sessions) {
+    const items = session.items.filter((a) => !query || a.title.toLowerCase().includes(query));
+    if (!items.length) continue;
+    const name = session.current ? 'This session' : session.title || 'Untitled session';
+    list.append(
+      h('div', { class: 'art-group', title: name },
+        h('span', { text: name }),
+        h('span', { text: session.current ? '' : ago(session.updated) })),
+    );
+    for (const item of items) {
+      const index = gallery.rows.length;
+      gallery.rows.push({ ...item, current: session.current });
+      list.append(
+        h('button', { class: 'art-row', 'data-i': index, title: item.title, onclick: () => selectArtifact(index) },
+          h('span', { html: ICON.spark }),
+          h('span', { class: 't', text: item.title }),
+          h('span', { class: 'ago', text: ago(item.modified) })),
+      );
+      if (item.url === shown) gallery.at = index;
+    }
+  }
+  if (!gallery.rows.length) {
+    list.innerHTML = `<div class="pickempty">${query ? 'No artifacts match.' : 'No saved artifacts in this project yet.'}</div>`;
+    showArtifact(null);
+    return;
+  }
+  if (gallery.at < 0) selectArtifact(0);
+  else markArtifact();
+}
+
+function markArtifact() {
+  for (const row of $('art-list').querySelectorAll('.art-row')) {
+    const on = Number(row.dataset.i) === gallery.at;
+    row.classList.toggle('on', on);
+    if (on) row.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function selectArtifact(index) {
+  if (index < 0 || index >= gallery.rows.length) return;
+  if (index !== gallery.at) {
+    gallery.at = index;
+    showArtifact(gallery.rows[index]);
+  }
+  markArtifact();
+}
+
+/** The chat's embed of an artifact, if it's in the conversation on screen. */
+const inChat = (url) => [...thread.querySelectorAll('.artifact[data-src]')].find((b) => b.dataset.src === url);
+
+function showArtifact(item) {
+  const view = $('art-view');
+  view.innerHTML = '';
+  if (!item) {
+    view.append(h('div', {
+      class: 'art-empty',
+      text: 'Artifacts from /web replies in this project show up here, including ones from earlier sessions.',
+    }));
+    return;
+  }
+  const embed = inChat(item.url);
+  const btn = (title, icon, onclick) => h('button', { class: 'artifact-btn', title, html: icon, onclick });
+  view.append(
+    h('div', { class: 'artifact-bar' },
+      h('span', { class: 'artifact-icon', html: ICON.spark }),
+      h('span', { class: 'artifact-title', text: item.title }),
+      h('span', { class: 'art-path', title: item.file, text: item.file }),
+      h('span', { class: 'spacer' }),
+      embed && btn('Show in the chat', ICON.chev, () => {
+        closeArtifacts();
+        embed.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }),
+      btn('Revise this artifact', ICON.edit, () => {
+        closeArtifacts();
+        setInput(item.current
+          ? `Revise the "${item.title}" artifact: `
+          : `Revise the "${item.title}" artifact from an earlier session (saved at ${item.file}; read it first): `);
+      }),
+      h('a', { class: 'artifact-btn', title: 'Download as HTML', href: item.url, download: `${slug(item.title)}.html`, html: ICON.download }),
+      h('a', { class: 'artifact-btn', title: 'Open in a new tab', href: item.url, target: '_blank', rel: 'noopener noreferrer', html: ICON.open }),
+    ),
+    h('iframe', {
+      src: item.url,
+      title: item.title,
+      sandbox: 'allow-scripts allow-popups allow-modals allow-forms',
+      referrerpolicy: 'no-referrer',
+    }),
+  );
+}
+
+$('art-find').addEventListener('input', renderArtifactList);
+$('art-find').addEventListener('keydown', (ev) => {
+  if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+    ev.preventDefault();
+    selectArtifact(gallery.at + (ev.key === 'ArrowDown' ? 1 : -1));
+  } else if (ev.key === 'Enter') {
+    ev.preventDefault();
+    const item = gallery.rows[gallery.at];
+    if (item) open(item.url, '_blank', 'noopener,noreferrer');
+  }
+});
+$('art-close').onclick = closeArtifacts;
+$('toggle-artifacts').onclick = () => ($('artifacts').hidden ? openArtifacts() : closeArtifacts());
+
 // ---------------------------------------------------------------- help
 
 const KEYS = [
@@ -1597,6 +1772,7 @@ addEventListener('keydown', (ev) => {
   }
   if (ev.key === 'Escape') {
     if (!$('help').hidden) return ($('help').hidden = true);
+    if (!$('artifacts').hidden) return closeArtifacts();
     if (!$('picker').hidden) return closePicker();
     if (state.status?.running && !ev.target.closest?.('.code')) {
       ev.preventDefault();
@@ -1615,7 +1791,7 @@ addEventListener('keydown', (ev) => {
   // Typing anywhere that isn't a field goes to the prompt.
   const t = ev.target;
   if (t.matches?.('input, textarea') || mod || ev.altKey || ev.key.length !== 1) return;
-  if (!$('picker').hidden || !$('help').hidden) return;
+  if (!$('picker').hidden || !$('help').hidden || !$('artifacts').hidden) return;
   input.focus();
 });
 

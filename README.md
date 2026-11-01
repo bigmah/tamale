@@ -7,12 +7,14 @@ API or from your Claude Code or Codex sign-in (see [Backends](#backends)).
 ## Install
 
 ```sh
-cargo install --path .
+cargo install --path . --locked
 ```
 
-This builds a release binary and installs it as `~/.cargo/bin/tamale`, so `tamale` works from
+`--locked` builds with the versions in `Cargo.lock`; without it, `cargo install` ignores the
+lockfile and resolves the newest compatible versions of every dependency, which can differ
+from what the repo is tested with (or need a newer Rust than you have). This builds a release binary and installs it as `~/.cargo/bin/tamale`, so `tamale` works from
 any directory; the directory you launch it in becomes the workspace. The installed copy doesn't
-track the repo: after changing the code, run `cargo install --path .` again to update it.
+track the repo: after changing the code, run `cargo install --path . --locked` again to update it.
 `cargo uninstall tamale` removes it.
 
 To skip reinstalling, symlink the build output instead, and every `cargo build --release` updates
@@ -608,13 +610,32 @@ back to the terminal, and `Ctrl+C` quits. Any number of tabs can be open.
   and the tree reload as the agent changes files. The browser reads only files inside
   the workspace (the working directory and `/add-dir` directories), and skips
   ignored files and `.git`.
-- **Artifacts.** During a web session every prompt asks the model to answer in a
-  sentence or three and put the full answer in an HTML artifact below it: a designed
-  page, interactive when that helps (diagrams, step-throughs, tabs, sliders). The model
-  writes it as a fenced ```` ```html artifact ```` block. While the block streams in,
-  the page shows a placeholder, and when it is done the page loads it in a frame sized
-  to fit. The bar above it can reload it, expand it (`Esc` closes) or open it in a new
-  tab. Back in the terminal, each artifact is collapsed to one line with its title.
+- **Artifacts.** During a web session every reply is a sentence or three followed by an
+  HTML artifact that carries the full answer: a designed page, interactive when that
+  helps (diagrams, step-throughs, tabs, diffs, charts). The model writes it as a fenced
+  ```` ```html artifact ```` block. While the block streams in, the page shows a
+  placeholder, and when it is done the page loads it in a frame sized to fit. The bar
+  above it can **revise** it (puts `Revise the "<title>" artifact: ` in the prompt; the
+  model answers with the whole updated document), download it, reload it, expand it
+  (`Esc` closes) or open it in a new tab. Back in the terminal, each artifact is
+  collapsed to one line with its title.
+- **Artifact guide.** How artifacts should look and behave lives in a design guide
+  (`src/web/artifact.md`: output contract, which layout fits which kind of answer, the
+  colour and type tokens, component recipes and a quality checklist). While `/web` is on
+  it is added to the system prompt, and each prompt only carries a short reminder. To
+  use your own, put it in `~/.config/tamale/artifacts.md`; it replaces the built-in one.
+- **Saving and resuming.** Every finished artifact is also saved as a standalone HTML
+  file in `~/.local/share/tamale/sessions/<session-id>/artifacts/`, named after its title
+  plus a short content hash, so revisions sit side by side. Artifacts are part of the
+  conversation, so `tamale --continue` (or `--resume`) followed by `/web` shows them all
+  again, ready to revise.
+- **Artifacts gallery.** `/artifacts` in the page (or the button left of the code
+  browser's) opens every saved artifact of this project: this session's first, then
+  earlier sessions' by their last activity. Pick one on the left (or filter and use
+  `↑`/`↓`; `Enter` opens it in a tab) to see it on the right, where it can be shown in
+  the chat, revised, downloaded or opened in a tab. Revising one from an earlier session
+  points the model at its saved file. In the terminal, `/artifacts` lists this session's
+  files.
 - Commands that open a picker in the terminal (`/model`, `/effort`, `/resume`,
   `/backend` with no arguments, `/rewind`, `/diff`) explain their argument forms
   instead. `/login` still runs in the terminal.

@@ -76,6 +76,7 @@ impl App {
             entries: &self.entries,
             approval,
             roots,
+            artifact_dir: web::artifact_dir(&self.session_id),
         }
     }
 

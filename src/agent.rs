@@ -280,6 +280,8 @@ pub struct TurnConfig {
     pub context_tokens: u64,
     pub reasoning: Reasoning,
     pub limits: AgentSettings,
+    /// Whether replies are for the `/web` UI, so the system prompt carries the artifact guide.
+    pub web_ui: bool,
 }
 
 impl TurnConfig {
@@ -324,7 +326,7 @@ pub async fn compact<M>(
         }
         let history = compact_history(
             &model,
-            &system_prompt(&workspace),
+            &system_prompt(&workspace, config.web_ui),
             &tools::definitions(),
             &history,
             instructions.as_deref(),
@@ -353,7 +355,7 @@ async fn run_inner<M>(
 where
     M: CompletionModel + Clone,
 {
-    let preamble = system_prompt(workspace);
+    let preamble = system_prompt(workspace, config.web_ui);
     let tool_defs = tools::definitions();
     let mut force_compact = false;
     let mut empty_responses = 0;

@@ -53,6 +53,38 @@ impl App {
         }
     }
 
+    /// Lists the HTML artifacts this session's `/web` replies saved, newest first.
+    pub(super) fn list_artifacts(&mut self) {
+        let Some(dir) = crate::web::artifact_dir(&self.session_id) else {
+            self.entries.push(Entry::Error(
+                "Can't determine the sessions directory (HOME not set).".into(),
+            ));
+            return;
+        };
+        let mut files: Vec<(std::time::SystemTime, std::path::PathBuf)> = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "html"))
+            .map(|e| {
+                let modified = e.metadata().and_then(|m| m.modified());
+                (modified.unwrap_or(std::time::UNIX_EPOCH), e.path())
+            })
+            .collect();
+        if files.is_empty() {
+            self.entries.push(Entry::Info(
+                "No artifacts saved for this session yet. Replies in /web save theirs here.".into(),
+            ));
+            return;
+        }
+        files.sort_by(|a, b| b.0.cmp(&a.0));
+        let mut text = format!("Artifacts saved in {}:", dir.display());
+        for (_, path) in &files {
+            text.push_str(&format!("\n  {}", path.display()));
+        }
+        self.entries.push(Entry::Info(text));
+    }
+
     pub(super) fn open_picker(&mut self) {
         let mut picker = ModelPicker::default();
         if let Some(models) = &self.models {
@@ -411,6 +443,7 @@ impl App {
                     .entries
                     .push(Entry::Error("Usage: /browser [on|off]".into())),
             },
+            "/artifacts" => self.list_artifacts(),
             "/web" => match cmd.split_whitespace().nth(1) {
                 None | Some("on") => self.web_request = Some(BrowserRequest::Open),
                 Some("off") => self.web_request = Some(BrowserRequest::Close),

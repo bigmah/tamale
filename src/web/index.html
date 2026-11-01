@@ -24,6 +24,9 @@
       <span class="ctx" id="ctx"><span class="ctx-bar"><span class="ctx-fill" id="ctx-fill"></span></span><span id="ctx-label"></span></span>
       <span class="cost" id="cost"></span>
     </div>
+    <button class="iconbtn" id="toggle-artifacts" title="Artifacts from this and earlier sessions  /artifacts">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M2 5.5h12M5 8.5h6M5 10.75h3.5"/></svg>
+    </button>
     <button class="iconbtn" id="toggle-code" title="Browse code  /code  ⌘B">
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.6 4.2 1.8 8l3.8 3.8M10.4 4.2 14.2 8l-3.8 3.8"/></svg>
     </button>
@@ -113,6 +116,21 @@
     <div class="pickbox">
       <input class="pickinput" id="pick-input" placeholder="Go to file…" spellcheck="false" autocomplete="off">
       <div class="picklist" id="pick-list"></div>
+    </div>
+  </div>
+
+  <div class="pickmask" id="artifacts" hidden>
+    <div class="pickbox artbox" role="dialog" aria-label="Artifacts">
+      <div class="art-hdr">
+        <input class="pickinput" id="art-find" placeholder="Filter artifacts…" spellcheck="false" autocomplete="off">
+        <button class="iconbtn sm" id="art-close" title="Close (esc)">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+        </button>
+      </div>
+      <div class="art-body">
+        <div class="art-list" id="art-list"></div>
+        <div class="art-view" id="art-view"></div>
+      </div>
     </div>
   </div>
 

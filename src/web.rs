@@ -45,25 +45,61 @@ const SCRIPT: &str = include_str!("web/app.js");
 /// Tool output sent per call; the rest is cut.
 const MAX_TOOL_OUTPUT: usize = 24_000;
 
-/// Added to every prompt during a web session: replies are a line or two of prose and an
-/// HTML artifact that carries the answer.
-pub const ARTIFACT_PROMPT: &str = "\n\n<web-ui>The user is working in tamale's web UI, \
-which shows every reply as a short note followed by an HTML artifact. Use tools as usual to \
-do the work, then write your final reply in exactly this shape:\n\
-1. At most one very brief paragraph (one to three sentences) of plain prose: the answer in a \
-nutshell. No headings, lists, tables or code blocks outside the artifact.\n\
-2. Then exactly one fenced code block whose info string is exactly `html artifact`, holding a \
-complete, self-contained HTML document with a <title> that presents the full answer. If you \
-changed code, it shows what changed and why.\n\
-Make the artifact genuinely well designed: clear hierarchy, comfortable spacing, good \
-typography, a dark theme (background #17181d, panels #1e2026, text #d4d8e0, muted #9aa0b0, \
-accent #5c9cf5) and a layout that fits any frame width without horizontal scrolling. Use \
-inline SVG diagrams where structure or flow matters, and <pre> blocks for code. Make it \
-interactive (tabs, step-throughs, toggles, hover or click details, sliders, filters) when \
-that helps the user understand or explore; a well laid out static page is fine otherwise. \
-Inline all CSS and JS; load libraries only from https CDNs, and only if needed. It runs in \
-a sandboxed iframe with no access to tamale or the files, so embed all data it shows.\
-</web-ui>";
+/// Added to every prompt during a web session: a reminder of the reply's shape. The design
+/// guide itself is in the system prompt (see [`artifact_guide`]).
+pub const ARTIFACT_PROMPT: &str = "\n\n<web-ui>Reply for tamale's web UI: do the work with \
+tools as usual, then write at most three sentences of plain prose followed by exactly one \
+complete, self-contained HTML document in a fenced block whose info string is exactly \
+`html artifact`, following the artifact design guide in your instructions. To revise an \
+earlier artifact, send the whole updated document.</web-ui>";
+
+/// The built-in artifact design guide; `~/.config/tamale/artifacts.md` replaces it.
+const ARTIFACT_GUIDE: &str = include_str!("web/artifact.md");
+
+/// The artifact design guide for the system prompt: the user's
+/// `~/.config/tamale/artifacts.md` if it has any text, else the built-in one.
+pub fn artifact_guide() -> String {
+    crate::config::user_config_dir()
+        .and_then(|dir| std::fs::read_to_string(dir.join("artifacts.md")).ok())
+        .filter(|text| !text.trim().is_empty())
+        .unwrap_or_else(|| ARTIFACT_GUIDE.to_string())
+}
+
+/// Where a session's artifacts are saved: `<sessions>/<id>/artifacts/`.
+pub fn artifact_dir(session_id: &str) -> Option<PathBuf> {
+    Some(crate::session::dir()?.join(session_id).join("artifacts"))
+}
+
+/// The file an artifact is saved as: its title as a slug, then a short content hash so
+/// revisions sit side by side and re-rendering the same document finds the same file.
+fn artifact_file_name(html: &str) -> String {
+    let mut h = DefaultHasher::new();
+    html.hash(&mut h);
+    let mut slug = String::new();
+    for c in render::artifact_title(html).unwrap_or_default().chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c.to_ascii_lowercase());
+        } else if !slug.is_empty() && !slug.ends_with('-') {
+            slug.push('-');
+        }
+        if slug.len() >= 48 {
+            break;
+        }
+    }
+    let slug = slug.trim_end_matches('-');
+    let slug = if slug.is_empty() { "artifact" } else { slug };
+    format!("{slug}-{:08x}.html", h.finish() as u32)
+}
+
+/// Saves `html` into `dir` unless it's already there.
+fn save_artifact(dir: &std::path::Path, html: &str) -> std::io::Result<PathBuf> {
+    let path = dir.join(artifact_file_name(html));
+    if !path.exists() {
+        std::fs::create_dir_all(dir)?;
+        std::fs::write(&path, html)?;
+    }
+    Ok(path)
+}
 
 /// Script added to each artifact so the page can size its iframe to fit.
 const ARTIFACT_RESIZER: &str = "<script>(()=>{const post=()=>parent.postMessage(\
@@ -79,8 +115,8 @@ struct Artifacts {
 }
 
 impl Artifacts {
-    /// The URL `html` is served from, storing it if new.
-    fn register(&mut self, html: &str) -> String {
+    /// The URL `html` is served from, storing it if new and saving it into `dir`.
+    fn register(&mut self, html: &str, dir: Option<&std::path::Path>) -> String {
         let mut h = DefaultHasher::new();
         html.hash(&mut h);
         let id = self
@@ -95,9 +131,12 @@ impl Artifacts {
                 bytes.iter().map(|b| format!("{b:02x}")).collect()
             })
             .clone();
-        self.pages
-            .entry(id.clone())
-            .or_insert_with(|| format!("{html}\n{ARTIFACT_RESIZER}").into());
+        self.pages.entry(id.clone()).or_insert_with(|| {
+            if let Some(dir) = dir {
+                let _ = save_artifact(dir, html);
+            }
+            format!("{html}\n{ARTIFACT_RESIZER}").into()
+        });
         format!("/artifact/{id}")
     }
 }
@@ -161,6 +200,8 @@ pub struct View<'a> {
     pub approval: Option<Approval>,
     /// The workspace: the working directory first, then added directories.
     pub roots: Vec<PathBuf>,
+    /// Where finished artifacts are saved, if anywhere.
+    pub artifact_dir: Option<PathBuf>,
 }
 
 pub struct Server {
@@ -192,6 +233,8 @@ struct Shared {
     /// The directories the code browser may read.
     roots: Mutex<Vec<PathBuf>>,
     artifacts: Arc<Mutex<Artifacts>>,
+    /// Where the current session saves its artifacts.
+    artifact_dir: Mutex<Option<PathBuf>>,
 }
 
 impl Shared {
@@ -242,6 +285,7 @@ impl Server {
             next_id: AtomicU64::new(0),
             roots: Mutex::new(Vec::new()),
             artifacts: mirror.artifacts.clone(),
+            artifact_dir: Mutex::new(None),
         });
         let router = Router::new()
             .route("/", get(page))
@@ -264,6 +308,7 @@ impl Server {
 
     /// Sends welcomed tabs what changed since the last sync.
     pub fn sync(&mut self, view: View) {
+        *self.shared.artifact_dir.lock().unwrap() = view.artifact_dir.clone();
         let roots_changed = {
             let mut roots = self.shared.roots.lock().unwrap();
             let changed = *roots != view.roots;
@@ -342,7 +387,8 @@ impl Mirror {
         if same < keys.len() || same < self.entries.len() {
             self.entries.truncate(same);
             for (key, entry) in keys[same..].iter().zip(&view.entries[same..]) {
-                let json = entry_json(entry, &self.artifacts).to_string();
+                let json =
+                    entry_json(entry, &self.artifacts, view.artifact_dir.as_deref()).to_string();
                 self.entries.push((*key, json));
             }
             out.push(self.entries_message(same));
@@ -402,12 +448,12 @@ fn entry_key(entry: &Entry) -> u64 {
     h.finish()
 }
 
-fn entry_json(entry: &Entry, artifacts: &Mutex<Artifacts>) -> Value {
+fn entry_json(entry: &Entry, artifacts: &Mutex<Artifacts>, dir: Option<&std::path::Path>) -> Value {
     match entry {
         Entry::User(text) => json!({ "kind": "user", "text": text }),
         Entry::Assistant(text) => {
             let mut artifacts = artifacts.lock().unwrap();
-            let mut register = |html: &str| artifacts.register(html);
+            let mut register = |html: &str| artifacts.register(html, dir);
             json!({ "kind": "assistant", "html": render::markdown_with(text, Some(&mut register)) })
         }
         Entry::Note(text) => json!({ "kind": "note", "html": render::markdown(text) }),
@@ -633,8 +679,84 @@ fn handle(shared: &Arc<Shared>, id: u64, request: Value) {
             let query = str_field("query");
             reply(Box::new(move |roots| files::grep(roots, &query)));
         }
+        "artifacts" => {
+            let shared = shared.clone();
+            let current = shared.artifact_dir.lock().unwrap().clone();
+            reply(Box::new(move |roots| {
+                let sessions = roots
+                    .first()
+                    .map(|cwd| crate::session::list(Some(cwd)))
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|meta| Some((artifact_dir(&meta.id)?, Some(meta))));
+                saved_artifacts(current, sessions, &shared.artifacts)
+            }));
+        }
         _ => {}
     }
+}
+
+/// The artifacts saved by the current session (its directory is `current`) and by
+/// `sessions`, newest first, each with a URL to view it at. Sessions without any are left
+/// out.
+fn saved_artifacts(
+    current: Option<PathBuf>,
+    sessions: impl Iterator<Item = (PathBuf, Option<crate::session::Meta>)>,
+    artifacts: &Mutex<Artifacts>,
+) -> Value {
+    let mut dirs: Vec<(PathBuf, Option<crate::session::Meta>)> =
+        current.clone().map(|dir| (dir, None)).into_iter().collect();
+    for (dir, meta) in sessions {
+        match dirs.iter_mut().find(|(d, _)| *d == dir) {
+            Some(slot) => slot.1 = meta,
+            None => dirs.push((dir, meta)),
+        }
+    }
+    let mut out = Vec::new();
+    for (dir, meta) in dirs {
+        let mut items: Vec<(u64, Value)> = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "html"))
+            .filter_map(|e| {
+                let html = std::fs::read_to_string(e.path()).ok()?;
+                let modified = e
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .ok()?
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .ok()?
+                    .as_secs();
+                let item = json!({
+                    "title": render::artifact_title(&html).unwrap_or_else(|| "Artifact".into()),
+                    "file": e.path().display().to_string(),
+                    "modified": modified,
+                    "url": artifacts.lock().unwrap().register(&html, None),
+                });
+                Some((modified, item))
+            })
+            .collect();
+        if items.is_empty() {
+            continue;
+        }
+        items.sort_by(|a, b| b.0.cmp(&a.0));
+        let newest = items[0].0;
+        out.push(json!({
+            "current": current.as_ref() == Some(&dir),
+            "title": meta.as_ref().map(|m| m.title.clone()).unwrap_or_default(),
+            "updated": meta.map_or(newest, |m| m.updated.max(newest)),
+            "items": items.into_iter().map(|(_, v)| v).collect::<Vec<_>>(),
+        }));
+    }
+    // The current session first, then the rest by their latest activity.
+    out.sort_by_key(|s| {
+        (
+            !s["current"].as_bool().unwrap_or(false),
+            std::cmp::Reverse(s["updated"].as_u64().unwrap_or(0)),
+        )
+    });
+    json!({ "t": "artifacts", "sessions": out })
 }
 
 #[cfg(test)]
@@ -647,6 +769,7 @@ mod tests {
             entries,
             approval: None,
             roots: Vec::new(),
+            artifact_dir: None,
         }
     }
 
@@ -704,6 +827,57 @@ mod tests {
         let again = mirror.update(&view(&entries));
         assert!(again[0].contains(&url), "{}", again[0]);
         assert_eq!(mirror.artifacts.lock().unwrap().pages.len(), 1);
+    }
+
+    #[test]
+    fn artifacts_are_saved_once_under_their_title() {
+        let dir = std::env::temp_dir().join(format!(
+            "tamale-artifacts-test-{}",
+            crate::session::new_id()
+        ));
+        let reply = "Done.\n\n```html artifact\n<title>Auth flow: v2!</title><p>hi</p>\n```";
+        let entries = vec![Entry::Assistant(reply.into())];
+        let mut mirror = Mirror::default();
+        let mut with_dir = view(&entries);
+        with_dir.artifact_dir = Some(dir.clone());
+        mirror.update(&with_dir);
+        mirror.update(&with_dir);
+        let files: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(files.len(), 1, "{files:?}");
+        assert!(files[0].starts_with("auth-flow-v2-") && files[0].ends_with(".html"));
+        let saved = std::fs::read_to_string(dir.join(&files[0])).unwrap();
+        assert_eq!(saved, "<title>Auth flow: v2!</title><p>hi</p>\n");
+        assert_eq!(
+            artifact_file_name("<p>x</p>").split('-').next(),
+            Some("artifact")
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn saved_artifacts_list_the_current_session_first_and_share_chat_urls() {
+        let root =
+            std::env::temp_dir().join(format!("tamale-saved-test-{}", crate::session::new_id()));
+        let (now, old, empty) = (root.join("now"), root.join("old"), root.join("empty"));
+        let store = Mutex::new(Artifacts::default());
+        save_artifact(&old, "<title>Old</title>").unwrap();
+        save_artifact(&now, "<title>New</title>").unwrap();
+        let chat_url = store.lock().unwrap().register("<title>New</title>", None);
+        let listed = saved_artifacts(
+            Some(now.clone()),
+            [(old, None), (now, None), (empty, None)].into_iter(),
+            &store,
+        );
+        let sessions = listed["sessions"].as_array().unwrap();
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0]["current"], true);
+        assert_eq!(sessions[0]["items"][0]["title"], "New");
+        assert_eq!(sessions[0]["items"][0]["url"], chat_url.as_str());
+        assert_eq!(sessions[1]["items"][0]["title"], "Old");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[tokio::test]
@@ -773,6 +947,7 @@ mod tests {
                 output: Some(("x".repeat(MAX_TOOL_OUTPUT + 5), false)),
             },
             &Mutex::default(),
+            None,
         );
         assert_eq!(tool["cut"], true);
         assert_eq!(tool["output"].as_str().unwrap().len(), MAX_TOOL_OUTPUT);

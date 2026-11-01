@@ -406,7 +406,7 @@ backend.claude_path if it isn't on PATH",
             "--model",
             &turn.model,
             "--system-prompt",
-            &agent::system_prompt(&turn.workspace),
+            &agent::system_prompt(&turn.workspace, turn.config.web_ui),
         ]);
         if let Some(effort) = run.reasoning.effort {
             cmd.args(["--effort", effort.as_str()]);

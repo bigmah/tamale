@@ -377,7 +377,10 @@ impl App {
             history: self.history.clone(),
             prompt,
             thread: self.thread.clone(),
-            config: self.settings.turn_config(self.context_tokens),
+            config: agent::TurnConfig {
+                web_ui: self.web_session,
+                ..self.settings.turn_config(self.context_tokens)
+            },
             workspace: self.workspace.clone(),
         }
     }

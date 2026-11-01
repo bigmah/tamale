@@ -159,6 +159,7 @@ impl Settings {
             context_tokens,
             reasoning: self.model.reasoning(),
             limits: self.agent,
+            web_ui: false,
         }
     }
 }

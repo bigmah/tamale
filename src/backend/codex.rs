@@ -541,7 +541,7 @@ backend.codex_path if it isn't on PATH",
         let mut config = vec![
             (
                 "instructions",
-                toml_string(&agent::system_prompt(&turn.workspace)),
+                toml_string(&agent::system_prompt(&turn.workspace, turn.config.web_ui)),
             ),
             ("project_doc_max_bytes", "0".into()),
             ("skills.bundled.enabled", "false".into()),
