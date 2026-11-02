@@ -1,7 +1,7 @@
 # One key for tamale-hub
 
-**Status:** built and tested locally, in Chromium and WebKit against a local hub. Not yet deployed
-to tamale-hub.com (see *Existing tokens*), or tried on a real phone. Replaces the token pairs in `tunnel_plan.md` and the per-machine
+**Status:** deployed to tamale-hub.com on 2026-11-02, and checked there in Chromium and WebKit. Not
+yet tried on a real phone. Replaces the token pairs in `tunnel_plan.md` and the per-machine
 pairing key in `e2e.md`. The encrypted channel in `e2e.md` stays as it is.
 
 Today there are three secrets: an agent token and a view token per pair, and a pairing key per

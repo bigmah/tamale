@@ -36,14 +36,18 @@ subdomain of it. `bigmah.com` and `pullspace.dev` are not touched.
 | IAM | user `caddy-acme`, inline policy `tamale-hub-acme` (step 3); its key is only in `/var/lib/caddy/.aws/credentials` on the VPS |
 | Caddy | custom 2.10.2 + `caddy-dns/route53` v1.6.2 at `/usr/bin/caddy.custom`, selected by `update-alternatives`, stock binary diverted to `/usr/bin/caddy.default`. Wildcard and apex certificates issued. Backups of the original binary and Caddyfile in `/root/caddy-backup-20261101/` |
 | Hub | `/usr/local/bin/tamale-hub`, systemd unit `tamale-hub`, data in `/var/lib/tamale-hub`, source synced to `/root/tamale` |
-| Tokens | pair `mine`; both halves only in `~/.config/tamale/tamale-hub-mine.txt` on the laptop (mode 600), exports in `~/.config/tamale/hub.env` |
+| Keys | made on the site since 2026-11-02 (`single_key.md`); only their hashes are on the box |
 | Code | `hub/` (binary), `hub/protocol/` (frames), `src/web/relay.rs`, `[hub]` settings, `/web remote` |
 | Tests | `cargo test --workspace` (hub in-process end to end, relay against a stand-in hub); `real_hub_relays_a_browser_end_to_end` (ignored) passed against the live hub |
 
 **Updating the hub:** `rsync -az --delete --exclude target --exclude .git ./ root@5.78.153.154:/root/tamale/`,
-then on the box `cd /root/tamale && nice cargo +1.93.0 build -p tamale-hub --release -j 2 &&
+then on the box (`cargo` is in `~/.cargo/bin`, not on a non-login shell's PATH) `cd /root/tamale && nice cargo +1.93.0 build -p tamale-hub --release -j 2 &&
 install -m 755 target/release/tamale-hub /usr/local/bin/ && systemctl restart tamale-hub`.
 (There's no default rustup toolchain on the box; 1.93.0 is the one pullspace pins.)
+
+**One key (deployed 2026-11-02):** replaces the token pairs and pairing keys; see
+`single_key.md`. The old binary and `state.json` are in `/root/tamale-hub-backup-20261102/`.
+Deploy the hub and tamales together: neither side understands the other's old credentials.
 
 **End-to-end encryption (Phase 2a to 2d, deployed 2026-11-01):** tamale seals relayed
 channels, labels and artifacts by default; see `e2e.md`, including what's still to check by
