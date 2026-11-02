@@ -40,10 +40,10 @@ subdomain of it. `bigmah.com` and `pullspace.dev` are not touched.
 | Code | `hub/` (binary), `hub/protocol/` (frames), `src/web/relay.rs`, `[hub]` settings, `/web remote` |
 | Tests | `cargo test --workspace` (hub in-process end to end, relay against a stand-in hub); `real_hub_relays_a_browser_end_to_end` (ignored) passed against the live hub |
 
-**Updating the hub:** `rsync -az --delete --exclude target --exclude .git ./ root@5.78.153.154:/root/tamale/`,
-then on the box (`cargo` is in `~/.cargo/bin`, not on a non-login shell's PATH) `cd /root/tamale && nice cargo +1.93.0 build -p tamale-hub --release -j 2 &&
-install -m 755 target/release/tamale-hub /usr/local/bin/ && systemctl restart tamale-hub`.
-(There's no default rustup toolchain on the box; 1.93.0 is the one pullspace pins.)
+**Updating the hub:** push to `main`. Root's crontab on the box runs `deploy.sh` from its
+checkout at `/root/tamale` every 5 minutes, which pulls, builds with `cargo +1.93.0`, installs
+and restarts if the binary changed; see the script's header. Logs: `journalctl -t tamale-deploy`.
+Don't rsync into that checkout any more: local edits stop the pulls.
 
 **One key (deployed 2026-11-02):** replaces the token pairs and pairing keys; see
 `single_key.md`. The old binary and `state.json` are in `/root/tamale-hub-backup-20261102/`.
