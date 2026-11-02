@@ -112,11 +112,6 @@ impl App {
         &self.settings.hub
     }
 
-    /// The permission mode, for the warning `/web remote` gives in `auto`.
-    pub fn permission_mode(&self) -> crate::permissions::Mode {
-        self.permissions.lock().unwrap().mode
-    }
-
     /// What the hub's session list shows of this session besides its status.
     pub fn hub_label(&self) -> web::Label {
         let cwd = self.workspace.cwd.display().to_string();

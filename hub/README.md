@@ -33,7 +33,7 @@ using it needs the new one. **Delete** ends it.
 
 **A key gives access to every machine that uses it.** Treat it like an SSH key. A compromised
 machine exposes the others on its key: in tamale's default `auto` permission mode, whoever holds
-the key can run commands on them without approval, and tamale warns when connecting. Tools tamale
+the key can run commands on them without approval. Tools tamale
 runs as you can read the key, so a prompt injection could steal it. **So machines you trust alike
 share a key, and a throwaway VPS gets its own.** A browser can hold several, and the list merges
 them.

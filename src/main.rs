@@ -294,7 +294,6 @@ async fn web_request(app: &mut App, web: &mut Option<web::Server>, request: WebR
                 app.set_web_session(true);
                 app.set_hub_viewers(Some(server.remote_tabs()));
             }
-            warn_if_auto(app);
         }
         WebRequest::Remote { on: false } => {
             let disconnected = web.as_mut().is_some_and(|w| w.disconnect_hub());
@@ -313,17 +312,6 @@ async fn web_request(app: &mut App, web: &mut Option<web::Server>, request: WebR
                 None => Err("The web UI isn't being served.".into()),
             })
         }
-    }
-}
-
-/// Remote prompts run tools without asking in `auto` mode, so say so when connecting.
-fn warn_if_auto(app: &mut App) {
-    if app.permission_mode() == permissions::Mode::Auto {
-        app.on_web(Err(
-            "Permission mode is auto: prompts sent through the hub run tools without asking. \
-Anyone with this key can run commands here (shift+tab or /permissions ask)."
-                .into(),
-        ));
     }
 }
 
@@ -352,7 +340,6 @@ async fn connect_hub_on_start(app: &mut App, web: &mut Option<web::Server>) {
             );
             app.set_hub_viewers(Some(0));
             *web = Some(server);
-            warn_if_auto(app);
         }
         Err(e) => app.on_web(Err(format!("Couldn't serve the web UI for the hub: {e:#}"))),
     }
