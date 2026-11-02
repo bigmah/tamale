@@ -24,6 +24,31 @@ pub struct Settings {
     pub agent: AgentSettings,
     pub ui: UiSettings,
     pub permissions: PermissionSettings,
+    #[serde(default)]
+    pub hub: HubSettings,
+}
+
+/// `[hub]`: a tamale-hub to make the session reachable through (`/web remote`).
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HubSettings {
+    /// The hub's agent socket base, e.g. `wss://tamale-hub.com`.
+    pub url: Option<String>,
+    #[serde(default)]
+    pub connect: HubConnect,
+    /// The agent token. Only from `TAMALE_HUB_TOKEN`, never a settings file.
+    #[serde(skip)]
+    pub token: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HubConnect {
+    /// Only with `/web remote`.
+    #[default]
+    Manual,
+    /// On startup, whenever `url` and the token are set.
+    Auto,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -106,6 +131,12 @@ impl Settings {
         }
         if let Some(value) = get("TAMALE_THINKING").filter(|s| !s.trim().is_empty()) {
             self.model.thinking = Thinking::parse_setting(&value).context("TAMALE_THINKING")?;
+        }
+        if let Some(value) = get("TAMALE_HUB_URL").filter(|s| !s.trim().is_empty()) {
+            self.hub.url = Some(value.trim().to_string());
+        }
+        if let Some(value) = get("TAMALE_HUB_TOKEN").filter(|s| !s.trim().is_empty()) {
+            self.hub.token = Some(value.trim().to_string());
         }
         if let Some(value) = get("TAMALE_CONTEXT_WINDOW") {
             self.model.context_window = Some(

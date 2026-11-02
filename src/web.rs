@@ -14,8 +14,10 @@
 //! an opaque origin that can't reach the session; the page embeds it in an iframe.
 
 mod files;
+mod relay;
 mod render;
 
+pub use relay::{Label, hostname};
 pub use render::{artifact_title, is_artifact};
 
 use std::collections::HashMap;
@@ -29,7 +31,7 @@ use anyhow::{Context, Result};
 use axum::Router;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode, Uri, header};
+use axum::http::{HeaderMap, HeaderName, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use futures::{SinkExt, StreamExt};
@@ -150,6 +152,9 @@ pub enum WebEvent {
     /// A tab connected and needs the whole session; see [`Server::welcome`].
     Connected(u64),
     Disconnected,
+    /// How the connection to a tamale-hub went: `Ok` with news worth showing, `Err` with
+    /// a problem. Either way the footer's hub indicator may have changed.
+    Hub(Result<String, String>),
     /// A prompt or slash command.
     Send(String),
     Interrupt,
@@ -216,6 +221,8 @@ pub struct Server {
     shared: Arc<Shared>,
     mirror: Mirror,
     task: tokio::task::JoinHandle<()>,
+    /// The connection to a tamale-hub, while `/web remote` is on.
+    relay: Option<relay::Relay>,
 }
 
 enum Out {
@@ -227,6 +234,8 @@ struct Client {
     tx: mpsc::UnboundedSender<Out>,
     /// Whether it has had the whole session; until then it gets no updates.
     welcomed: bool,
+    /// Whether it connects through a tamale-hub rather than to this server directly.
+    remote: bool,
 }
 
 struct Shared {
@@ -267,6 +276,108 @@ impl Shared {
 
     fn roots(&self) -> Vec<PathBuf> {
         self.roots.lock().unwrap().clone()
+    }
+
+    /// Registers a tab, local or relayed, and asks the app to welcome it.
+    fn add_client(&self, tx: mpsc::UnboundedSender<Out>, remote: bool) -> u64 {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        self.clients.lock().unwrap().insert(
+            id,
+            Client {
+                tx,
+                welcomed: false,
+                remote,
+            },
+        );
+        let _ = self.events.send(WebEvent::Connected(id));
+        id
+    }
+
+    fn remove_client(&self, id: u64) {
+        if self.clients.lock().unwrap().remove(&id).is_some() {
+            let _ = self.events.send(WebEvent::Disconnected);
+        }
+    }
+}
+
+/// A response to one of the page's GETs, whether served here or relayed through a hub.
+struct Asset {
+    status: StatusCode,
+    headers: Vec<(HeaderName, &'static str)>,
+    body: String,
+}
+
+impl IntoResponse for Asset {
+    fn into_response(self) -> Response {
+        let mut response = (self.status, self.body).into_response();
+        for (name, value) in self.headers {
+            response
+                .headers_mut()
+                .insert(name, axum::http::HeaderValue::from_static(value));
+        }
+        response
+    }
+}
+
+const PAGE_CSP: &str = "default-src 'self'; connect-src 'self'; img-src 'self' data:; \
+     style-src 'self'; script-src 'self'; frame-ancestors 'none'";
+
+/// Scripts run, but in an opaque origin that can't read this server's pages or open its
+/// socket, even if opened in a tab of its own.
+const ARTIFACT_CSP: &str = "sandbox allow-scripts allow-popups allow-modals allow-forms; \
+     default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https:; \
+     style-src 'unsafe-inline' https:; img-src data: blob: https:; \
+     font-src data: https:; media-src data: blob: https:; connect-src https:; \
+     frame-ancestors 'self'";
+
+/// The page at `path` (`/`, `/app.js`, `/app.css` or `/artifact/<id>`), without checking
+/// who asks: the HTTP routes check first, and a hub has checked its browser.
+fn asset(shared: &Shared, path: &str) -> Asset {
+    let ok = |content_type, body: &str, extra: &[(HeaderName, &'static str)]| {
+        let mut headers = vec![
+            (header::CONTENT_TYPE, content_type),
+            (header::CACHE_CONTROL, "no-store"),
+        ];
+        headers.extend_from_slice(extra);
+        Asset {
+            status: StatusCode::OK,
+            headers,
+            body: body.to_string(),
+        }
+    };
+    match path {
+        "/" => ok(
+            "text/html; charset=utf-8",
+            PAGE,
+            &[
+                // Keep the token in the URL from leaking to other sites.
+                (header::REFERRER_POLICY, "no-referrer"),
+                (header::X_FRAME_OPTIONS, "DENY"),
+                (header::CONTENT_SECURITY_POLICY, PAGE_CSP),
+            ],
+        ),
+        "/app.css" => ok("text/css; charset=utf-8", STYLE, &[]),
+        "/app.js" => ok("text/javascript; charset=utf-8", SCRIPT, &[]),
+        _ => {
+            let page = path
+                .strip_prefix("/artifact/")
+                .and_then(|id| shared.artifacts.lock().unwrap().pages.get(id).cloned());
+            match page {
+                Some(page) => ok(
+                    "text/html; charset=utf-8",
+                    &page,
+                    &[
+                        (header::REFERRER_POLICY, "no-referrer"),
+                        (header::CONTENT_SECURITY_POLICY, ARTIFACT_CSP),
+                    ],
+                ),
+                None => Asset {
+                    status: StatusCode::NOT_FOUND,
+                    headers: vec![(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                    body: "No such artifact; it may be from an earlier run.".into(),
+                },
+            }
+        }
     }
 }
 
@@ -316,7 +427,36 @@ impl Server {
             shared,
             mirror,
             task,
+            relay: None,
         })
+    }
+
+    /// Makes the session reachable through the tamale-hub at `url` (`wss://…`), with
+    /// agent token `token`. Progress arrives as [`WebEvent::Hub`].
+    pub fn connect_hub(&mut self, url: &str, token: &str, label: relay::Label) {
+        self.relay = Some(relay::Relay::start(
+            self.shared.clone(),
+            url,
+            token,
+            label,
+        ));
+        if let Some(relay) = &self.relay {
+            relay.status(&self.mirror.hub_status);
+        }
+    }
+
+    pub fn disconnect_hub(&mut self) -> bool {
+        self.relay.take().is_some()
+    }
+
+    /// The link that opens this session through the hub, while connected to one.
+    pub fn hub_url(&self) -> Option<&str> {
+        self.relay.as_ref().map(|r| r.open_url.as_str())
+    }
+
+    /// Whether the hub has accepted this session (and so `hub_url` works).
+    pub fn hub_live(&self) -> bool {
+        self.relay.as_ref().is_some_and(|r| r.live())
     }
 
     /// Sends welcomed tabs what changed since the last sync.
@@ -331,6 +471,9 @@ impl Server {
             changed
         };
         let mut messages = self.mirror.update(&view);
+        if let Some(relay) = &self.relay {
+            relay.status(&self.mirror.hub_status);
+        }
         if roots_changed {
             messages.push(json!({ "t": "roots" }).to_string());
         }
@@ -365,6 +508,17 @@ impl Server {
     pub fn tabs(&self) -> usize {
         self.shared.clients.lock().unwrap().len()
     }
+
+    /// How many of them are open through a tamale-hub.
+    pub fn remote_tabs(&self) -> usize {
+        self.shared
+            .clients
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|c| c.remote)
+            .count()
+    }
 }
 
 /// The address this machine reaches the local network from: connecting a UDP socket
@@ -396,6 +550,8 @@ impl Drop for Server {
 struct Mirror {
     /// Each entry's content hash and its JSON.
     entries: Vec<(u64, String)>,
+    /// What a hub's session list shows, as of the last update.
+    hub_status: relay::HubStatus,
     status: String,
     approval: String,
     artifacts: Arc<Mutex<Artifacts>>,
@@ -429,6 +585,19 @@ impl Mirror {
             out.push(approval.clone());
             self.approval = approval;
         }
+        self.hub_status = relay::HubStatus {
+            busy: view.status.running || view.status.compacting,
+            approval: view.approval.is_some(),
+            title: view
+                .entries
+                .iter()
+                .find_map(|e| match e {
+                    Entry::User(text) => Some(text.lines().next().unwrap_or("").chars().take(80).collect()),
+                    _ => None,
+                })
+                .unwrap_or_default(),
+            model: view.status.model.clone(),
+        };
         out
     }
 
@@ -522,19 +691,7 @@ async fn page(State(shared): State<Arc<Shared>>, uri: Uri, headers: HeaderMap) -
     if !shared.authorized(&uri, &headers) {
         return (StatusCode::FORBIDDEN, "Run /web in tamale for a link.").into_response();
     }
-    let headers = [
-        (header::CONTENT_TYPE, "text/html; charset=utf-8"),
-        (header::CACHE_CONTROL, "no-store"),
-        // Keep the token in the URL from leaking to other sites.
-        (header::REFERRER_POLICY, "no-referrer"),
-        (header::X_FRAME_OPTIONS, "DENY"),
-        (
-            header::CONTENT_SECURITY_POLICY,
-            "default-src 'self'; connect-src 'self'; img-src 'self' data:; \
-             style-src 'self'; script-src 'self'; frame-ancestors 'none'",
-        ),
-    ];
-    (headers, PAGE).into_response()
+    asset(&shared, "/").into_response()
 }
 
 /// The page's code holds nothing secret, but is only served to this server's page.
@@ -542,32 +699,17 @@ async fn style(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Respons
     if !shared.own_host(&headers) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    (
-        [
-            (header::CONTENT_TYPE, "text/css; charset=utf-8"),
-            (header::CACHE_CONTROL, "no-store"),
-        ],
-        STYLE,
-    )
-        .into_response()
+    asset(&shared, "/app.css").into_response()
 }
 
 async fn script(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Response {
     if !shared.own_host(&headers) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    (
-        [
-            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
-            (header::CACHE_CONTROL, "no-store"),
-        ],
-        SCRIPT,
-    )
-        .into_response()
+    asset(&shared, "/app.js").into_response()
 }
 
-/// An artifact, sandboxed: scripts run, but in an opaque origin that can't read this
-/// server's pages or open its socket, even if opened in a tab of its own.
+/// An artifact, sandboxed (see [`ARTIFACT_CSP`]).
 async fn artifact(
     State(shared): State<Arc<Shared>>,
     Path(id): Path<String>,
@@ -576,27 +718,7 @@ async fn artifact(
     if !shared.own_host(&headers) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    let Some(page) = shared.artifacts.lock().unwrap().pages.get(&id).cloned() else {
-        return (
-            StatusCode::NOT_FOUND,
-            "No such artifact; it may be from an earlier run.",
-        )
-            .into_response();
-    };
-    let headers = [
-        (header::CONTENT_TYPE, "text/html; charset=utf-8"),
-        (header::CACHE_CONTROL, "no-store"),
-        (header::REFERRER_POLICY, "no-referrer"),
-        (
-            header::CONTENT_SECURITY_POLICY,
-            "sandbox allow-scripts allow-popups allow-modals allow-forms; \
-             default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https:; \
-             style-src 'unsafe-inline' https:; img-src data: blob: https:; \
-             font-src data: https:; media-src data: blob: https:; connect-src https:; \
-             frame-ancestors 'self'",
-        ),
-    ];
-    (headers, page.to_string()).into_response()
+    asset(&shared, &format!("/artifact/{id}")).into_response()
 }
 
 async fn socket(
@@ -616,7 +738,6 @@ async fn socket(
 }
 
 async fn client(ws: WebSocket, shared: Arc<Shared>) {
-    let id = shared.next_id.fetch_add(1, Ordering::Relaxed);
     let (mut sink, mut stream) = ws.split();
     let (tx, mut rx) = mpsc::unbounded_channel();
     tokio::spawn(async move {
@@ -634,14 +755,7 @@ async fn client(ws: WebSocket, shared: Arc<Shared>) {
         }
         let _ = sink.close().await;
     });
-    shared.clients.lock().unwrap().insert(
-        id,
-        Client {
-            tx,
-            welcomed: false,
-        },
-    );
-    let _ = shared.events.send(WebEvent::Connected(id));
+    let id = shared.add_client(tx, false);
     while let Some(Ok(message)) = stream.next().await {
         let text = match message {
             Message::Text(text) => text,
@@ -652,8 +766,7 @@ async fn client(ws: WebSocket, shared: Arc<Shared>) {
             handle(&shared, id, request);
         }
     }
-    shared.clients.lock().unwrap().remove(&id);
-    let _ = shared.events.send(WebEvent::Disconnected);
+    shared.remove_client(id);
 }
 
 /// A read of the workspace, given its roots, done off the async runtime.
@@ -958,6 +1071,160 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(rebound.status(), 403);
+    }
+
+    #[tokio::test]
+    async fn relayed_tabs_get_the_same_session_and_pages_as_local_ones() {
+        use tamale_hub_protocol::{ToAgent, ToHub};
+        // A stand-in hub: welcomes the agent, opens one channel, asks for the page.
+        let (frames_tx, mut frames) = mpsc::unbounded_channel::<ToHub>();
+        let (auth_tx, mut auth) = mpsc::unbounded_channel::<String>();
+        let app = Router::new().route(
+            "/agent",
+            get(move |headers: HeaderMap, upgrade: WebSocketUpgrade| {
+                let (frames_tx, auth_tx) = (frames_tx.clone(), auth_tx.clone());
+                async move {
+                    let _ = auth_tx.send(
+                        headers[header::AUTHORIZATION].to_str().unwrap().to_string(),
+                    );
+                    upgrade.on_upgrade(move |mut ws| async move {
+                        let send = |f: &ToAgent| Message::Text(serde_json::to_string(f).unwrap().into());
+                        let Some(Ok(Message::Text(hello))) = ws.next().await else { return };
+                        let _ = frames_tx.send(serde_json::from_str(&hello).unwrap());
+                        ws.send(send(&ToAgent::Welcome { proto: 1 })).await.unwrap();
+                        ws.send(send(&ToAgent::Open { c: 7 })).await.unwrap();
+                        ws.send(send(&ToAgent::Get { r: 1, path: "/".into() })).await.unwrap();
+                        ws.send(send(&ToAgent::Get { r: 2, path: "/ws".into() })).await.unwrap();
+                        while let Some(Ok(Message::Text(t))) = ws.next().await {
+                            let _ = frames_tx.send(serde_json::from_str(&t).unwrap());
+                        }
+                    })
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let hub = format!("ws://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await });
+
+        let mut server = Server::start(false).await.unwrap();
+        let entries = vec![Entry::User("Fix the flaky test".into())];
+        server.sync(view(&entries));
+        server.connect_hub(&hub, "tha_x", Label::default());
+        assert_eq!(auth.recv().await.unwrap(), "Bearer tha_x");
+        let next = async |frames: &mut mpsc::UnboundedReceiver<ToHub>| {
+            tokio::time::timeout(std::time::Duration::from_secs(5), frames.recv()).await.unwrap().unwrap()
+        };
+        let ToHub::Hello { sid, .. } = next(&mut frames).await else { panic!("no hello") };
+        assert_eq!(sid, relay::sid());
+
+        // The channel registers as a remote tab, which the app welcomes as it would a local one.
+        let id = loop {
+            if let Some(WebEvent::Connected(id)) = tokio::time::timeout(std::time::Duration::from_secs(5), server.events.recv()).await.unwrap() { break id }
+        };
+        assert_eq!((server.tabs(), server.remote_tabs()), (1, 1));
+        server.welcome(id);
+
+        let mut got_page = false;
+        let mut got_404 = false;
+        let mut got_entries = false;
+        let mut got_status = false;
+        while !(got_page && got_404 && got_entries && got_status) {
+            match next(&mut frames).await {
+                ToHub::Got { r: 1, status, headers, body } => {
+                    assert_eq!(status, 200);
+                    assert!(body.contains("<script type=\"module\" src=\"/app.js\">"));
+                    assert!(headers.iter().any(|(k, v)| k == "content-security-policy" && v == PAGE_CSP));
+                    got_page = true;
+                }
+                ToHub::Got { r: 2, status, .. } => {
+                    assert_eq!(status, 404, "only page paths are served");
+                    got_404 = true;
+                }
+                ToHub::Msg { c: 7, data } if data.contains("\"t\":\"entries\"") => {
+                    assert!(data.contains("Fix the flaky test"));
+                    got_entries = true;
+                }
+                ToHub::Status { title, .. } => {
+                    assert_eq!(title, "Fix the flaky test");
+                    got_status = true;
+                }
+                _ => {}
+            }
+        }
+        assert!(server.hub_live());
+        assert!(server.hub_url().unwrap().ends_with(&format!("/open/{}", relay::sid())));
+        assert!(server.disconnect_hub());
+        assert_eq!(server.remote_tabs(), 0);
+    }
+
+    /// Against a real hub: `TAMALE_HUB_URL`, `TAMALE_HUB_TOKEN` and `TAMALE_HUB_VIEW` (a
+    /// view token of the same pair) set, then `cargo test real_hub -- --ignored`.
+    #[tokio::test]
+    #[ignore]
+    async fn real_hub_relays_a_browser_end_to_end() {
+        use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest};
+        let env = |k| std::env::var(k).unwrap_or_else(|_| panic!("{k} not set"));
+        let (hub, token, view_token) = (env("TAMALE_HUB_URL"), env("TAMALE_HUB_TOKEN"), env("TAMALE_HUB_VIEW"));
+        let origin = hub.replacen("wss://", "https://", 1);
+        let mut server = Server::start(false).await.unwrap();
+        let entries = vec![Entry::User("Remote smoke test".into())];
+        server.sync(view(&entries));
+        server.connect_hub(&hub, &token, Label { host: "laptop".into(), cwd: "~/dev/tamale".into(), model: "test".into() });
+        let deadline = std::time::Duration::from_secs(15);
+        loop {
+            match tokio::time::timeout(deadline, server.events.recv()).await.unwrap().unwrap() {
+                WebEvent::Hub(Ok(_)) => break,
+                WebEvent::Hub(Err(e)) => panic!("{e}"),
+                _ => {}
+            }
+        }
+        let sid = relay::sid().to_string();
+        let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
+        let cookie_of = |r: &reqwest::Response| {
+            r.headers()["set-cookie"].to_str().unwrap().split(';').next().unwrap().to_string()
+        };
+        let r = http.post(format!("{origin}/api/tokens")).header("origin", &origin)
+            .json(&json!({ "add": view_token })).send().await.unwrap();
+        assert_eq!(r.status(), 200);
+        let th = cookie_of(&r);
+        assert!(th.starts_with("__Host-th="));
+        let list: Value = http.get(format!("{origin}/api/sessions")).header("cookie", &th)
+            .send().await.unwrap().json().await.unwrap();
+        assert!(list["sessions"].as_array().unwrap().iter().any(|s| s["sid"] == sid.as_str()), "{list}");
+        let ticket: Value = http.post(format!("{origin}/api/ticket")).header("origin", &origin)
+            .header("cookie", &th).json(&json!({ "sid": sid })).send().await.unwrap().json().await.unwrap();
+        let r = http.get(ticket["url"].as_str().unwrap()).send().await.unwrap();
+        assert_eq!(r.status(), 303);
+        let ts = cookie_of(&r);
+        let session = origin.replacen("https://", &format!("https://{sid}."), 1);
+        let page = http.get(format!("{session}/")).header("cookie", &ts).send().await.unwrap();
+        assert_eq!(page.status(), 200);
+        assert_eq!(page.headers()[header::CONTENT_SECURITY_POLICY], PAGE_CSP);
+        assert!(page.text().await.unwrap().contains("/app.js"));
+
+        let mut request = format!("{}/ws", session.replacen("https://", "wss://", 1)).into_client_request().unwrap();
+        request.headers_mut().insert("origin", session.parse().unwrap());
+        request.headers_mut().insert("cookie", ts.parse().unwrap());
+        let (mut tab, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+        let id = loop {
+            match tokio::time::timeout(deadline, server.events.recv()).await.unwrap().unwrap() {
+                WebEvent::Connected(id) => break id,
+                _ => {}
+            }
+        };
+        server.welcome(id);
+        loop {
+            let Some(Ok(tungstenite::Message::Text(t))) = tokio::time::timeout(deadline, tab.next()).await.unwrap() else { panic!("tab closed") };
+            if t.contains("Remote smoke test") { break }
+        }
+        tab.send(tungstenite::Message::Text(r#"{"t":"send","text":"hello through the hub"}"#.into())).await.unwrap();
+        loop {
+            match tokio::time::timeout(deadline, server.events.recv()).await.unwrap().unwrap() {
+                WebEvent::Send(text) => { assert_eq!(text, "hello through the hub"); break }
+                _ => {}
+            }
+        }
+        assert_eq!(server.remote_tabs(), 1);
     }
 
     #[test]

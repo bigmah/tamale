@@ -84,8 +84,8 @@ const COMMANDS: &[(&str, &str)] = &[
         "Use tamale from a browser tab too (keys in either switch to it); /browser off stops it",
     ),
     (
-        "/web [local|off]",
-        "Open a chat-first web UI on your Wi-Fi with a code browser (/code there); /web local keeps it to this machine, /web off stops it (ctrl+o or the Web tab opens it too)",
+        "/web [local|remote|off]",
+        "Open a chat-first web UI on your Wi-Fi with a code browser (/code there); /web local keeps it to this machine, /web remote makes it reachable anywhere through a tamale-hub ([hub] url, TAMALE_HUB_TOKEN; /web remote off disconnects), /web off stops it (ctrl+o or the Web tab opens it too)",
     ),
     (
         "/artifacts",

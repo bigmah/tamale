@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#17181d">
+<meta name="color-scheme" content="dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="tamale-hub">
+<title>tamale-hub</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Ctext%20x='50'%20y='50'%20font-size='88'%20text-anchor='middle'%20dominant-baseline='central'%3E%F0%9F%AB%94%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/hub.css">
+<script type="module" src="/hub.js"></script>
+</head>
+<body>
+<main>
+  <header>
+    <span class="mark">🫔</span><span class="name">tamale-hub</span>
+    <span class="spacer"></span>
+    <span class="pairs" id="pairs"></span>
+  </header>
+
+  <section id="opening" hidden>
+    <p class="lead" id="opening-text">Opening the session…</p>
+    <p><a href="/" id="opening-back" hidden>See all sessions</a></p>
+  </section>
+
+  <section id="list" hidden>
+    <ul id="sessions" class="sessions"></ul>
+    <p class="empty" id="empty" hidden>No sessions yet. Run <code>/web remote</code> in tamale on a machine
+      with <code>TAMALE_HUB_URL</code> and <code>TAMALE_HUB_TOKEN</code> set.</p>
+  </section>
+
+  <section id="add">
+    <p class="lead" id="add-lead">Open your view link, or paste its view token (<code>thv_…</code>) here.</p>
+    <form id="add-form" autocomplete="off">
+      <input id="token" name="token" type="password" placeholder="thv_…" spellcheck="false" autocapitalize="off">
+      <button type="submit">Add</button>
+    </form>
+    <p class="error" id="error" hidden></p>
+  </section>
+
+  <footer>
+    <button type="button" class="link" id="forget" hidden>Forget tokens on this browser</button>
+  </footer>
+</main>
+</body>
+</html>

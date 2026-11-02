@@ -99,9 +99,49 @@ impl App {
         self.web_session = on;
     }
 
+    pub fn is_web_session(&self) -> bool {
+        self.web_session
+    }
+
+    /// What the footer's hub indicator shows: `None` when not connected to a hub.
+    pub fn set_hub_viewers(&mut self, viewers: Option<usize>) {
+        self.hub_viewers = viewers;
+    }
+
+    pub fn settings_hub(&self) -> &crate::config::HubSettings {
+        &self.settings.hub
+    }
+
+    /// The permission mode, for the warning `/web remote` gives in `auto`.
+    pub fn permission_mode(&self) -> crate::permissions::Mode {
+        self.permissions.lock().unwrap().mode
+    }
+
+    /// What the hub's session list shows of this session besides its status.
+    pub fn hub_label(&self) -> web::Label {
+        let cwd = self.workspace.cwd.display().to_string();
+        let cwd = match std::env::var("HOME") {
+            Ok(home) if !home.is_empty() && cwd.starts_with(&home) => {
+                format!("~{}", &cwd[home.len()..])
+            }
+            _ => cwd,
+        };
+        web::Label {
+            host: web::hostname(),
+            cwd,
+            model: self.backend.model_label(&self.settings.model.name),
+        }
+    }
+
     /// The terminal's screen during a web session: where the session is, what it's doing,
     /// and the few keys that work here.
-    pub fn draw_web_session(&self, frame: &mut Frame, url: &str, tabs: usize) {
+    pub fn draw_web_session(
+        &self,
+        frame: &mut Frame,
+        url: &str,
+        remote: Option<&str>,
+        tabs: usize,
+    ) {
         let dim = Style::new().fg(Color::DarkGray);
         let key = |k: &'static str| Span::from(k).fg(Color::Cyan).bold();
         let state = if self.approval.is_some() {
@@ -137,8 +177,20 @@ impl App {
             Line::from(Span::from(url.to_string()).fg(Color::Blue).underlined()),
             Line::default(),
         ];
-        // Served to the network: a code to scan beats typing the token on a phone.
-        if !url.starts_with("http://127.0.0.1") {
+        if let Some(remote) = remote {
+            // Opening it needs a view token, so the code is safe to show.
+            lines.extend([
+                Line::styled(
+                    "and anywhere through the hub (with your view token) at",
+                    dim,
+                ),
+                Line::from(Span::from(remote.to_string()).fg(Color::Blue).underlined()),
+                Line::default(),
+            ]);
+            lines.extend(qr_lines(remote));
+            lines.push(Line::default());
+        } else if !url.starts_with("http://127.0.0.1") {
+            // Served to the network: a code to scan beats typing the token on a phone.
             lines.push(Line::styled(
                 "Scan to open it on a device on this network (anyone on it who sees the link can use it)",
                 dim,

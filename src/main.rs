@@ -262,13 +262,80 @@ async fn web_request(app: &mut App, web: &mut Option<web::Server>, request: WebR
                 app.set_web_session(true);
             }
         }
+        WebRequest::Remote { on: true } => {
+            let hub = app.settings_hub().clone();
+            let (Some(url), Some(token)) = (hub.url, hub.token) else {
+                app.on_web(Err(
+                    "Set [hub] url (or TAMALE_HUB_URL) and TAMALE_HUB_TOKEN to use a tamale-hub."
+                        .into(),
+                ));
+                return;
+            };
+            if web.is_none() {
+                match web::Server::start(false).await {
+                    Ok(server) => *web = Some(server),
+                    Err(e) => {
+                        app.on_web(Err(format!("Couldn't serve the web UI: {e:#}")));
+                        return;
+                    }
+                }
+            }
+            if let Some(server) = web {
+                if server.hub_url().is_none() {
+                    server.connect_hub(&url, &token, app.hub_label());
+                }
+                app.set_web_session(true);
+                app.set_hub_viewers(Some(server.remote_tabs()));
+            }
+            warn_if_auto(app);
+        }
+        WebRequest::Remote { on: false } => {
+            let disconnected = web.as_mut().is_some_and(|w| w.disconnect_hub());
+            app.set_hub_viewers(None);
+            app.on_web(if disconnected {
+                Ok("Disconnected from the hub.".into())
+            } else {
+                Err("Not connected to a hub.".into())
+            });
+        }
         WebRequest::Close => {
             app.set_web_session(false);
+            app.set_hub_viewers(None);
             app.on_web(match web.take() {
                 Some(_) => Ok("Stopped serving the web UI; the session continues here.".into()),
                 None => Err("The web UI isn't being served.".into()),
             })
         }
+    }
+}
+
+/// Remote prompts run tools without asking in `auto` mode, so say so when connecting.
+fn warn_if_auto(app: &mut App) {
+    if app.permission_mode() == permissions::Mode::Auto {
+        app.on_web(Err(
+            "Permission mode is auto: prompts sent through the hub run tools without asking. \
+Anyone with your view token can run commands here (shift+tab or /permissions ask)."
+                .into(),
+        ));
+    }
+}
+
+/// With `[hub] connect = "auto"`, makes the session reachable through the hub from the
+/// start, without taking over the terminal the way `/web remote` does.
+async fn connect_hub_on_start(app: &mut App, web: &mut Option<web::Server>) {
+    let hub = app.settings_hub().clone();
+    let (config::HubConnect::Auto, Some(url), Some(token)) = (hub.connect, hub.url, hub.token)
+    else {
+        return;
+    };
+    match web::Server::start(false).await {
+        Ok(mut server) => {
+            server.connect_hub(&url, &token, app.hub_label());
+            app.set_hub_viewers(Some(0));
+            *web = Some(server);
+            warn_if_auto(app);
+        }
+        Err(e) => app.on_web(Err(format!("Couldn't serve the web UI for the hub: {e:#}"))),
     }
 }
 
@@ -307,6 +374,7 @@ async fn run(
     let mut browser: Option<Browser> = None;
     let mut surface = Surface::Terminal;
     let mut web: Option<web::Server> = None;
+    connect_hub_on_start(&mut app, &mut web).await;
     // The web UI syncs at most every `WEB_FRAME`, since it renders markdown to HTML.
     let mut web_dirty = false;
     let mut next_web = tokio::time::Instant::now();
@@ -377,7 +445,7 @@ async fn run(
             tokio::select! {
                 Some(ev) = events.next() => {
                     let ev = ev?;
-                    if web.is_some() {
+                    if web.is_some() && app.is_web_session() {
                         web_session_key(&mut app, &mut web, &ev).await;
                     } else if surface == Surface::Terminal {
                         app.on_event(ev);
@@ -398,7 +466,7 @@ async fn run(
                                 web.backend_mut().resize(cols, rows);
                             }
                         }
-                        browser::ClientEvent::Input(_) if web.is_some() => {}
+                        browser::ClientEvent::Input(_) if web.is_some() && app.is_web_session() => {}
                         browser::ClientEvent::Input(ev) => {
                             if surface == Surface::Browser {
                                 app.on_event(ev);
@@ -422,6 +490,7 @@ async fn run(
                             }
                         }
                         web::WebEvent::Disconnected => {}
+                        web::WebEvent::Hub(result) => app.on_web(result),
                         web::WebEvent::Send(text) => app.web_send(text),
                         web::WebEvent::Interrupt => app.web_interrupt(),
                         web::WebEvent::Approve(choice, reason) => app.web_approve(choice, reason),
@@ -450,7 +519,14 @@ async fn run(
                     next_web = tokio::time::Instant::now() + WEB_FRAME;
                 }
                 _ = tokio::time::sleep_until(next_frame), if dirty => {
-                    let session = web.as_ref().map(|w| (w.url.as_str(), w.tabs()));
+                    if let Some(w) = &web
+                        && w.hub_url().is_some() {
+                            app.set_hub_viewers(Some(w.remote_tabs()));
+                        }
+                    let session = web
+                        .as_ref()
+                        .filter(|_| app.is_web_session())
+                        .map(|w| (w.url.as_str(), w.hub_url().filter(|_| w.hub_live()), w.tabs()));
                     draw(terminal, &mut browser, surface, session, &mut app)?;
                     dirty = false;
                     next_frame = tokio::time::Instant::now() + Duration::from_millis(16);
@@ -471,11 +547,11 @@ fn draw(
     terminal: &mut ratatui::DefaultTerminal,
     browser: &mut Option<Browser>,
     surface: Surface,
-    session: Option<(&str, usize)>,
+    session: Option<(&str, Option<&str>, usize)>,
     app: &mut App,
 ) -> Result<()> {
-    if let Some((url, tabs)) = session {
-        terminal.draw(|f| app.draw_web_session(f, url, tabs))?;
+    if let Some((url, remote, tabs)) = session {
+        terminal.draw(|f| app.draw_web_session(f, url, remote, tabs))?;
         if let Some(Browser {
             server,
             terminal: Some(web),

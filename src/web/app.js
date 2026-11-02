@@ -203,7 +203,9 @@ let retry = 0;
 const latest = {};
 
 function connect() {
-  ws = new WebSocket(`ws://${location.host}/ws?t=${encodeURIComponent(token)}`);
+  // wss: when the page came over https, as it does through a tamale-hub.
+  const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${scheme}://${location.host}/ws?t=${encodeURIComponent(token)}`);
   ws.onopen = () => {
     retry = 0;
     setConn('live', 'Connected to tamale');

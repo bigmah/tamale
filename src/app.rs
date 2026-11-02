@@ -77,6 +77,8 @@ pub enum FooterTab {
 pub enum WebRequest {
     /// Serve the web UI; with `lan`, to other devices on the local network too.
     Open { lan: bool },
+    /// Connect to (or with `on: false` disconnect from) the `[hub]` tamale-hub.
+    Remote { on: bool },
     Close,
 }
 
@@ -228,6 +230,8 @@ pub struct App {
     /// Whether `/web` has taken over: replies are written for the web UI (see
     /// `web::ARTIFACT_PROMPT`) and the terminal only shows the session's address.
     web_session: bool,
+    /// Viewers connected through a tamale-hub, while connected to one.
+    hub_viewers: Option<usize>,
     /// A reply being continued in place after a token limit cut it off inside a code
     /// block: its entry and its length before the continuation.
     joining: Option<(usize, usize)>,
@@ -310,6 +314,7 @@ impl App {
             tick: 0,
             busy_since: None,
             web_session: false,
+            hub_viewers: None,
             joining: None,
             should_quit: false,
         }

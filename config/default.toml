@@ -51,3 +51,9 @@ mode = "auto"
 # Lists from all settings layers are combined.
 allow = [] # e.g. ["bash:cargo *", "bash:git status*", "bash:git diff*"]
 deny = [] # e.g. ["bash:git push*", "bash:rm -rf *", "write_file:.env*"]
+
+[hub]
+# A tamale-hub to make this session reachable through from a phone or another computer
+# (see tunnel_plan.md). The agent token comes only from TAMALE_HUB_TOKEN.
+# url = "wss://tamale-hub.com"    # or TAMALE_HUB_URL
+connect = "manual"                # manual: only with /web remote; auto: also on startup

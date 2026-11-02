@@ -508,8 +508,13 @@ impl App {
         ));
         tabs.push(Span::from(" "));
         let tabs_width: usize = tabs.iter().map(|s| s.content.width()).sum();
-        let fixed =
-            " cwd: ".len() + dirs.width() + " · via ".len() + backend.width() + tabs_width + 1;
+        let fixed = " cwd: ".len()
+            + dirs.width()
+            + " · via ".len()
+            + backend.width()
+            + tabs_width
+            + 1
+            + if self.hub_viewers.is_some() { 18 } else { 0 };
         let cwd = truncate_start(
             &self.workspace.cwd.display().to_string(),
             (area.width as usize).saturating_sub(fixed).max(10),
@@ -527,6 +532,21 @@ impl App {
                 })
                 .bold(),
         ];
+        let mut cwd_spans = cwd_spans;
+        if let Some(viewers) = self.hub_viewers {
+            cwd_spans.push(Span::from(" · hub").fg(Color::DarkGray));
+            cwd_spans.push(
+                Span::from(match viewers {
+                    0 => " ●".to_string(),
+                    n => format!(" ● {n} viewing"),
+                })
+                .fg(if viewers > 0 {
+                    Color::Green
+                } else {
+                    Color::DarkGray
+                }),
+            );
+        }
         let cwd_line = Line::from(cwd_spans);
         let hint = if self.approval.is_some() {
             "approve the tool call · esc to interrupt"
