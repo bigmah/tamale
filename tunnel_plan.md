@@ -114,7 +114,7 @@ This is the pattern ngrok (tunnels on their own subdomains), GitHub
 
 ## Infrastructure setup (Hetzner + Route 53)
 
-One-time setup, about 30–45 minutes. `hub/README.md` repeats this as the install guide
+One-time setup, about 30–45 minutes. `docs/self-hosting.md` repeats this as the install guide
 (written for a fresh box; the steps below are for the existing one).
 
 ### 1. The existing Hetzner VPS (`5.78.153.154`)

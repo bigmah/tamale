@@ -12,8 +12,9 @@
 # and puts the old binary back if the new one doesn't come up. `deploy.sh --force` retries the
 # current commit. Rolling back restores the binary only, not state.json.
 #
-# It deploys the hub alone: it doesn't touch Caddy, or the other sites on this box beyond
-# checking that they still answer.
+# It deploys the hub alone: it doesn't touch Caddy or anything else on this box. On your own
+# hub, change DEPLOY_HOST below to your domain. To check other sites on the box after a deploy,
+# list them in DEPLOY_SITES.
 set -euo pipefail
 
 : "${DEPLOY_REMOTE:=origin}"
@@ -23,7 +24,7 @@ set -euo pipefail
 : "${DEPLOY_STATE:=$HOME/.tamale-hub-deploy}"
 : "${DEPLOY_LOCAL_URL:=http://127.0.0.1:8787/}"
 : "${DEPLOY_HOST:=tamale-hub.com}"
-: "${DEPLOY_SITES:=https://tamale-hub.com https://pullspace.dev https://bigmah.com}"
+: "${DEPLOY_SITES:=https://$DEPLOY_HOST}"
 : "${DEPLOY_WAIT:=2}"
 
 # cron's PATH has no cargo.
