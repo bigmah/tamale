@@ -29,6 +29,19 @@ On your phone, open the **view link** (`https://tamale-hub.com/#thv_…`) once, 
 its QR code. The browser keeps the token in an `HttpOnly` cookie, and the hub page lists
 your sessions from then on. Add it to the home screen for an app-like icon.
 
+Then **scan the code `/web remote` shows**, once per machine (`/web remote pair` shows it
+again). It holds that machine's encryption key, so don't share it. Sessions are end-to-end
+encrypted between tamale and the browser, and the hub only moves opaque bytes;
+`/web remote rekey` replaces the key, and every browser has to scan again. `[hub] e2e = false`
+turns it off, for debugging.
+
+**What that covers.** The hub can't read prompts, replies, tool output, files, artifacts,
+titles or directories, and can't forge messages, so it can't type a prompt or approve a tool.
+**What it doesn't:** the hub still serves the page code, so someone in control of it could
+change that code to steal the key the next time a page loads. It still sees metadata (which
+sessions exist and when, from which IPs, busy or not, message sizes and timing). And it can't
+protect a compromised laptop or phone. Details are in [`../e2e.md`](../e2e.md).
+
 **The view token controls every session of its pair.** Treat it like an SSH key, and
 `rotate --view` it if it leaks. In tamale's default `auto` permission mode, a remote
 prompt runs tools without asking; tamale warns when connecting.
@@ -97,7 +110,9 @@ TAMALE_HUB_URL=ws://hub.localhost:8787 TAMALE_HUB_TOKEN=tha_… tamale
 ## Testing
 
 `cargo test -p tamale-hub` runs the hub in-process with a fake agent through the whole
-ticket, cookie, tunnel and socket flow, and the rejections. Against a deployed hub:
+ticket, cookie, tunnel and socket flow, and the rejections. Upgrade the hub before tamale:
+a new hub still accepts older tamales (in plaintext), but an older hub refuses new ones.
+Against a deployed hub:
 
 ```sh
 TAMALE_HUB_URL=wss://tamale-hub.com TAMALE_HUB_TOKEN=tha_… TAMALE_HUB_VIEW=thv_… \

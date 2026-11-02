@@ -27,6 +27,15 @@
     <p><a href="/" id="opening-back" hidden>See all sessions</a></p>
   </section>
 
+  <!-- /open/<sid> of an encrypted session whose machine this browser has no key for. -->
+  <section id="scan" hidden>
+    <p class="lead">🔒 This session is end-to-end encrypted, and this browser doesn't have its
+      machine's key yet.</p>
+    <p class="hint">In the session's terminal, run <code>/web remote pair</code> and scan the code
+      it shows with this device. Once per machine is enough.</p>
+    <p><a href="/">See all sessions</a></p>
+  </section>
+
   <!-- For visitors without a view token. -->
   <section id="landing" hidden>
     <h1>Your tamale sessions, from anywhere.</h1>
@@ -38,8 +47,9 @@
         the machines that run tamale, and a <em>view link</em> for your browsers.</li>
       <li><strong>On each machine</strong>, set the agent token and run <code>/web remote</code> in
         tamale. The agent token alone can't read or drive anything, so it's fine on a VPS.</li>
-      <li><strong>On your phone</strong>, scan the view link. Your sessions show up here; tap one to
-        drive it.</li>
+      <li><strong>On your phone</strong>, scan the view link, then the code <code>/web remote</code>
+        shows, once per machine. That code holds the encryption key, which never reaches the hub.
+        Your sessions show up here; tap one to drive it.</li>
     </ol>
   </section>
 
@@ -100,10 +110,17 @@
 
   <section id="trust" class="note">
     <h2>How much to trust this hub</h2>
-    <p>Sessions pass through this server unencrypted beyond TLS, so whoever runs it, or anyone who
-      breaks into it, could read them and send commands to your machines. It's a beta. For
-      anything sensitive, run your own hub (it's one small binary behind Caddy), and
-      keep tamale's permission mode on <code>ask</code> for remote work.</p>
+    <p>Sessions are end-to-end encrypted between tamale and your browser, with a key that reaches
+      your phone by scanning a code and never reaches this server. Whoever runs the hub, or breaks
+      into it, can't read your prompts, code, tool output, artifacts, titles or directories, and
+      can't send commands to your machines.</p>
+    <p>Three limits. <strong>This server delivers the page code</strong>, so someone in control of
+      it could change that code to steal the key the next time a page loads; encryption makes an
+      attack take that active step, but doesn't rule it out. It still sees <strong>metadata</strong>:
+      which sessions exist and when, from which addresses, whether they're busy, and message sizes
+      and timing. And it can't protect a compromised laptop or phone. It's a beta: for anything
+      sensitive, run your own hub (it's one small binary behind Caddy), and keep tamale's permission
+      mode on <code>ask</code> for remote work.</p>
     <p>Unused pairs made here are deleted after 7 days if they never connect, and after 90 days
       without use.</p>
   </section>

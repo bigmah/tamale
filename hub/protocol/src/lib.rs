@@ -5,7 +5,14 @@
 use serde::{Deserialize, Serialize};
 
 /// Bumped on incompatible changes to these frames.
-pub const PROTO: u32 = 1;
+pub const PROTO: u32 = 2;
+
+/// The oldest protocol a hub still accepts. Version 1 is version 2 without `mid`, `e2e` and
+/// `sealed`: tamales from before end-to-end encryption, which stay in plaintext.
+pub const MIN_PROTO: u32 = 1;
+
+/// The longest sealed label a hub keeps for a session.
+pub const MAX_SEALED: usize = 16 << 10;
 
 /// The largest frame either side sends or accepts: a `welcome` carries the whole
 /// session, which can be large.
@@ -45,12 +52,19 @@ pub fn valid_sid(sid: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+/// Whether `mid` is well formed: 32 lowercase hex characters, as a sid is.
+pub fn valid_mid(mid: &str) -> bool {
+    valid_sid(mid)
+}
+
 /// Paths a hub may ask tamale for with [`ToAgent::Get`].
 pub fn tunnelled_path(path: &str) -> bool {
-    matches!(path, "/" | "/app.js" | "/app.css")
-        || path
-            .strip_prefix("/artifact/")
-            .is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric()))
+    matches!(
+        path,
+        "/" | "/app.js" | "/app.css" | "/noise.js" | "/artifact-frame"
+    ) || path
+        .strip_prefix("/artifact/")
+        .is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric()))
 }
 
 /// What the session list shows of a session.
@@ -69,7 +83,18 @@ pub enum ToHub {
     Hello {
         proto: u32,
         sid: String,
+        /// Empty when `e2e`: the hub gets `sealed` instead.
+        #[serde(default)]
         label: Label,
+        /// Which machine's pairing key this session uses, for browsers to find theirs.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mid: Option<String>,
+        /// Whether relayed channels are end-to-end encrypted (see `e2e.md`).
+        #[serde(default)]
+        e2e: bool,
+        /// The label, for browsers holding the key.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sealed: Option<String>,
     },
     /// One `/web` message for browser client `c`.
     Msg { c: u64, data: String },
@@ -86,8 +111,14 @@ pub enum ToHub {
     Status {
         busy: bool,
         approval: bool,
+        /// Empty when `sealed` carries them.
+        #[serde(default)]
         title: String,
+        #[serde(default)]
         model: String,
+        /// The title and model, for browsers holding the key.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sealed: Option<String>,
     },
 }
 
@@ -132,10 +163,38 @@ mod tests {
                 cwd: "~/api".into(),
                 model: "claude-opus-5-5".into(),
             },
+            mid: Some("1".repeat(32)),
+            e2e: true,
+            sealed: Some("c2VhbGVk".into()),
         };
         let text = serde_json::to_string(&hello).unwrap();
-        assert!(text.starts_with(r#"{"t":"hello","proto":1,"#), "{text}");
+        assert!(text.starts_with(r#"{"t":"hello","proto":2,"#), "{text}");
         assert_eq!(serde_json::from_str::<ToHub>(&text).unwrap(), hello);
+
+        // A tamale from before end-to-end encryption still parses, in plaintext.
+        let old = format!(
+            r#"{{"t":"hello","proto":1,"sid":"{}","label":{{"host":"h","cwd":"c","model":"m"}}}}"#,
+            "0".repeat(32)
+        );
+        let ToHub::Hello {
+            label,
+            mid,
+            e2e,
+            sealed,
+            ..
+        } = serde_json::from_str(&old).unwrap()
+        else {
+            panic!("not a hello");
+        };
+        assert_eq!(
+            (label.host.as_str(), mid, e2e, sealed),
+            ("h", None, false, None)
+        );
+        let old = r#"{"t":"status","busy":true,"approval":false,"title":"t","model":"m"}"#;
+        assert!(matches!(
+            serde_json::from_str(old).unwrap(),
+            ToHub::Status { sealed: None, .. }
+        ));
 
         let got = ToHub::Got {
             r: 3,
@@ -175,6 +234,7 @@ mod tests {
         assert!(!valid_sid("www"));
         assert!(tunnelled_path("/") && tunnelled_path("/app.js"));
         assert!(tunnelled_path("/artifact/9f2c"));
+        assert!(tunnelled_path("/noise.js") && tunnelled_path("/artifact-frame"));
         assert!(!tunnelled_path("/artifact/../x") && !tunnelled_path("/artifact/"));
         assert!(!tunnelled_path("/ws") && !tunnelled_path("/etc/passwd"));
     }

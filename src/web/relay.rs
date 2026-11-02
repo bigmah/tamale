@@ -8,12 +8,16 @@
 //! other, so it gets the same `welcome` and updates. The frames are in
 //! `tamale-hub-protocol`.
 //!
+//! With a pairing key ([`e2e::Keys`]), a channel carries nothing but a Noise handshake and
+//! then sealed messages, so the hub only moves opaque bytes: a tab exists only once its
+//! handshake succeeds, and anything unsealed closes the channel. See `e2e.md`.
+//!
 //! The connection is retried with backoff until it's turned off, except when the hub
 //! rejects it for good (a bad token, say).
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
@@ -24,7 +28,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::{self, Message};
 
-use super::{Out, Shared, WebEvent};
+use super::{Out, Shared, WebEvent, e2e};
 
 pub use protocol::Label;
 
@@ -88,7 +92,65 @@ pub fn hostname() -> String {
         .unwrap_or_else(|_| "tamale".into())
 }
 
+/// Why tamale closed a channel, which the page acts on (see `src/web/app.js`).
+const WRONG_KEY: &str = "e2e: wrong key";
+const BROKEN: &str = "e2e: the encrypted connection broke; reload to reconnect";
+const THROTTLED: &str = "e2e: too many failed handshakes; try again later";
+
+/// Failed handshakes in a row before tamale starts turning new ones away.
+const FREE_FAILURES: u32 = 5;
+
+/// Backs off from a run of failed handshakes. 256-bit keys make guessing hopeless anyway,
+/// but this stops the work and makes the abuse visible.
+#[derive(Default)]
+struct Throttle {
+    failures: u32,
+    until: Option<tokio::time::Instant>,
+}
+
+impl Throttle {
+    fn blocked(&self) -> bool {
+        self.until
+            .is_some_and(|until| tokio::time::Instant::now() < until)
+    }
+
+    /// Counts a failure; true the first time it starts backing off.
+    fn failed(&mut self) -> bool {
+        self.failures += 1;
+        if self.failures < FREE_FAILURES {
+            return false;
+        }
+        let secs = 1u64 << (self.failures - FREE_FAILURES).min(8);
+        self.until = Some(tokio::time::Instant::now() + Duration::from_secs(secs));
+        self.failures == FREE_FAILURES
+    }
+
+    fn succeeded(&mut self) {
+        *self = Self::default();
+    }
+}
+
+/// A browser's channel.
+enum Channel {
+    /// In plaintext (no pairing key): a tab from the start.
+    Plain(u64),
+    /// Encrypted, and waiting for a handshake that answers this nonce.
+    Waiting([u8; 16]),
+    /// Encrypted, and a tab.
+    Sealed(u64, Arc<Mutex<e2e::Channel>>),
+}
+
+impl Channel {
+    fn client(&self) -> Option<u64> {
+        match self {
+            Self::Plain(id) | Self::Sealed(id, _) => Some(*id),
+            Self::Waiting(_) => None,
+        }
+    }
+}
+
 pub struct Relay {
+    /// The link that opens this session, with the pairing key in its fragment if any.
     pub open_url: String,
     shared: Arc<Shared>,
     status: watch::Sender<HubStatus>,
@@ -97,17 +159,30 @@ pub struct Relay {
 }
 
 impl Relay {
-    pub fn start(shared: Arc<Shared>, url: &str, token: &str, label: Label) -> Self {
+    pub fn start(
+        shared: Arc<Shared>,
+        url: &str,
+        token: &str,
+        label: Label,
+        keys: Option<e2e::Keys>,
+    ) -> Self {
         let (status, status_rx) = watch::channel(HubStatus::default());
         let live = Arc::new(AtomicBool::new(false));
-        let open_url = open_url(url, sid());
+        // What's shown in the conversation leaves the key out: entries are saved with the
+        // session, and sent to every tab.
+        let plain_url = open_url(url, sid());
+        let open_url = match &keys {
+            Some(keys) => format!("{plain_url}#{}", keys.fragment()),
+            None => plain_url.clone(),
+        };
         let task = tokio::spawn(run(
             shared.clone(),
             Target {
                 url: format!("{}/agent", url.trim_end_matches('/')),
                 token: token.to_string(),
                 label,
-                open_url: open_url.clone(),
+                open_url: plain_url,
+                keys,
             },
             status_rx,
             live.clone(),
@@ -163,6 +238,7 @@ struct Target {
     token: String,
     label: Label,
     open_url: String,
+    keys: Option<e2e::Keys>,
 }
 
 /// How a connection ended.
@@ -185,9 +261,18 @@ async fn run(
     let mut delay = Duration::from_secs(1);
     // The last problem reported, so a hub that stays down is reported once.
     let mut reported: Option<String> = None;
+    let mut throttle = Throttle::default();
     loop {
         let started = tokio::time::Instant::now();
-        let ended = connection(&shared, &target, &mut status, &live, &mut reported).await;
+        let ended = connection(
+            &shared,
+            &target,
+            &mut status,
+            &live,
+            &mut reported,
+            &mut throttle,
+        )
+        .await;
         live.store(false, Ordering::Relaxed);
         drop_remote_clients(&shared);
         match ended {
@@ -225,6 +310,7 @@ async fn connection(
     status: &mut watch::Receiver<HubStatus>,
     live: &AtomicBool,
     reported: &mut Option<String>,
+    throttle: &mut Throttle,
 ) -> Ended {
     let mut request = match target.url.as_str().into_client_request() {
         Ok(request) => request,
@@ -252,10 +338,9 @@ async fn connection(
         Err(_) => return Ended::Retry(format!("timed out connecting to {}", target.url)),
     };
 
-    let hello = ToHub::Hello {
-        proto: protocol::PROTO,
-        sid: sid().to_string(),
-        label: target.label.clone(),
+    let hello = match hello(target) {
+        Ok(hello) => hello,
+        Err(e) => return Ended::Rejected(format!("couldn't seal the session's label: {e:#}")),
     };
     if ws.send(text(&hello)).await.is_err() {
         return Ended::Retry("the hub closed the connection".into());
@@ -279,7 +364,7 @@ async fn connection(
     // Frames from relayed tabs' channels, to send to the hub.
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<ToHub>();
     // The hub's channel ids and this server's client ids.
-    let mut channels: HashMap<u64, u64> = HashMap::new();
+    let mut channels: HashMap<u64, Channel> = HashMap::new();
     let mut ping = tokio::time::interval(Duration::from_secs(30));
     ping.tick().await;
     let mut heard = tokio::time::Instant::now();
@@ -299,7 +384,7 @@ async fn connection(
                     _ => continue,
                 };
                 let Ok(frame) = serde_json::from_str::<ToAgent>(&frame) else { continue };
-                if let Some(reply) = on_frame(shared, frame, &mut channels, &out_tx)
+                if let Some(reply) = on_frame(shared, target.keys.as_ref(), throttle, frame, &mut channels, &out_tx)
                     && ws.send(text(&reply)).await.is_err() {
                         break Ended::Retry("connection lost".into());
                     }
@@ -311,7 +396,7 @@ async fn connection(
             }
             Ok(()) = status.changed() => {
                 let s = status.borrow_and_update().clone();
-                let frame = ToHub::Status { busy: s.busy, approval: s.approval, title: s.title, model: s.model };
+                let Some(frame) = status_frame(target.keys.as_ref(), s) else { continue };
                 if ws.send(text(&frame)).await.is_err() {
                     break Ended::Retry("connection lost".into());
                 }
@@ -326,7 +411,7 @@ async fn connection(
             }
         }
     };
-    for (_, id) in channels {
+    for id in channels.values().filter_map(Channel::client) {
         shared.remove_client(id);
     }
     ended
@@ -349,52 +434,222 @@ fn text(frame: &impl serde::Serialize) -> Message {
     Message::Text(serde_json::to_string(frame).unwrap_or_default().into())
 }
 
+/// The first frame: with a pairing key, the label goes sealed.
+fn hello(target: &Target) -> anyhow::Result<ToHub> {
+    let (label, mid, sealed) = match &target.keys {
+        None => (target.label.clone(), None, None),
+        Some(keys) => {
+            let sealed = keys.seal(sid(), "label", &serde_json::to_string(&target.label)?)?;
+            (Label::default(), Some(keys.mid.clone()), Some(sealed))
+        }
+    };
+    Ok(ToHub::Hello {
+        proto: protocol::PROTO,
+        sid: sid().to_string(),
+        label,
+        e2e: mid.is_some(),
+        mid,
+        sealed,
+    })
+}
+
+/// A status frame, with the title and model sealed if there's a pairing key. `None` if
+/// they can't be, rather than send them in the clear.
+fn status_frame(keys: Option<&e2e::Keys>, s: HubStatus) -> Option<ToHub> {
+    let Some(keys) = keys else {
+        return Some(ToHub::Status {
+            busy: s.busy,
+            approval: s.approval,
+            title: s.title,
+            model: s.model,
+            sealed: None,
+        });
+    };
+    let plain = serde_json::json!({ "title": s.title, "model": s.model }).to_string();
+    Some(ToHub::Status {
+        busy: s.busy,
+        approval: s.approval,
+        title: String::new(),
+        model: String::new(),
+        sealed: Some(keys.seal(sid(), "status", &plain).ok()?),
+    })
+}
+
+/// Makes channel `c` a tab: what the app sends it goes to the hub, sealed if `cipher`.
+fn open_tab(
+    shared: &Arc<Shared>,
+    c: u64,
+    cipher: Option<Arc<Mutex<e2e::Channel>>>,
+    out: &mpsc::UnboundedSender<ToHub>,
+) -> u64 {
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let id = shared.add_client(tx, true);
+    let out = out.clone();
+    tokio::spawn(async move {
+        while let Some(message) = rx.recv().await {
+            let frames = match (message, &cipher) {
+                (Out::Text(data), None) => vec![ToHub::Msg { c, data }],
+                (Out::Text(data), Some(cipher)) => {
+                    let sealed = cipher.lock().unwrap().seal(&data);
+                    match sealed {
+                        Ok(boxes) => boxes.into_iter().map(|m| box_frame(c, m)).collect(),
+                        Err(_) => vec![ToHub::Close {
+                            c,
+                            reason: BROKEN.into(),
+                        }],
+                    }
+                }
+                (Out::Close(reason), _) => vec![ToHub::Close {
+                    c,
+                    reason: reason.into(),
+                }],
+            };
+            for frame in frames {
+                if out.send(frame).is_err() {
+                    return;
+                }
+            }
+        }
+    });
+    id
+}
+
+fn box_frame(c: u64, sealed: String) -> ToHub {
+    ToHub::Msg {
+        c,
+        data: serde_json::json!({ "t": "box", "m": sealed }).to_string(),
+    }
+}
+
+/// Ends channel `c`: tells the hub why, and drops its tab if it had one.
+fn refuse(
+    shared: &Shared,
+    channels: &mut HashMap<u64, Channel>,
+    c: u64,
+    reason: &str,
+) -> Option<ToHub> {
+    if let Some(id) = channels.remove(&c).and_then(|channel| channel.client()) {
+        shared.remove_client(id);
+    }
+    Some(ToHub::Close {
+        c,
+        reason: reason.into(),
+    })
+}
+
 /// Acts on one frame from the hub; returns a frame to answer with, if any.
 fn on_frame(
     shared: &Arc<Shared>,
+    keys: Option<&e2e::Keys>,
+    throttle: &mut Throttle,
     frame: ToAgent,
-    channels: &mut HashMap<u64, u64>,
+    channels: &mut HashMap<u64, Channel>,
     out: &mpsc::UnboundedSender<ToHub>,
 ) -> Option<ToHub> {
     match frame {
         ToAgent::Open { c } => {
-            let (tx, mut rx) = mpsc::unbounded_channel();
-            let id = shared.add_client(tx, true);
-            if let Some(old) = channels.insert(c, id) {
-                shared.remove_client(old);
+            if keys.is_none() {
+                let id = open_tab(shared, c, None, out);
+                if let Some(id) = channels
+                    .insert(c, Channel::Plain(id))
+                    .and_then(|old| old.client())
+                {
+                    shared.remove_client(id);
+                }
+                return None;
             }
-            let out = out.clone();
-            tokio::spawn(async move {
-                while let Some(message) = rx.recv().await {
-                    let frame = match message {
-                        Out::Text(data) => ToHub::Msg { c, data },
-                        Out::Close(reason) => ToHub::Close {
+            let mut nonce = [0u8; 16];
+            if getrandom::fill(&mut nonce).is_err() {
+                return Some(ToHub::Close {
+                    c,
+                    reason: BROKEN.into(),
+                });
+            }
+            if let Some(id) = channels
+                .insert(c, Channel::Waiting(nonce))
+                .and_then(|old| old.client())
+            {
+                shared.remove_client(id);
+            }
+            use base64::Engine;
+            let nonce = base64::engine::general_purpose::STANDARD.encode(nonce);
+            Some(ToHub::Msg {
+                c,
+                data: serde_json::json!({ "t": "hs0", "n": nonce }).to_string(),
+            })
+        }
+        ToAgent::Msg { c, data } => match channels.get(&c)? {
+            Channel::Plain(id) => {
+                if let Ok(request) = serde_json::from_str::<Value>(&data) {
+                    super::handle(shared, *id, request);
+                }
+                None
+            }
+            Channel::Waiting(nonce) => {
+                let nonce = *nonce;
+                let keys = keys?;
+                let Some(hs1) = sealed_field(&data, "hs1") else {
+                    return refuse(shared, channels, c, BROKEN);
+                };
+                if throttle.blocked() {
+                    return refuse(shared, channels, c, THROTTLED);
+                }
+                match keys.respond(sid(), &nonce, &hs1) {
+                    Ok((cipher, hs2)) => {
+                        throttle.succeeded();
+                        let cipher = Arc::new(Mutex::new(cipher));
+                        let id = open_tab(shared, c, Some(cipher.clone()), out);
+                        channels.insert(c, Channel::Sealed(id, cipher));
+                        // Answered before anything the new tab is sent: the caller sends
+                        // this now, and the tab's messages wait in `out`.
+                        Some(ToHub::Msg {
                             c,
-                            reason: reason.into(),
-                        },
-                    };
-                    if out.send(frame).is_err() {
-                        return;
+                            data: serde_json::json!({ "t": "hs2", "m": hs2 }).to_string(),
+                        })
+                    }
+                    Err(_) => {
+                        if throttle.failed() {
+                            let _ = shared.events.send(WebEvent::Hub(Err(
+                                "Several browsers failed the encrypted handshake with this session. \
+It may be a browser with an old key, or someone guessing; tamale is slowing them down."
+                                    .into(),
+                            )));
+                        }
+                        refuse(shared, channels, c, WRONG_KEY)
                     }
                 }
-            });
-            None
-        }
-        ToAgent::Msg { c, data } => {
-            let id = *channels.get(&c)?;
-            if let Ok(request) = serde_json::from_str::<Value>(&data) {
-                super::handle(shared, id, request);
             }
-            None
-        }
+            Channel::Sealed(id, cipher) => {
+                let (id, cipher) = (*id, cipher.clone());
+                let Some(sealed) = sealed_field(&data, "box") else {
+                    return refuse(shared, channels, c, BROKEN);
+                };
+                let opened = cipher
+                    .lock()
+                    .unwrap()
+                    .open(&sealed, protocol::MAX_BROWSER_MESSAGE);
+                match opened {
+                    Ok(None) => None,
+                    Ok(Some(message)) => {
+                        if let Ok(request) = serde_json::from_str::<Value>(&message) {
+                            super::handle(shared, id, request);
+                        }
+                        None
+                    }
+                    Err(_) => refuse(shared, channels, c, BROKEN),
+                }
+            }
+        },
         ToAgent::Close { c } => {
-            if let Some(id) = channels.remove(&c) {
+            if let Some(id) = channels.remove(&c).and_then(|channel| channel.client()) {
                 shared.remove_client(id);
             }
             None
         }
         ToAgent::Get { r, path } => {
-            let asset = if protocol::tunnelled_path(&path) {
+            // An encrypted session's artifacts travel over the sealed socket only.
+            let refused = keys.is_some() && path.starts_with("/artifact/");
+            let asset = if protocol::tunnelled_path(&path) && !refused {
                 super::asset(shared, &path)
             } else {
                 super::Asset {
@@ -418,9 +673,32 @@ fn on_frame(
     }
 }
 
+/// The `m` of a `{"t": kind, "m": ...}` frame, and nothing else will do.
+fn sealed_field(data: &str, kind: &str) -> Option<String> {
+    let frame: Value = serde_json::from_str(data).ok()?;
+    if frame.get("t")?.as_str()? != kind {
+        return None;
+    }
+    Some(frame.get("m")?.as_str()?.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_handshake_failures_back_off_until_one_succeeds() {
+        let mut throttle = Throttle::default();
+        for _ in 1..FREE_FAILURES {
+            assert!(!throttle.failed());
+            assert!(!throttle.blocked());
+        }
+        assert!(throttle.failed(), "reported the first time");
+        assert!(throttle.blocked());
+        assert!(!throttle.failed(), "and only then");
+        throttle.succeeded();
+        assert!(!throttle.blocked());
+    }
 
     #[test]
     fn open_urls_follow_the_hub_scheme() {

@@ -89,3 +89,6 @@ a { color: var(--accent); }
   .secret { flex-direction: column; }
   .secret button { align-self: flex-end; }
 }
+
+.lock { margin-right: 6px; font-size: 13px; }
+.title.unknown { color: var(--fg-dim); }

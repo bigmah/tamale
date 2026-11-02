@@ -178,7 +178,6 @@ impl App {
             Line::default(),
         ];
         if let Some(remote) = remote {
-            // Opening it needs a view token, so the code is safe to show.
             lines.extend([
                 Line::styled(
                     "and anywhere through the hub (with your view token) at",
@@ -187,6 +186,13 @@ impl App {
                 Line::from(Span::from(remote.to_string()).fg(Color::Blue).underlined()),
                 Line::default(),
             ]);
+            // Opening it still needs a view token, but this much is secret.
+            if remote.contains("#k=") {
+                lines.push(Line::styled(
+                    "Scan once per device. This holds the machine's encryption key: don't share it.",
+                    dim,
+                ));
+            }
             lines.extend(qr_lines(remote));
             lines.push(Line::default());
         } else if !url.starts_with("http://127.0.0.1") {

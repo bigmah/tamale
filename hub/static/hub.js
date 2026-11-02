@@ -4,8 +4,83 @@
 //   /open/<sid>  trades the view tokens for a ticket into that session and goes there
 // Session labels come from agents and pair names from whoever made them, so everything
 // here is built with textContent.
+//
+// This page also holds the pairing keys of end-to-end encrypted sessions (see e2e.md), by
+// machine: every session is its own origin, and this is the one place that sees them all.
+// It opens their labels for the list, and passes a key on in the fragment of the redirect
+// into a session. The hub never sees a key.
+
+import { keyFromFragment, machineId, toBase64Url, unseal } from '/seal.js';
 
 const $ = (id) => document.getElementById(id);
+
+const keys = {
+  /** A copy for when IndexedDB isn't there (a private window, say), by machine id. */
+  memory: new Map(),
+  db: null,
+
+  async open() {
+    this.db ??= await new Promise((resolve, reject) => {
+      const request = indexedDB.open('tamale-hub', 1);
+      request.onupgradeneeded = () => request.result.createObjectStore('keys');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    return this.db;
+  },
+
+  async run(mode, work) {
+    const db = await this.open();
+    return new Promise((resolve, reject) => {
+      const request = work(db.transaction('keys', mode).objectStore('keys'));
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  },
+
+  async put(psk) {
+    const mid = await machineId(psk);
+    this.memory.set(mid, psk);
+    await this.run('readwrite', (store) => store.put(psk, mid)).catch(() => {});
+  },
+
+  async get(mid) {
+    const stored = await this.run('readonly', (store) => store.get(mid)).catch(() => undefined);
+    return stored ?? this.memory.get(mid);
+  },
+
+  async clear() {
+    this.memory.clear();
+    await this.run('readwrite', (store) => store.clear()).catch(() => {});
+  },
+};
+
+/** Opened labels by their sealed text, since the list refreshes every few seconds. */
+const opened = new Map();
+
+async function openLabel(psk, sid, kind, sealed) {
+  if (!sealed) return {};
+  const id = `${sid} ${kind} ${sealed}`;
+  if (!opened.has(id)) {
+    if (opened.size > 500) opened.clear();
+    opened.set(id, await unseal(psk, sid, kind, sealed));
+  }
+  return opened.get(id);
+}
+
+/** A session as the list shows it: an encrypted one's labels opened, if there's a key. */
+async function readable(s) {
+  if (!s.mid) return s;
+  const psk = await keys.get(s.mid);
+  try {
+    if (!psk) throw new Error('No key.');
+    const label = await openLabel(psk, s.sid, 'label', s.sealed_label);
+    const status = await openLabel(psk, s.sid, 'status', s.sealed_status);
+    return { ...s, ...label, ...status, model: status.model || label.model || '', encrypted: true };
+  } catch {
+    return { ...s, encrypted: true, unknown: true };
+  }
+}
 
 async function api(path, body) {
   const init = body === undefined ? {} : {
@@ -24,8 +99,15 @@ function showError(id, message) {
 }
 
 // A view link carries its token in the fragment, which never reaches the server or its
-// logs; it goes to /api/tokens, which keeps it in an HttpOnly cookie.
+// logs; it goes to /api/tokens, which keeps it in an HttpOnly cookie. A session's link
+// carries its machine's pairing key the same way, which stays in this browser.
 async function takeFragment() {
+  const psk = keyFromFragment(location.hash);
+  if (psk) {
+    history.replaceState(null, '', location.pathname + location.search);
+    await keys.put(psk);
+    return;
+  }
   const token = decodeURIComponent(location.hash.slice(1));
   if (!token.startsWith('thv_') && !token.startsWith('tha_')) return;
   history.replaceState(null, '', location.pathname + location.search);
@@ -51,7 +133,13 @@ function sessionItem(s, showPair) {
   const link = el('a', 'session' + (s.online ? '' : ' offline'));
   link.href = s.open;
   const top = el('div', 'row');
-  top.append(el('span', 'title', s.title || 'New session'));
+  if (s.encrypted) {
+    const lock = el('span', 'lock', '🔒');
+    lock.title = 'End-to-end encrypted: the hub can\'t read this session';
+    top.append(lock);
+  }
+  const title = s.unknown ? 'Encrypted session on an unknown machine: scan its code' : s.title || 'New session';
+  top.append(el('span', s.unknown ? 'title unknown' : 'title', title));
   let state;
   if (!s.online) state = el('span', 'state offline', 'offline');
   else if (s.approval) state = el('span', 'state approval', '● needs approval');
@@ -59,7 +147,8 @@ function sessionItem(s, showPair) {
   else state = el('span', 'state idle', ago(s.idle));
   top.append(state);
   const meta = el('div', 'meta');
-  meta.append(el('span', 'host', s.host), document.createTextNode(` · ${s.cwd} · ${s.model}`));
+  if (s.unknown) meta.append(document.createTextNode('Run /web remote pair in its terminal'));
+  else meta.append(el('span', 'host', s.host), document.createTextNode(` · ${s.cwd} · ${s.model}`));
   if (s.viewers) meta.append(document.createTextNode(` · ${s.viewers} viewing`));
   if (showPair) {
     meta.append(document.createTextNode(' '));
@@ -102,6 +191,7 @@ async function refresh() {
   if (busy) return;
   const { ok, data } = await api('/api/sessions');
   if (!ok) return;
+  data.sessions = await Promise.all(data.sessions.map(readable));
   const has = data.tokens > 0;
   const showingTokens = !$('made').hidden;
   $('landing').hidden = has || showingTokens;
@@ -188,11 +278,22 @@ async function remove(name) {
 }
 
 async function open(sid) {
+  $('scan').hidden = true;
   $('opening').hidden = false;
   for (const id of ['add', 'trust', 'create']) $(id).hidden = true;
   const { ok, data } = await api('/api/ticket', { sid });
   if (ok && data.url) {
-    location.replace(data.url);
+    if (!data.mid) {
+      location.replace(data.url);
+      return;
+    }
+    const psk = await keys.get(data.mid);
+    if (psk) {
+      location.replace(`${data.url}#k=${toBase64Url(psk)}`);
+      return;
+    }
+    $('opening').hidden = true;
+    $('scan').hidden = false;
     return;
   }
   $('opening-text').textContent = data.error || "Couldn't open that session.";
@@ -212,13 +313,20 @@ $('add-form').addEventListener('submit', async (ev) => {
 });
 
 $('forget').addEventListener('click', async () => {
-  if (!confirm('Forget the view tokens on this browser? You will need the view link again.')) return;
+  if (!confirm('Forget the view tokens and encryption keys on this browser? You will need the view link, and each machine\'s code, again.')) return;
   await api('/api/tokens', { forget: true });
+  await keys.clear();
   refresh();
 });
 
 await takeFragment();
 const opening = location.pathname.match(/^\/open\/([0-9a-f]{32})$/);
+// A link opened over this very page, from the scan screen say, only changes the fragment.
+addEventListener('hashchange', async () => {
+  await takeFragment();
+  if (opening) open(opening[1]);
+  else refresh();
+});
 if (opening) {
   open(opening[1]);
 } else {

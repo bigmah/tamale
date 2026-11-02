@@ -1084,3 +1084,9 @@ body.artifact-open .app::after { content: ""; position: fixed; inset: 0; z-index
   .art-back { display: inline-flex; }
   .art-path { display: none; }
 }
+
+/* An encrypted session this browser has no key for. */
+.locked { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 24px; background: var(--bg, #17181d); }
+.locked-box { max-width: 460px; }
+.locked-box h1 { font-size: 20px; margin: 0 0 8px; }
+.locked-box p { margin: 0 0 10px; opacity: 0.8; }

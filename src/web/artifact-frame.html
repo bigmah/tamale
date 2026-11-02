@@ -1,0 +1,22 @@
+<!doctype html>
+<meta charset="utf-8">
+<script>
+// On an end-to-end encrypted session an artifact can't come through the hub by URL, so the
+// session page sends it here over postMessage (see src/web/app.js). This page is served
+// with the artifact CSP, so what it writes runs in an opaque origin, as a served artifact
+// does. Writing the document drops this listener with everything else on the window.
+(() => {
+  const host = window.opener || window.parent;
+  let written = false;
+  addEventListener('message', (ev) => {
+    if (written || ev.source !== host || typeof ev.data?.tamaleArtifactHtml !== 'string') return;
+    written = true;
+    // Opened in a tab of its own, an artifact gets no handle on the session's page.
+    if (window.opener) window.opener = null;
+    document.open();
+    document.write(ev.data.tamaleArtifactHtml);
+    document.close();
+  });
+  host.postMessage({ tamaleFrameReady: true }, '*');
+})();
+</script>

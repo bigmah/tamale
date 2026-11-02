@@ -5,6 +5,8 @@
 // The page sends prompts, interrupts and approvals, and asks for the file tree, files
 // and searches, whose replies carry the request's `seq` so stale ones are dropped.
 
+import { Handshake, fromBase64, supported, toBase64 } from '/noise.js';
+
 const $ = (id) => document.getElementById(id);
 
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
@@ -202,23 +204,127 @@ let seq = 0;
 let retry = 0;
 const latest = {};
 
-function connect() {
-  // wss: when the page came over https, as it does through a tamale-hub.
-  const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${scheme}://${location.host}/ws?t=${encodeURIComponent(token)}`);
-  ws.onopen = () => {
-    retry = 0;
-    setConn('live', 'Connected to tamale');
-    request('tree');
-  };
-  ws.onmessage = (ev) => {
+/**
+ * End-to-end encryption, on a session opened through a tamale-hub (see e2e.md). The hub's
+ * redirect says so with `?e2e=1`, and the pairing key arrives in the fragment, which never
+ * reaches a server; it's kept for this tab's reloads. `null` when this page talks plaintext,
+ * as it does served locally. A hub that drops `e2e=1` gains nothing: tamale still refuses
+ * unsealed messages, and answers with `hs0`, which this page takes as "you need a key".
+ */
+const e2e = (() => {
+  const STORED = 'tamale.e2e.key';
+  const given = /^#k=([A-Za-z0-9_-]{43})$/.exec(location.hash)?.[1];
+  if (given) window.history.replaceState(null, '', location.pathname + location.search);
+  let key = given;
+  try {
+    if (given) sessionStorage.setItem(STORED, given);
+    else key = sessionStorage.getItem(STORED);
+  } catch {}
+  if (!key && !new URLSearchParams(location.search).has('e2e')) return null;
+  return { key: key ? fromBase64(key) : null, forget: () => { try { sessionStorage.removeItem(STORED); } catch {} } };
+})();
+/** This connection's keys, once its handshake is done. */
+let channel = null;
+/** Set when reconnecting wouldn't help. */
+let locked = false;
+
+/** Replaces the page with why it can't show this session, and a way on. */
+function lock(title, text) {
+  locked = true;
+  setConn('stopped', title);
+  const sid = location.hostname.split('.')[0];
+  const hub = location.host.split('.').slice(1).join('.');
+  document.body.append(
+    h('div', { class: 'locked' },
+      h('div', { class: 'locked-box' },
+        h('h1', { text: title }),
+        h('p', { text }),
+        hub && h('p', {}, h('a', { href: `${location.protocol}//${hub}/open/${sid}`, text: 'Open it through the hub' })))),
+  );
+}
+
+const NEEDS_KEY = "Run /web remote pair in this session's terminal, and scan the code it shows.";
+
+/** Handles one frame of an encrypted connection; throws if it isn't what's due. */
+async function sealedFrame(link, data) {
+  const frame = JSON.parse(data);
+  if (frame.t === 'hs0' && !link.handshake && !link.sealed) {
+    const sid = location.hostname.split('.')[0];
+    link.handshake = await Handshake.start(e2e.key, sid, fromBase64(frame.n));
+    const first = await link.handshake.first(new TextEncoder().encode('{"v":1}'));
+    link.socket.send(JSON.stringify({ t: 'hs1', m: toBase64(first) }));
+  } else if (frame.t === 'hs2' && link.handshake) {
+    link.sealed = await link.handshake.finish(fromBase64(frame.m));
+    link.handshake = null;
+    if (link.socket !== ws) return;
+    channel = link.sealed;
+    ready();
+  } else if (frame.t === 'box' && link.sealed) {
+    const message = await link.sealed.open(frame.m);
+    if (message === null) return;
     try {
-      onMessage(JSON.parse(ev.data));
+      onMessage(JSON.parse(message));
     } catch (e) {
       console.error(e);
     }
+  } else {
+    throw new Error(`Refused an unexpected ${frame.t} frame.`);
+  }
+}
+
+/** The connection is up and, if it's to be, encrypted. */
+function ready() {
+  retry = 0;
+  setConn('live', e2e ? 'Connected to tamale, end-to-end encrypted' : 'Connected to tamale');
+  request('tree');
+  for (const id of artifactsDue.keys()) send({ t: 'artifact', id });
+}
+
+function connect() {
+  // wss: when the page came over https, as it does through a tamale-hub.
+  const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+  const socket = new WebSocket(`${scheme}://${location.host}/ws?t=${encodeURIComponent(token)}`);
+  ws = socket;
+  channel = null;
+  ws.onopen = () => {
+    if (e2e) setConn('down', 'Encrypting the connection…');
+    else ready();
   };
+  if (e2e) {
+    // One at a time and in order: the handshake and the counters depend on it. Anything
+    // that fails here drops the connection, and with it whatever was forged.
+    let due = Promise.resolve();
+    const link = { socket, handshake: null, done: false, sealed: null };
+    ws.onmessage = (ev) => {
+      due = due.then(() => sealedFrame(link, ev.data)).catch((e) => {
+        console.error(e);
+        socket.close();
+      });
+    };
+  } else {
+    ws.onmessage = (ev) => {
+      try {
+        const message = JSON.parse(ev.data);
+        if (message.t === 'hs0') {
+          socket.onclose = null;
+          socket.close();
+          lock('This session is encrypted', NEEDS_KEY);
+          return;
+        }
+        onMessage(message);
+      } catch (e) {
+        console.error(e);
+      }
+    };
+  }
   ws.onclose = (ev) => {
+    if (socket === ws) channel = null;
+    if (locked) return;
+    if (e2e && ev.code === 4000 && ev.reason === 'e2e: wrong key') {
+      e2e.forget();
+      lock("This browser's key doesn't fit this session", NEEDS_KEY);
+      return;
+    }
     if (ev.code === 4000) {
       setConn('stopped', ev.reason);
       toast(ev.reason || 'tamale stopped serving this page.', 1e9);
@@ -236,7 +342,20 @@ function setConn(kind, title) {
 }
 
 function send(message) {
-  if (ws?.readyState === WebSocket.OPEN) {
+  if (e2e) {
+    if (ws?.readyState === WebSocket.OPEN && channel) {
+      const socket = ws;
+      channel.seal(JSON.stringify(message)).then((boxes) => {
+        for (const m of boxes) {
+          if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ t: 'box', m }));
+        }
+      }, (e) => {
+        console.error(e);
+        socket.close();
+      });
+      return true;
+    }
+  } else if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(message));
     return true;
   }
@@ -273,6 +392,8 @@ function onMessage(m) {
     case 'artifacts':
       if (m.seq === latest.artifacts) applyArtifacts(m.sessions);
       return;
+    case 'artifact':
+      return onArtifact(m);
   }
 }
 
@@ -516,6 +637,87 @@ function openFullArtifact(box) {
   pushLayer(closeFullArtifact);
 }
 
+// ---- artifacts on an encrypted session. They can't be fetched through the hub by URL, so
+// they come over the socket, and `/artifact-frame` (an empty page with the artifact CSP,
+// see artifact-frame.html) is sent the document once it's loaded and says so.
+
+/** The document at each artifact URL, once asked for. */
+const artifactPages = new Map();
+/** What's waiting for each artifact id. */
+const artifactsDue = new Map();
+
+function artifactHtml(url) {
+  let page = artifactPages.get(url);
+  if (!page) {
+    const id = url.slice('/artifact/'.length);
+    page = new Promise((resolve) => artifactsDue.set(id, resolve));
+    artifactPages.set(url, page);
+    send({ t: 'artifact', id });
+  }
+  return page;
+}
+
+function onArtifact(m) {
+  const url = `/artifact/${m.id}`;
+  if (m.html == null) artifactPages.delete(url);
+  artifactsDue.get(m.id)?.(m.html ?? '<p>No such artifact; it may be from an earlier run.</p>');
+  artifactsDue.delete(m.id);
+}
+
+/** Shows the artifact at `url` in `frame`. */
+function showInFrame(frame, url) {
+  if (!e2e) {
+    frame.src = url;
+    return;
+  }
+  frame._artifact = url;
+  frame.src = '/artifact-frame';
+}
+
+/** Tabs opened on an artifact, until they've been sent it. */
+const artifactTabs = new Map();
+
+function openArtifactTab(url) {
+  if (!e2e) {
+    open(url, '_blank', 'noopener,noreferrer');
+    return;
+  }
+  // The frame page clears its opener before it writes the artifact.
+  const tab = open('/artifact-frame', '_blank');
+  if (tab) artifactTabs.set(tab, url);
+  else toast('The browser blocked opening a new tab.');
+}
+
+async function saveArtifact(url, title) {
+  const link = h('a', {
+    href: URL.createObjectURL(new Blob([await artifactHtml(url)], { type: 'text/html' })),
+    download: `${slug(title)}.html`,
+  });
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 10_000);
+}
+
+/** Click handlers for an artifact's links, which on an encrypted session can't just go there. */
+const onOpenLink = (url) => e2e && ((ev) => {
+  ev.preventDefault();
+  openArtifactTab(url);
+});
+const onSaveLink = (url, title) => e2e && ((ev) => {
+  ev.preventDefault();
+  saveArtifact(url, title);
+});
+
+addEventListener('message', async (ev) => {
+  if (!e2e || ev.data?.tamaleFrameReady !== true || !ev.source) return;
+  const frame = [...document.querySelectorAll('iframe')].find((f) => f.contentWindow === ev.source);
+  const url = frame?._artifact ?? artifactTabs.get(ev.source);
+  if (!url) return;
+  artifactTabs.delete(ev.source);
+  // The target can't be narrower: the frame's origin is opaque. It's the user's own
+  // artifact, going to a frame this page just made.
+  ev.source.postMessage({ tamaleArtifactHtml: await artifactHtml(url) }, '*');
+});
+
 /** Turns `.artifact[data-src]` placeholders into sandboxed embeds with a toolbar. */
 function mountArtifacts(scope) {
   const found = scope.matches?.('.artifact[data-src]') ? [scope] : scope.querySelectorAll('.artifact[data-src]');
@@ -523,12 +725,12 @@ function mountArtifacts(scope) {
     if (box.querySelector('iframe')) continue;
     const src = box.dataset.src;
     const frame = h('iframe', {
-      src,
       title: box.dataset.title,
       sandbox: 'allow-scripts allow-popups allow-modals allow-forms',
       referrerpolicy: 'no-referrer',
       loading: 'lazy',
     });
+    showInFrame(frame, src);
     const toggleFull = () => (box.classList.contains('full') ? closeFullArtifact() : openFullArtifact(box));
     const bar = h(
       'div',
@@ -551,13 +753,14 @@ function mountArtifacts(scope) {
         title: 'Download as HTML (also saved with the session; /artifacts lists them)',
         href: src,
         download: `${slug(box.dataset.title)}.html`,
+        onclick: onSaveLink(src, box.dataset.title),
         html: ICON.download,
       }),
       h('button', {
         class: 'artifact-btn wide-only',
         title: 'Reload',
         html: ICON.reload,
-        onclick: () => (frame.src = src),
+        onclick: () => showInFrame(frame, src),
       }),
       h('a', {
         class: 'artifact-btn',
@@ -565,6 +768,7 @@ function mountArtifacts(scope) {
         href: src,
         target: '_blank',
         rel: 'noopener noreferrer',
+        onclick: onOpenLink(src),
         html: ICON.open,
       }),
       h('button', {
@@ -1864,15 +2068,18 @@ function showArtifact(item) {
           ? `Revise the "${item.title}" artifact: `
           : `Revise the "${item.title}" artifact from an earlier session (saved at ${item.file}; read it first): `);
       }),
-      h('a', { class: 'artifact-btn wide-only', title: 'Download as HTML', href: item.url, download: `${slug(item.title)}.html`, html: ICON.download }),
-      h('a', { class: 'artifact-btn', title: 'Open in a new tab', href: item.url, target: '_blank', rel: 'noopener noreferrer', html: ICON.open }),
+      h('a', { class: 'artifact-btn wide-only', title: 'Download as HTML', href: item.url, download: `${slug(item.title)}.html`, onclick: onSaveLink(item.url, item.title), html: ICON.download }),
+      h('a', { class: 'artifact-btn', title: 'Open in a new tab', href: item.url, target: '_blank', rel: 'noopener noreferrer', onclick: onOpenLink(item.url), html: ICON.open }),
     ),
-    h('iframe', {
-      src: item.url,
-      title: item.title,
-      sandbox: 'allow-scripts allow-popups allow-modals allow-forms',
-      referrerpolicy: 'no-referrer',
-    }),
+    (() => {
+      const frame = h('iframe', {
+        title: item.title,
+        sandbox: 'allow-scripts allow-popups allow-modals allow-forms',
+        referrerpolicy: 'no-referrer',
+      });
+      showInFrame(frame, item.url);
+      return frame;
+    })(),
   );
 }
 
@@ -1884,7 +2091,7 @@ $('art-find').addEventListener('keydown', (ev) => {
   } else if (ev.key === 'Enter') {
     ev.preventDefault();
     const item = gallery.rows[gallery.at];
-    if (item) open(item.url, '_blank', 'noopener,noreferrer');
+    if (item) openArtifactTab(item.url);
   }
 });
 $('art-close').onclick = closeArtifacts;
@@ -1967,4 +2174,8 @@ if (store.get('codeOpen', false)) openCode();
 renderView();
 autosize();
 updateSend();
-connect();
+if (!e2e) connect();
+else if (!e2e.key) lock('This session is encrypted', NEEDS_KEY);
+else if (!(await supported())) {
+  lock('This browser is too old for encrypted sessions', 'Open this session in a current version of Chrome, Firefox or Safari.');
+} else connect();

@@ -57,3 +57,5 @@ deny = [] # e.g. ["bash:git push*", "bash:rm -rf *", "write_file:.env*"]
 # (see tunnel_plan.md). The agent token comes only from TAMALE_HUB_TOKEN.
 # url = "wss://tamale-hub.com"    # or TAMALE_HUB_URL
 connect = "manual"                # manual: only with /web remote; auto: also on startup
+e2e = true                        # encrypt between tamale and the browser, so the hub sees
+                                  # only opaque bytes (see e2e.md); false is for debugging

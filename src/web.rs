@@ -13,6 +13,7 @@
 //! an unguessable id and served from `/artifact/<id>` with a sandboxing CSP, so it runs in
 //! an opaque origin that can't reach the session; the page embeds it in an iframe.
 
+pub mod e2e;
 mod files;
 mod relay;
 mod render;
@@ -44,6 +45,8 @@ use crate::session::Entry;
 const PAGE: &str = include_str!("web/index.html");
 const STYLE: &str = include_str!("web/app.css");
 const SCRIPT: &str = include_str!("web/app.js");
+const NOISE_SCRIPT: &str = include_str!("web/noise.js");
+const ARTIFACT_FRAME: &str = include_str!("web/artifact-frame.html");
 
 /// Tool output sent per call; the rest is cut.
 const MAX_TOOL_OUTPUT: usize = 24_000;
@@ -358,6 +361,16 @@ fn asset(shared: &Shared, path: &str) -> Asset {
         ),
         "/app.css" => ok("text/css; charset=utf-8", STYLE, &[]),
         "/app.js" => ok("text/javascript; charset=utf-8", SCRIPT, &[]),
+        "/noise.js" => ok("text/javascript; charset=utf-8", NOISE_SCRIPT, &[]),
+        // Holds nothing itself: on an encrypted session the page posts an artifact to it.
+        "/artifact-frame" => ok(
+            "text/html; charset=utf-8",
+            ARTIFACT_FRAME,
+            &[
+                (header::REFERRER_POLICY, "no-referrer"),
+                (header::CONTENT_SECURITY_POLICY, ARTIFACT_CSP),
+            ],
+        ),
         _ => {
             let page = path
                 .strip_prefix("/artifact/")
@@ -415,6 +428,7 @@ impl Server {
             .route("/ws", get(socket))
             .route("/app.css", get(style))
             .route("/app.js", get(script))
+            .route("/noise.js", get(noise_script))
             .route("/artifact/{id}", get(artifact))
             .with_state(shared.clone());
         let task = tokio::spawn(async move {
@@ -432,13 +446,21 @@ impl Server {
     }
 
     /// Makes the session reachable through the tamale-hub at `url` (`wss://…`), with
-    /// agent token `token`. Progress arrives as [`WebEvent::Hub`].
-    pub fn connect_hub(&mut self, url: &str, token: &str, label: relay::Label) {
+    /// agent token `token`, end-to-end encrypted if there are `keys`. Progress arrives as
+    /// [`WebEvent::Hub`].
+    pub fn connect_hub(
+        &mut self,
+        url: &str,
+        token: &str,
+        label: relay::Label,
+        keys: Option<e2e::Keys>,
+    ) {
         self.relay = Some(relay::Relay::start(
             self.shared.clone(),
             url,
             token,
             label,
+            keys,
         ));
         if let Some(relay) = &self.relay {
             relay.status(&self.mirror.hub_status);
@@ -709,6 +731,13 @@ async fn script(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Respon
     asset(&shared, "/app.js").into_response()
 }
 
+async fn noise_script(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Response {
+    if !shared.own_host(&headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    asset(&shared, "/noise.js").into_response()
+}
+
 /// An artifact, sandboxed (see [`ARTIFACT_CSP`]).
 async fn artifact(
     State(shared): State<Arc<Shared>>,
@@ -817,6 +846,13 @@ fn handle(shared: &Arc<Shared>, id: u64, request: Value) {
         "grep" => {
             let query = str_field("query");
             reply(Box::new(move |roots| files::grep(roots, &query)));
+        }
+        // On an encrypted session the page can't fetch `/artifact/<id>`; it asks here.
+        "artifact" => {
+            let artifact = str_field("id");
+            let page = shared.artifacts.lock().unwrap().pages.get(&artifact).cloned();
+            let reply = json!({ "t": "artifact", "id": artifact, "html": page.as_deref() });
+            shared.send_to(id, reply.to_string());
         }
         "artifacts" => {
             let shared = shared.clone();
@@ -1109,7 +1145,7 @@ mod tests {
         let mut server = Server::start(false).await.unwrap();
         let entries = vec![Entry::User("Fix the flaky test".into())];
         server.sync(view(&entries));
-        server.connect_hub(&hub, "tha_x", Label::default());
+        server.connect_hub(&hub, "tha_x", Label::default(), None);
         assert_eq!(auth.recv().await.unwrap(), "Bearer tha_x");
         let next = async |frames: &mut mpsc::UnboundedReceiver<ToHub>| {
             tokio::time::timeout(std::time::Duration::from_secs(5), frames.recv()).await.unwrap().unwrap()
@@ -1157,6 +1193,216 @@ mod tests {
         assert_eq!(server.remote_tabs(), 0);
     }
 
+    /// A stand-in hub for tests of the relay: frames the test sends go to the agent, and
+    /// what the agent sends comes back.
+    async fn stand_in_hub() -> (String, mpsc::UnboundedSender<tamale_hub_protocol::ToAgent>, mpsc::UnboundedReceiver<String>) {
+        use tamale_hub_protocol::ToAgent;
+        let (to_agent, from_test) = mpsc::unbounded_channel::<ToAgent>();
+        let (to_test, from_agent) = mpsc::unbounded_channel::<String>();
+        let from_test = Arc::new(tokio::sync::Mutex::new(from_test));
+        let app = Router::new().route(
+            "/agent",
+            get(move |upgrade: WebSocketUpgrade| {
+                let (from_test, to_test) = (from_test.clone(), to_test.clone());
+                async move {
+                    upgrade.max_message_size(64 << 20).on_upgrade(move |mut ws| async move {
+                        let Some(Ok(Message::Text(hello))) = ws.next().await else { return };
+                        let _ = to_test.send(hello.to_string());
+                        let welcome = serde_json::to_string(&ToAgent::Welcome { proto: 2 }).unwrap();
+                        ws.send(Message::Text(welcome.into())).await.unwrap();
+                        let mut from_test = from_test.lock().await;
+                        loop {
+                            tokio::select! {
+                                Some(frame) = from_test.recv() => {
+                                    let text = serde_json::to_string(&frame).unwrap();
+                                    ws.send(Message::Text(text.into())).await.unwrap();
+                                }
+                                message = ws.next() => match message {
+                                    Some(Ok(Message::Text(t))) => { let _ = to_test.send(t.to_string()); }
+                                    Some(Ok(_)) => {}
+                                    _ => return,
+                                },
+                            }
+                        }
+                    })
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let hub = format!("ws://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        (hub, to_agent, from_agent)
+    }
+
+    #[tokio::test]
+    async fn an_encrypted_relay_shows_the_hub_nothing_and_takes_nothing_from_it() {
+        use super::e2e::testing::Initiator;
+        use std::time::Duration;
+        use tamale_hub_protocol::{ToAgent, ToHub};
+        const SECRET: &str = "Fix-the-flaky-test-SECRET";
+        const LABEL: &str = "SECRET-CWD";
+        let psk = [9u8; 32];
+        let (hub, to_agent, mut frames) = stand_in_hub().await;
+        let mut server = Server::start(false).await.unwrap();
+        let entries = vec![
+            Entry::User(SECRET.into()),
+            Entry::Assistant(format!("```html artifact\n<title>T</title><p>{SECRET}</p>\n```")),
+        ];
+        server.sync(view(&entries));
+        let keys = e2e::Keys::from_psk(psk);
+        server.connect_hub(
+            &hub,
+            "tha_x",
+            Label { host: "laptop".into(), cwd: LABEL.into(), model: "m".into() },
+            Some(keys.clone()),
+        );
+        assert!(server.hub_url().unwrap().ends_with(&format!("/open/{}#{}", relay::sid(), keys.fragment())));
+
+        // Everything the hub is sent, checked as it passes.
+        let next = async |frames: &mut mpsc::UnboundedReceiver<String>| -> ToHub {
+            let text = tokio::time::timeout(Duration::from_secs(5), frames.recv()).await.unwrap().unwrap();
+            assert!(!text.contains(SECRET) && !text.contains(LABEL) && !text.contains("laptop"), "{text}");
+            serde_json::from_str(&text).unwrap()
+        };
+        let ToHub::Hello { mid, e2e: on, sealed, label, .. } = next(&mut frames).await else { panic!("no hello") };
+        assert_eq!((mid.as_deref(), on), (Some(keys.mid.as_str()), true));
+        assert!(sealed.is_some());
+        assert_eq!(label, Label::default());
+        let ToHub::Status { title, sealed, .. } = next(&mut frames).await else { panic!("no status") };
+        assert!(title.is_empty() && sealed.is_some());
+
+        // Frames until channel `c` says something, or closes.
+        async fn answer(frames: &mut mpsc::UnboundedReceiver<String>, c: u64) -> Result<Value, String> {
+            loop {
+                let text = tokio::time::timeout(Duration::from_secs(5), frames.recv()).await.unwrap().unwrap();
+                assert!(!text.contains(SECRET), "{text}");
+                match serde_json::from_str::<ToHub>(&text).unwrap() {
+                    ToHub::Msg { c: from, data } if from == c => return Ok(serde_json::from_str(&data).unwrap()),
+                    ToHub::Close { c: from, reason } if from == c => return Err(reason),
+                    _ => {}
+                }
+            }
+        }
+        let nonce = |v: &Value| {
+            use base64::Engine;
+            assert_eq!(v["t"], "hs0");
+            base64::engine::general_purpose::STANDARD.decode(v["n"].as_str().unwrap()).unwrap()
+        };
+        let msg = |c, data: String| ToAgent::Msg { c, data };
+
+        // A hub without the key, typing a prompt or approving a tool, is refused.
+        for (c, forged) in [
+            (1, json!({ "t": "send", "text": "rm -rf /" })),
+            (2, json!({ "t": "approve", "choice": "yes" })),
+            (3, json!({ "t": "box", "m": "AAAA" })),
+        ] {
+            to_agent.send(ToAgent::Open { c }).unwrap();
+            nonce(&answer(&mut frames, c).await.unwrap());
+            to_agent.send(msg(c, forged.to_string())).unwrap();
+            assert!(answer(&mut frames, c).await.is_err());
+        }
+
+        // Another machine's key fails the handshake.
+        to_agent.send(ToAgent::Open { c: 4 }).unwrap();
+        let n = nonce(&answer(&mut frames, 4).await.unwrap());
+        let hs1 = Initiator::new(&[1u8; 32], relay::sid(), &n, None).hs1(b"{}");
+        to_agent.send(msg(4, json!({ "t": "hs1", "m": hs1 }).to_string())).unwrap();
+        assert_eq!(answer(&mut frames, 4).await.unwrap_err(), "e2e: wrong key");
+        assert_eq!(server.remote_tabs(), 0, "no tab has been made");
+
+        // The right key, on channel 8.
+        to_agent.send(ToAgent::Open { c: 8 }).unwrap();
+        let n = nonce(&answer(&mut frames, 8).await.unwrap());
+        let mut browser = Initiator::new(&psk, relay::sid(), &n, None);
+        let hs1 = browser.hs1(b"{}");
+        to_agent.send(msg(8, json!({ "t": "hs1", "m": hs1 }).to_string())).unwrap();
+        let hs2 = answer(&mut frames, 8).await.unwrap();
+        assert_eq!(hs2["t"], "hs2");
+        let mut browser = browser.finish(hs2["m"].as_str().unwrap()).unwrap();
+
+        // Only now is it a tab, and what it's sent is sealed.
+        let id = loop {
+            let event = tokio::time::timeout(Duration::from_secs(5), server.events.recv()).await.unwrap();
+            match event {
+                Some(WebEvent::Connected(id)) => break id,
+                Some(WebEvent::Send(_) | WebEvent::Approve(..)) => panic!("a forged message got through"),
+                _ => {}
+            }
+        };
+        server.welcome(id);
+        let mut opened = |v: Value| browser.open(v["m"].as_str().unwrap(), 64 << 20).unwrap();
+        let first = answer(&mut frames, 8).await.unwrap();
+        assert_eq!(first["t"], "box");
+        let welcome = opened(first).unwrap();
+        assert!(welcome.contains(SECRET) && welcome.contains("\"t\":\"entries\""));
+        let artifact_id = {
+            let artifacts = server.shared.artifacts.lock().unwrap();
+            artifacts.pages.keys().next().unwrap().clone()
+        };
+        let _ = opened(answer(&mut frames, 8).await.unwrap()); // status
+        let _ = opened(answer(&mut frames, 8).await.unwrap()); // approval
+
+        // The hub can't tunnel an artifact; the frame page holds nothing.
+        to_agent.send(ToAgent::Get { r: 1, path: format!("/artifact/{artifact_id}") }).unwrap();
+        to_agent.send(ToAgent::Get { r: 2, path: "/artifact-frame".into() }).unwrap();
+        let mut got = 0;
+        while got < 2 {
+            match next(&mut frames).await {
+                ToHub::Got { r: 1, status, body, .. } => {
+                    assert_eq!(status, 404);
+                    assert!(body.is_empty());
+                    got += 1;
+                }
+                ToHub::Got { r: 2, status, headers, body } => {
+                    assert_eq!(status, 200);
+                    assert!(body.contains("tamaleArtifactHtml"));
+                    let csp = &headers.iter().find(|(k, _)| k == "content-security-policy").unwrap().1;
+                    assert!(csp.starts_with("sandbox allow-scripts ") && !csp.contains("allow-same-origin"), "{csp}");
+                    got += 1;
+                }
+                _ => {}
+            }
+        }
+
+        // Asked over the sealed socket, a long artifact arrives whole.
+        let send_sealed = |browser: &mut e2e::Channel, c: u64, text: String| -> Vec<String> {
+            let boxes = browser.seal(&text).unwrap();
+            for m in &boxes {
+                to_agent.send(msg(c, json!({ "t": "box", "m": m }).to_string())).unwrap();
+            }
+            boxes
+        };
+        let up = send_sealed(&mut browser, 8, json!({ "t": "artifact", "id": artifact_id }).to_string());
+        let reply: Value = {
+            let frame = answer(&mut frames, 8).await.unwrap();
+            serde_json::from_str(&browser.open(frame["m"].as_str().unwrap(), 64 << 20).unwrap().unwrap()).unwrap()
+        };
+        assert_eq!(reply["t"], "artifact");
+        assert!(reply["html"].as_str().unwrap().contains(SECRET));
+
+        // A genuine prompt gets through, in several pieces if need be.
+        let long = "p".repeat(200_000);
+        send_sealed(&mut browser, 8, json!({ "t": "send", "text": long }).to_string());
+        loop {
+            let event = tokio::time::timeout(Duration::from_secs(5), server.events.recv()).await.unwrap();
+            if let Some(WebEvent::Send(text)) = event {
+                assert_eq!(text, long);
+                break;
+            }
+        }
+
+        // A replay closes the channel, and the tab with it.
+        to_agent.send(msg(8, json!({ "t": "box", "m": up[0] }).to_string())).unwrap();
+        assert!(answer(&mut frames, 8).await.is_err());
+        assert_eq!(server.remote_tabs(), 0);
+
+        // A handshake recorded on channel 8, replayed on channel 9, fails.
+        to_agent.send(ToAgent::Open { c: 9 }).unwrap();
+        nonce(&answer(&mut frames, 9).await.unwrap());
+        to_agent.send(msg(9, json!({ "t": "hs1", "m": hs1 }).to_string())).unwrap();
+        assert_eq!(answer(&mut frames, 9).await.unwrap_err(), "e2e: wrong key");
+    }
+
     /// Against a real hub: `TAMALE_HUB_URL`, `TAMALE_HUB_TOKEN` and `TAMALE_HUB_VIEW` (a
     /// view token of the same pair) set, then `cargo test real_hub -- --ignored`.
     #[tokio::test]
@@ -1169,7 +1415,7 @@ mod tests {
         let mut server = Server::start(false).await.unwrap();
         let entries = vec![Entry::User("Remote smoke test".into())];
         server.sync(view(&entries));
-        server.connect_hub(&hub, &token, Label { host: "laptop".into(), cwd: "~/dev/tamale".into(), model: "test".into() });
+        server.connect_hub(&hub, &token, Label { host: "laptop".into(), cwd: "~/dev/tamale".into(), model: "test".into() }, None);
         let deadline = std::time::Duration::from_secs(15);
         loop {
             match tokio::time::timeout(deadline, server.events.recv()).await.unwrap().unwrap() {

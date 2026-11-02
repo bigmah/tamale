@@ -36,6 +36,7 @@ use crate::state::{self, State as Tokens, Store};
 
 const PAGE: &str = include_str!("../static/index.html");
 const SCRIPT: &str = include_str!("../static/hub.js");
+const SEAL: &str = include_str!("../static/seal.js");
 const STYLE: &str = include_str!("../static/hub.css");
 
 /// How long a disconnected session stays listed (and its page keeps retrying), and how
@@ -154,6 +155,12 @@ struct Session {
     busy: bool,
     approval: bool,
     title: String,
+    /// The machine's id, and whether its channels are end-to-end encrypted. Then the label
+    /// and title are empty, and these opaque blobs go to browsers instead.
+    mid: Option<String>,
+    e2e: bool,
+    sealed_label: Option<String>,
+    sealed_status: Option<String>,
     /// Unix seconds.
     last_activity: u64,
     /// The connected agent, `None` while offline.
@@ -538,6 +545,10 @@ pub async fn run(hub: Arc<Hub>, listener: tokio::net::TcpListener) -> Result<()>
             get(|| async { asset("text/javascript; charset=utf-8", SCRIPT) }),
         )
         .route(
+            "/d/seal.js",
+            get(|| async { asset("text/javascript; charset=utf-8", SEAL) }),
+        )
+        .route(
             "/d/hub.css",
             get(|| async { asset("text/css; charset=utf-8", STYLE) }),
         )
@@ -701,6 +712,10 @@ async fn api_sessions(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Respon
                 "cwd": s.label.cwd,
                 "model": s.label.model,
                 "title": s.title,
+                "mid": s.mid,
+                "e2e": s.e2e,
+                "sealed_label": s.sealed_label,
+                "sealed_status": s.sealed_status,
                 "busy": s.busy,
                 "approval": s.approval,
                 "online": s.agent.is_some(),
@@ -1009,13 +1024,16 @@ async fn api_ticket(
             "This browser has no view token. Open your view link (or paste the token) first.",
         );
     }
-    let pair = hub
+    let found = hub
         .sessions
         .lock()
         .unwrap()
         .get(&request.sid)
-        .and_then(|s| pairs.iter().find(|p| p.name == s.pair).cloned());
-    let Some(pair) = pair else {
+        .and_then(|s| {
+            let pair = pairs.iter().find(|p| p.name == s.pair).cloned()?;
+            Some((pair, s.mid.clone(), s.e2e))
+        });
+    let Some((pair, mid, e2e)) = found else {
         return error(
             StatusCode::NOT_FOUND,
             "No such session under your tokens. It may have ended; the list has the live ones.",
@@ -1037,6 +1055,8 @@ async fn api_ticket(
     guard(
         Json(json!({
             "url": format!("{}/__hub/auth?ticket={ticket}", hub.public.session_origin(&request.sid)),
+            "mid": mid,
+            "e2e": e2e,
         }))
         .into_response(),
     )
@@ -1082,10 +1102,13 @@ expired. <a href='{}/open/{sid}'>Open the session again</a>.",
             .into_response();
     };
     let value = SessionCookie::make(&hub.secret(), &sid, &ticket.view_hash);
+    // Tells the page to insist on the handshake. A hub that left this out would gain
+    // nothing: tamale refuses unsealed messages, so the page just couldn't connect.
+    let e2e = hub.sessions.lock().unwrap().get(&sid).is_some_and(|s| s.e2e);
     let mut response = (
         StatusCode::SEE_OTHER,
         [
-            (header::LOCATION, "/".to_string()),
+            (header::LOCATION, if e2e { "/?e2e=1" } else { "/" }.to_string()),
             (header::REFERRER_POLICY, "no-referrer".to_string()),
             (header::CACHE_CONTROL, "no-store".to_string()),
         ],
@@ -1167,6 +1190,12 @@ async fn tunnel(
                 .into_response();
         }
         hub.fail(ip);
+        return (StatusCode::NOT_FOUND, "Not found.").into_response();
+    }
+    // An encrypted session's artifacts travel over its socket; tamale refuses too.
+    if path.starts_with("/artifact/")
+        && hub.sessions.lock().unwrap().get(&sid).is_some_and(|s| s.e2e)
+    {
         return (StatusCode::NOT_FOUND, "Not found.").into_response();
     }
     let (tx, rx) = oneshot::channel();
@@ -1386,13 +1415,21 @@ async fn agent_socket(hub: Arc<Hub>, pair: state::Pair, ip: IpAddr, ws: WebSocke
         Ok(Some(Ok(Message::Text(text)))) => serde_json::from_str::<ToHub>(&text).ok(),
         _ => None,
     };
-    let Some(ToHub::Hello { proto, sid, label }) = hello else {
+    let Some(ToHub::Hello {
+        proto,
+        sid,
+        label,
+        mid,
+        e2e,
+        sealed,
+    }) = hello
+    else {
         let _ = sink
             .send(reject(close::BAD_HELLO, "expected a hello frame"))
             .await;
         return;
     };
-    if proto != protocol::PROTO {
+    if !(protocol::MIN_PROTO..=protocol::PROTO).contains(&proto) {
         let reason = format!(
             "this hub speaks protocol {}, not {proto}; upgrade the older side",
             protocol::PROTO
@@ -1403,6 +1440,15 @@ async fn agent_socket(hub: Arc<Hub>, pair: state::Pair, ip: IpAddr, ws: WebSocke
     if !protocol::valid_sid(&sid) {
         let _ = sink
             .send(reject(close::BAD_HELLO, "malformed session id"))
+            .await;
+        return;
+    }
+    if mid.as_deref().is_some_and(|m| !protocol::valid_mid(m))
+        || (e2e && mid.is_none())
+        || sealed.as_ref().is_some_and(|s| s.len() > protocol::MAX_SEALED)
+    {
+        let _ = sink
+            .send(reject(close::BAD_HELLO, "malformed encryption fields"))
             .await;
         return;
     }
@@ -1427,6 +1473,10 @@ async fn agent_socket(hub: Arc<Hub>, pair: state::Pair, ip: IpAddr, ws: WebSocke
                 busy: false,
                 approval: false,
                 title: String::new(),
+                mid: None,
+                e2e: false,
+                sealed_label: None,
+                sealed_status: None,
                 last_activity: state::now(),
                 agent: None,
                 generation,
@@ -1451,6 +1501,9 @@ async fn agent_socket(hub: Arc<Hub>, pair: state::Pair, ip: IpAddr, ws: WebSocke
             session.generation = generation;
             session.offline_since = None;
             session.label = label;
+            session.mid = mid;
+            session.e2e = e2e;
+            session.sealed_label = sealed;
             session.agent_hash = pair.agent_hash.clone();
             session.last_activity = state::now();
             None
@@ -1551,10 +1604,12 @@ async fn agent_socket(hub: Arc<Hub>, pair: state::Pair, ip: IpAddr, ws: WebSocke
                 approval,
                 title,
                 model,
+                sealed,
             } => {
                 session.busy = busy;
                 session.approval = approval;
                 session.title = title;
+                session.sealed_status = sealed.filter(|s| s.len() <= protocol::MAX_SEALED);
                 if !model.is_empty() {
                     session.label.model = model;
                 }
@@ -1775,6 +1830,9 @@ mod tests {
                     cwd: "~/api".into(),
                     model: "m".into(),
                 },
+                mid: None,
+                e2e: false,
+                sealed: None,
             };
             agent
                 .send(tungstenite::Message::Text(
@@ -2121,6 +2179,124 @@ mod tests {
                 .unwrap();
             assert_eq!(r.status(), 404, "the session cookie dies with its pair");
             let _ = std::fs::remove_dir_all(&setup.store.dir);
+        }
+
+        #[tokio::test]
+        async fn an_encrypted_session_shows_the_hub_only_opaque_labels_and_keeps_its_artifacts() {
+            let setup = start().await;
+            let port = setup.port;
+            let dash = format!("hub.localhost:{port}");
+            let origin = format!("http://{dash}");
+            let sid = "feedfacefeedfacefeedfacefeedface".to_string();
+            let session_host = format!("{sid}.hub.localhost:{port}");
+            let base = format!("http://127.0.0.1:{port}");
+            let http = reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap();
+            let auth = [
+                ("host", dash.clone()),
+                ("authorization", format!("Bearer {}", setup.agent)),
+            ];
+            let say = |frame: &ToHub| {
+                tungstenite::Message::Text(serde_json::to_string(frame).unwrap().into())
+            };
+            let hello = |sid: &str, mid: Option<&str>, e2e, sealed: Option<String>| ToHub::Hello {
+                proto: protocol::PROTO,
+                sid: sid.into(),
+                label: Label::default(),
+                mid: mid.map(String::from),
+                e2e,
+                sealed,
+            };
+
+            // Malformed encryption fields are refused.
+            let other = "1".repeat(32);
+            for bad in [
+                hello(&other, None, true, None),
+                hello(&other, Some("NOT-HEX"), true, None),
+                hello(&other, Some(&"a".repeat(32)), true, Some("x".repeat(protocol::MAX_SEALED + 1))),
+            ] {
+                let mut agent = ws(port, "/agent", &auth).await.unwrap();
+                agent.send(say(&bad)).await.unwrap();
+                assert_eq!(close_code(&mut agent).await, close::BAD_HELLO);
+            }
+            // So is a protocol from the future; an older tamale still connects, in plaintext.
+            let mut agent = ws(port, "/agent", &auth).await.unwrap();
+            let future = r#"{"t":"hello","proto":99,"sid":"11111111111111111111111111111111","label":{"host":"","cwd":"","model":""}}"#;
+            agent.send(tungstenite::Message::Text(future.into())).await.unwrap();
+            assert_eq!(close_code(&mut agent).await, close::BAD_HELLO);
+            let mut old = ws(port, "/agent", &auth).await.unwrap();
+            let v1 = r#"{"t":"hello","proto":1,"sid":"22222222222222222222222222222222","label":{"host":"old","cwd":"~","model":"m"}}"#;
+            old.send(tungstenite::Message::Text(v1.into())).await.unwrap();
+            assert!(next_text(&mut old).await.contains("\"welcome\""));
+
+            let mid = "a".repeat(32);
+            let mut agent = ws(port, "/agent", &auth).await.unwrap();
+            agent
+                .send(say(&hello(&sid, Some(&mid), true, Some("SEALED-LABEL".into()))))
+                .await
+                .unwrap();
+            assert!(next_text(&mut agent).await.contains("\"welcome\""));
+            agent
+                .send(say(&ToHub::Status {
+                    busy: true,
+                    approval: false,
+                    title: String::new(),
+                    model: String::new(),
+                    sealed: Some("SEALED-STATUS".into()),
+                }))
+                .await
+                .unwrap();
+
+            let r = http.post(format!("{base}/api/tokens")).header("host", &dash)
+                .header("origin", &origin).json(&json!({"add": setup.view})).send().await.unwrap();
+            let th = set_cookie(&r);
+
+            let session = loop {
+                let list: Value = http.get(format!("{base}/api/sessions")).header("host", &dash)
+                    .header("cookie", &th).send().await.unwrap().json().await.unwrap();
+                let row = list["sessions"].as_array().unwrap().iter()
+                    .find(|s| s["sid"] == sid.as_str()).cloned().unwrap();
+                if row["sealed_status"] == "SEALED-STATUS" {
+                    break row;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            };
+            assert_eq!(session["mid"], mid.as_str());
+            assert_eq!(session["e2e"], true);
+            assert_eq!(session["sealed_label"], "SEALED-LABEL");
+            assert_eq!(session["busy"], true, "the list can still badge it");
+            for field in ["host", "cwd", "model", "title"] {
+                assert_eq!(session[field], "", "{field}");
+            }
+
+            let ticket: Value = http.post(format!("{base}/api/ticket")).header("host", &dash)
+                .header("origin", &origin).header("cookie", &th).json(&json!({"sid": sid}))
+                .send().await.unwrap().json().await.unwrap();
+            assert_eq!(ticket["mid"], mid.as_str());
+            assert_eq!(ticket["e2e"], true);
+            let path = ticket["url"].as_str().unwrap().split_once(&session_host).unwrap().1.to_string();
+            let r = http.get(format!("{base}{path}")).header("host", &session_host).send().await.unwrap();
+            assert_eq!(r.status(), 303);
+            assert_eq!(r.headers()["location"], "/?e2e=1", "the page must insist on the handshake");
+            let ts = set_cookie(&r);
+
+            // Artifacts aren't asked of tamale at all; the frame page and script are.
+            let r = http.get(format!("{base}/artifact/abc")).header("host", &session_host)
+                .header("cookie", &ts).send().await.unwrap();
+            assert_eq!(r.status(), 404);
+            let tunnelled = http.get(format!("{base}/artifact-frame")).header("host", &session_host)
+                .header("cookie", &ts).send();
+            let (r, get) = tokio::join!(tunnelled, next_text(&mut agent));
+            assert!(get.contains("\"/artifact-frame\""), "{get}");
+            assert!(!get.contains("/artifact/abc"), "{get}");
+            let _ = r;
+
+            // The hub's page has what it needs for the keys.
+            let r = http.get(format!("{base}/seal.js")).header("host", &dash).send().await.unwrap();
+            assert_eq!(r.status(), 200);
+            assert!(r.text().await.unwrap().contains("machineId"));
         }
 
         #[tokio::test]

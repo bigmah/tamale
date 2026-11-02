@@ -15,7 +15,7 @@ mod workspace;
 
 use std::time::Duration;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
     EventStream, KeyCode, KeyEventKind, KeyModifiers,
@@ -282,7 +282,14 @@ async fn web_request(app: &mut App, web: &mut Option<web::Server>, request: WebR
             }
             if let Some(server) = web {
                 if server.hub_url().is_none() {
-                    server.connect_hub(&url, &token, app.hub_label());
+                    // Never in plaintext just because the key can't be had.
+                    match hub_keys(hub.e2e) {
+                        Ok(keys) => server.connect_hub(&url, &token, app.hub_label(), keys),
+                        Err(e) => {
+                            app.on_web(Err(format!("Couldn't connect to the hub: {e:#}")));
+                            return;
+                        }
+                    }
                 }
                 app.set_web_session(true);
                 app.set_hub_viewers(Some(server.remote_tabs()));
@@ -298,6 +305,35 @@ async fn web_request(app: &mut App, web: &mut Option<web::Server>, request: WebR
                 Err("Not connected to a hub.".into())
             });
         }
+        WebRequest::Rekey => {
+            let hub = app.settings_hub().clone();
+            if !hub.e2e {
+                app.on_web(Err("[hub] e2e is off, so there's no key to replace.".into()));
+                return;
+            }
+            let keys = web::e2e::key_path()
+                .ok_or_else(|| anyhow::anyhow!("no home directory to keep it in"))
+                .and_then(|path| web::e2e::Keys::rekey(&path));
+            let keys = match keys {
+                Ok(keys) => keys,
+                Err(e) => {
+                    app.on_web(Err(format!("Couldn't replace the pairing key: {e:#}")));
+                    return;
+                }
+            };
+            if let Some(server) = web
+                && server.disconnect_hub()
+                && let (Some(url), Some(token)) = (hub.url, hub.token)
+            {
+                server.connect_hub(&url, &token, app.hub_label(), Some(keys));
+                app.set_web_session(true);
+            }
+            app.on_web(Ok(
+                "Replaced this machine's pairing key: every browser has to scan its code again \
+(/web remote pair). Other tamales running here keep the old key until they restart."
+                    .into(),
+            ));
+        }
         WebRequest::Close => {
             app.set_web_session(false);
             app.set_hub_viewers(None);
@@ -307,6 +343,15 @@ async fn web_request(app: &mut App, web: &mut Option<web::Server>, request: WebR
             })
         }
     }
+}
+
+/// This machine's pairing key, made if it has none; `None` with `[hub] e2e = false`.
+fn hub_keys(e2e: bool) -> Result<Option<web::e2e::Keys>> {
+    if !e2e {
+        return Ok(None);
+    }
+    let path = web::e2e::key_path().context("no home directory to keep the pairing key in")?;
+    web::e2e::Keys::load_or_create(&path).map(Some)
 }
 
 /// Remote prompts run tools without asking in `auto` mode, so say so when connecting.
@@ -328,9 +373,16 @@ async fn connect_hub_on_start(app: &mut App, web: &mut Option<web::Server>) {
     else {
         return;
     };
+    let keys = match hub_keys(hub.e2e) {
+        Ok(keys) => keys,
+        Err(e) => {
+            app.on_web(Err(format!("Couldn't connect to the hub: {e:#}")));
+            return;
+        }
+    };
     match web::Server::start(false).await {
         Ok(mut server) => {
-            server.connect_hub(&url, &token, app.hub_label());
+            server.connect_hub(&url, &token, app.hub_label(), keys);
             app.set_hub_viewers(Some(0));
             *web = Some(server);
             warn_if_auto(app);

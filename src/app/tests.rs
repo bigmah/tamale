@@ -332,6 +332,18 @@ fn web_tab_click_ctrl_o_or_down_left_enter_open_the_web_ui() {
         app.take_web_request(),
         Some(WebRequest::Open { lan: false })
     ));
+    // Pairing shows the code on the same screen connecting does.
+    for command in ["/web remote", "/web remote on", "/web remote pair"] {
+        app.command(command);
+        assert!(matches!(
+            app.take_web_request(),
+            Some(WebRequest::Remote { on: true })
+        ));
+    }
+    app.command("/web remote rekey");
+    assert!(matches!(app.take_web_request(), Some(WebRequest::Rekey)));
+    app.command("/web remote nonsense");
+    assert!(app.take_web_request().is_none());
 }
 
 #[test]

@@ -1,4 +1,10 @@
-# Plan: end-to-end encryption between tamale and the browser
+# End-to-end encryption between tamale and the browser
+
+**Status:** phases 2a to 2d are built; 2e is still to come. Two things differ from the first
+version of this plan, both forced by the code: messages over 64 KB go in pieces (see
+*Long messages*), and the prologue binds a nonce tamale issues rather than the channel id,
+which the browser never learns (see *Handshake*). Still to do by hand: *Manual* under
+Testing, on a real phone.
 
 Phase 2 of `tunnel_plan.md`. Today the hub at tamale-hub.com sees every session in
 plaintext (TLS ends at Caddy). Since the landing page lets anyone make tokens, that means
@@ -82,34 +88,46 @@ A standard, analysed pattern, so we implement a spec rather than invent a protoc
   first message, so only holders of the PSK complete the handshake. One round trip.
 - **AESGCM** because WebCrypto has AES-GCM but not ChaCha20-Poly1305; **SHA256** for the
   same reason.
-- Prologue: `"tamale-hub e2e v1" || sid || c`, binding the handshake to this session and
-  channel, so a recorded handshake can't be replayed onto another channel or session.
+- Prologue: `"tamale-hub e2e v1" || sid || n`, binding the handshake to this session and
+  to a fresh 16-byte nonce `n` tamale issues for this channel, so a recorded handshake can't
+  be replayed onto another channel or session. (Not the channel id `c`: the hub assigns it
+  and the browser never sees it. A nonce is stronger anyway: a replayed `hs1` is refused
+  outright, rather than making a tab whose traffic nobody can read.)
 
 Flow on a relayed channel `c`, inside the existing `msg` frames (the hub forwards them
 unchanged and needs no new frame types):
 
 ```
-browser → tamale   {"t":"hs1","m":"<base64 Noise message 1>"}     e, psk; payload: page version
+tamale  → browser  {"t":"hs0","n":"<base64 nonce>"}                on channel open
+browser → tamale   {"t":"hs1","m":"<base64 Noise message 1>"}     psk, e; payload: page version
 tamale  → browser  {"t":"hs2","m":"<base64 Noise message 2>"}     e, ee; payload: {ok:true}
-then both ways     {"t":"box","m":"<base64 transport message>"}    one /web message each
+then both ways     {"t":"box","m":"<base64 transport message>"}    one or more per /web message
 ```
 
 - After `hs2`, each side has a send and a receive cipher. Noise's transport nonces are
   64-bit counters per direction, so a dropped, repeated, reordered or reflected message
   fails to decrypt. WebSocket order is reliable, so any failure closes the channel.
 - tamale accepts nothing but `hs1` on a new relayed channel, and nothing but `box` after
-  it. A bad `hs1` (wrong PSK, a hub guessing) closes the channel; tamale counts failures
-  per sid and backs off to stop online guessing (256-bit keys make guessing hopeless
-  anyway, but the counter makes abuse visible).
+  it. A channel only becomes a tab once its handshake succeeds. A bad `hs1` (wrong PSK, a
+  hub guessing) closes the channel; after 5 failures in a row tamale turns new handshakes
+  away for a doubling time, up to about 4 minutes, and reports it once (256-bit keys make
+  guessing hopeless anyway, but the counter makes abuse visible).
 - Payloads are the existing `/web` JSON messages, unchanged, so `handle()`, `Mirror` and
   `app.js`'s `onMessage` don't change; encryption is a layer around `send()` and
   `ws.onmessage`.
 
+**Long messages.** A Noise message is at most 65535 bytes, and a `welcome` or an artifact
+can be many megabytes. So each transport message's plaintext is a flag byte (`0` more to
+come, `1` last) and a piece of the `/web` message. The flag is inside the encryption, so a
+hub can't cut a message short or join two; the counters keep the pieces in order. tamale
+holds what it reassembles from a browser to the 4 MiB a browser may send.
+
 **Libraries**
 
 - **Rust**: `snow` (the reference Rust Noise implementation), with its default resolver
-  (x25519-dalek, aes-gcm, sha2). One new dependency, in tamale only; the hub doesn't link
-  any of this.
+  (x25519-dalek, aes-gcm, sha2), plus `aes-gcm` and `hkdf` directly for the sealed labels and
+  key derivation (HKDF-SHA256, empty salt) and `base64`. In tamale only; the hub doesn't
+  link any of this.
 - **Browser**: a small Noise NNpsk0 implementation over WebCrypto (`X25519` deriveBits,
   `HMAC`/`HKDF` via `importKey`, `AES-GCM` with Noise's nonce layout: 4 zero bytes and a
   big-endian 64-bit counter). About 250 lines in `src/web/noise.js`, served with
@@ -178,6 +196,7 @@ plaintext. With E2E:
 | `src/app/*` | `/web remote` link with `#k=`, `/web remote pair`, `/web remote rekey`, `[hub] e2e` |
 | `hub/protocol` | `Hello { mid, e2e, sealed }`, `Status { sealed }`; bump `PROTO` to 2, hub accepts 1 and 2 during the transition |
 | `hub/src/serve.rs` | Store `mid`/`e2e`/sealed blobs; no artifact tunnel for E2E sessions; pass `mid` to the dashboard |
+| new `hub/static/seal.js` | `mid` derivation and opening labels, apart from the page so the tests can run it |
 | `hub/static/hub.js` | Key store in IndexedDB by `mid`; take `#k=` on any dashboard URL; decrypt labels; append the key to ticket redirects; lock badge; "unknown machine" rows |
 | landing page / README | Say what E2E covers and what it doesn't |
 
@@ -213,8 +232,8 @@ first:
 
 - **Interop**: a fixed PSK, ephemeral keys and prologue; `snow` produces `hs1`/`hs2` and
   transport messages, and `noise.js` (run under Node 22+, which has WebCrypto X25519)
-  must produce and accept the same bytes, and vice versa. Run in `cargo test` via a small
-  Node script when `node` is available, and in CI.
+  must produce and accept the same bytes, and vice versa. Run in `cargo test` via
+  `src/web/noise.test.mjs` when Node 22+ is available; with `CI` set, a missing Node fails.
 - **Tampering**: flip a bit in `hs1`, `hs2` and a `box` → the channel closes; replay a
   `box`, reorder two, send one back to its sender (reflection) → closes; a handshake for
   channel 7 replayed on channel 8 → fails (prologue).
@@ -229,6 +248,9 @@ first:
 - **Artifacts**: the hub returns 404 for `/artifact/…` on an E2E session; an artifact with
   scripts renders and runs in the frame page; the frame has an opaque origin
   (`allow-same-origin` absent) and can't open the session socket.
+- **Browser**: checked in Chrome against a real local hub: everything on the wire is
+  `hs0`/`hs1`/`hs2`/`box`; scan, reload and reopen from the list; a 200 KB artifact in the
+  frame, a new tab and a download; wrong key and stripped `e2e=1` both end at the scan screen.
 - **Manual**: phone on mobile data; scan once, open two sessions from the same machine
   without rescanning; restart tamale and reopen; `rekey` and check the old phone gets the
   scan screen.

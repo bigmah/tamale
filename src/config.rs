@@ -29,16 +29,29 @@ pub struct Settings {
 }
 
 /// `[hub]`: a tamale-hub to make the session reachable through (`/web remote`).
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields, default)]
 pub struct HubSettings {
     /// The hub's agent socket base, e.g. `wss://tamale-hub.com`.
     pub url: Option<String>,
-    #[serde(default)]
     pub connect: HubConnect,
+    /// End-to-end encrypt relayed channels, so the hub only moves opaque bytes. Turning it
+    /// off is for debugging.
+    pub e2e: bool,
     /// The agent token. Only from `TAMALE_HUB_TOKEN`, never a settings file.
     #[serde(skip)]
     pub token: Option<String>,
+}
+
+impl Default for HubSettings {
+    fn default() -> Self {
+        Self {
+            url: None,
+            connect: HubConnect::default(),
+            e2e: true,
+            token: None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]

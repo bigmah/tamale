@@ -41,12 +41,17 @@ then on the box `cd /root/tamale && nice cargo +1.93.0 build -p tamale-hub --rel
 install -m 755 target/release/tamale-hub /usr/local/bin/ && systemctl restart tamale-hub`.
 (There's no default rustup toolchain on the box; 1.93.0 is the one pullspace pins.)
 
+**End-to-end encryption (Phase 2a to 2d, deployed 2026-11-01):** tamale seals relayed
+channels, labels and artifacts by default; see `e2e.md`, including what's still to check by
+hand on a phone. Upgrade the hub before tamales: a new hub accepts older ones, in plaintext,
+but an older hub refuses new ones.
+
 **Self-serve tokens (added 2026-11-01):** the landing page at `/` lets visitors make a
 token pair (`POST /api/pairs`), and holders of a pair's view token rotate either half or
 delete it (`/api/pairs/rotate`, `/api/pairs/delete`), so nobody needs SSH access. Limits:
 5 pairs per IP per day, 500 in all (`--max-pairs`); page-made pairs (`web: true` in
 `state.json`) expire after 7 days if never used and after 90 days idle, unless a session
-is connected. The page says plainly that the operator can read and drive sessions. The
+is connected. The page says what end-to-end encryption does and doesn't cover. The
 production unit runs with `--signup open`; the binary defaults to closed. Before
 inviting people: make `github.com/bigmah/tamale` public (the page's install line points
 there), and consider the separate-session-domain hardening below, since strangers' pages
@@ -565,7 +570,7 @@ mobile data, either can be driven from it (prompt, interrupt, approve, code brow
 artifacts), restarting the hub or cutting a tamale's network recovers an open session page
 without a reload, and a restarted tamale reappears in the list without a reload.
 
-### Phase 2: End-to-end encryption between tamale and browser
+### Phase 2: End-to-end encryption between tamale and browser (built; see `e2e.md`)
 
 The hub sees plaintext. You control the hub, but E2E also protects against someone who
 gets into the VPS.
@@ -627,4 +632,4 @@ gets into the VPS.
   the browser holds more than one token.
 - **Idle sessions stay listed while connected** ("idle 3d"); one disappears 10 minutes
   after its tamale disconnects.
-- **Phase 2 key scope: one pairing key per machine.**
+- **Phase 2 key scope: one pairing key per machine.** (Built; see `e2e.md`.)
