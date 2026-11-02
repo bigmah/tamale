@@ -14,13 +14,16 @@ use crate::state::{Pair, Store};
 
 const USAGE: &str = "\
 Usage:
-  tamale-hub serve --public-url https://tamale-hub.com [--listen 127.0.0.1:8787] [--data-dir DIR] [--insecure]
+  tamale-hub serve --public-url https://tamale-hub.com [--listen 127.0.0.1:8787] [--data-dir DIR]
+                   [--signup open|closed] [--max-pairs N] [--insecure]
   tamale-hub token new <name> [--public-url URL]   make a token pair; prints both halves once
   tamale-hub token list
   tamale-hub token revoke <name>                   drop the pair and every socket using it
   tamale-hub token rotate <name> --agent|--view [--public-url URL]
 
 --data-dir defaults to $TAMALE_HUB_DATA, else ~/.local/share/tamale-hub.
+--signup open lets anyone make a token pair on the hub's page (default closed: only the
+CLI makes them); --max-pairs (default 500) caps how many the hub holds.
 --public-url defaults to $TAMALE_HUB_PUBLIC_URL for the token commands' links.";
 
 fn main() {
@@ -36,6 +39,8 @@ struct Args {
     public_url: Option<String>,
     data_dir: Option<PathBuf>,
     insecure: bool,
+    signup: bool,
+    max_pairs: usize,
     agent: bool,
     view: bool,
 }
@@ -47,6 +52,8 @@ fn parse(args: Vec<String>) -> Result<Args> {
         public_url: None,
         data_dir: None,
         insecure: false,
+        signup: false,
+        max_pairs: 500,
         agent: false,
         view: false,
     };
@@ -58,6 +65,18 @@ fn parse(args: Vec<String>) -> Result<Args> {
             "--public-url" => out.public_url = Some(value("--public-url")?),
             "--data-dir" => out.data_dir = Some(value("--data-dir")?.into()),
             "--insecure" => out.insecure = true,
+            "--signup" => {
+                out.signup = match value("--signup")?.as_str() {
+                    "open" => true,
+                    "closed" => false,
+                    other => bail!("--signup is open or closed, not {other}"),
+                }
+            }
+            "--max-pairs" => {
+                out.max_pairs = value("--max-pairs")?
+                    .parse()
+                    .context("--max-pairs must be a number")?
+            }
             "--agent" => out.agent = true,
             "--view" => out.view = true,
             "-h" | "--help" => {
@@ -94,6 +113,10 @@ fn run(args: Vec<String>) -> Result<()> {
                     listen,
                     public_url,
                     insecure: args.insecure,
+                    signup: serve::Signup {
+                        open: args.signup,
+                        max_pairs: args.max_pairs,
+                    },
                 },
                 store,
             ))
@@ -106,13 +129,7 @@ fn run(args: Vec<String>) -> Result<()> {
                 if s.by_name(name).is_some() {
                     bail!("a pair named {name} already exists (rotate or revoke it)");
                 }
-                s.pairs.push(Pair {
-                    name: name.to_string(),
-                    agent_hash: state::hash(&agent),
-                    view_hash: state::hash(&view),
-                    created: state::now(),
-                    last_used: None,
-                });
+                s.pairs.push(Pair::new(name, &agent, &view, false));
                 Ok(())
             })?;
             println!("Made token pair {name}. Neither half is shown again.\n");

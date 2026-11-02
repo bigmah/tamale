@@ -55,7 +55,24 @@ pub struct Options {
     pub listen: SocketAddr,
     pub public_url: String,
     pub insecure: bool,
+    pub signup: Signup,
 }
+
+/// Whether anyone may make a token pair from the hub's page.
+#[derive(Clone, Copy, Debug)]
+pub struct Signup {
+    pub open: bool,
+    /// Pairs the hub holds at most; signup stops there.
+    pub max_pairs: usize,
+}
+
+/// Pairs one IP may make from the page per day.
+const SIGNUPS_PER_IP: usize = 5;
+const SIGNUP_WINDOW: Duration = Duration::from_secs(24 * 3600);
+/// A page-made pair that never connects is deleted after this; one unused for
+/// `IDLE_EXPIRY` too. CLI-made pairs never expire.
+const UNUSED_EXPIRY: u64 = 7 * 24 * 3600;
+const IDLE_EXPIRY: u64 = 90 * 24 * 3600;
 
 /// Where the hub is reached, from `--public-url`.
 #[derive(Clone, Debug)]
@@ -174,12 +191,15 @@ pub struct Hub {
     /// Keyed by the ticket's hash.
     tickets: Mutex<HashMap<String, Ticket>>,
     failures: Mutex<HashMap<IpAddr, (u32, Instant)>>,
+    /// When each IP made pairs from the page, within the last day.
+    signups: Mutex<HashMap<IpAddr, Vec<Instant>>>,
+    signup: Signup,
     started: Instant,
     next: AtomicU64,
 }
 
 impl Hub {
-    pub fn new(public: Public, store: Store) -> Result<Arc<Self>> {
+    pub fn new(public: Public, store: Store, signup: Signup) -> Result<Arc<Self>> {
         // Makes the cookie secret if there isn't one yet.
         let tokens = store.edit(|s| Ok(s.clone()))?;
         Ok(Arc::new(Self {
@@ -189,6 +209,8 @@ impl Hub {
             sessions: Mutex::new(HashMap::new()),
             tickets: Mutex::new(HashMap::new()),
             failures: Mutex::new(HashMap::new()),
+            signups: Mutex::new(HashMap::new()),
+            signup,
             started: Instant::now(),
             next: AtomicU64::new(1),
         }))
@@ -315,6 +337,45 @@ impl Hub {
             .lock()
             .unwrap()
             .retain(|_, (_, since)| since.elapsed() <= FAILURE_WINDOW);
+        self.signups.lock().unwrap().retain(|_, times| {
+            times.retain(|t| t.elapsed() < SIGNUP_WINDOW);
+            !times.is_empty()
+        });
+        if let Err(e) = self.expire() {
+            eprintln!("expiring unused pairs: {e:#}");
+        }
+    }
+
+    /// Deletes page-made pairs nobody uses, unless one of their sessions is connected.
+    fn expire(&self) -> Result<()> {
+        let online: HashSet<String> = self
+            .sessions
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|s| s.agent.is_some())
+            .map(|s| s.pair.clone())
+            .collect();
+        let now = state::now();
+        let doomed = |p: &state::Pair| {
+            p.web
+                && !online.contains(&p.name)
+                && match p.last_used {
+                    None => now.saturating_sub(p.created) > UNUSED_EXPIRY,
+                    Some(t) => now.saturating_sub(t) > IDLE_EXPIRY,
+                }
+        };
+        if !self.tokens.read().unwrap().pairs.iter().any(doomed) {
+            return Ok(());
+        }
+        self.store.edit(|s| {
+            for p in s.pairs.iter().filter(|p| doomed(p)) {
+                eprintln!("pair {} expired unused", p.name);
+            }
+            s.pairs.retain(|p| !doomed(p));
+            Ok(())
+        })?;
+        self.reload()
     }
 }
 
@@ -419,7 +480,7 @@ fn rewrite(public: &Public, mut request: Request) -> Request {
 
 pub async fn serve(options: Options, store: Store) -> Result<()> {
     let public = Public::parse(&options.public_url, options.insecure)?;
-    let hub = Hub::new(public.clone(), store)?;
+    let hub = Hub::new(public.clone(), store, options.signup)?;
     let listener = tokio::net::TcpListener::bind(options.listen)
         .await
         .with_context(|| format!("couldn't listen on {}", options.listen))?;
@@ -483,6 +544,9 @@ pub async fn run(hub: Arc<Hub>, listener: tokio::net::TcpListener) -> Result<()>
         .route("/d/api/tokens", post(api_tokens))
         .route("/d/api/sessions", get(api_sessions))
         .route("/d/api/ticket", post(api_ticket))
+        .route("/d/api/pairs", post(api_pair_new))
+        .route("/d/api/pairs/rotate", post(api_pair_rotate))
+        .route("/d/api/pairs/delete", post(api_pair_delete))
         .route("/d/agent", get(agent))
         .route("/s/{sid}/__hub/auth", get(auth))
         .route("/s/{sid}/ws", get(session_socket))
@@ -657,10 +721,262 @@ async fn api_sessions(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Respon
     guard(
         Json(json!({
             "tokens": pairs.len(),
-            "pairs": pairs.iter().map(|p| &p.name).collect::<Vec<_>>(),
+            "signup": hub.signup.open,
+            "pairs": pairs.iter().map(|p| json!({
+                "name": p.name,
+                "created": p.created,
+                "web": p.web,
+            })).collect::<Vec<_>>(),
             "sessions": list,
         }))
         .into_response(),
+    )
+}
+
+
+/// Sets the dashboard cookie to `tokens` on `response`.
+fn with_view_cookie(hub: &Hub, mut response: Response, tokens: &[String]) -> Response {
+    let value = if tokens.is_empty() {
+        hub.public.set_cookie("th", "", 0)
+    } else {
+        hub.public.set_cookie("th", &tokens.join(","), VIEW_COOKIE_LIFE)
+    };
+    if let Ok(v) = value.parse() {
+        response.headers_mut().insert(header::SET_COOKIE, v);
+    }
+    response
+}
+
+/// `text` as a QR code, an SVG document, for the page to show as an image.
+fn qr_svg(text: &str) -> String {
+    qrcode::QrCode::new(text)
+        .map(|code| {
+            code.render::<qrcode::render::svg::Color>()
+                .min_dimensions(240, 240)
+                .dark_color(qrcode::render::svg::Color("#000000"))
+                .light_color(qrcode::render::svg::Color("#ffffff"))
+                .build()
+        })
+        .unwrap_or_default()
+}
+
+/// What the page shows once for new tokens: the agent token's setup lines, the view
+/// link and its QR code. Either half may be missing (a rotation makes only one).
+fn new_tokens(hub: &Hub, name: &str, agent: Option<&str>, view: Option<&str>) -> Value {
+    let agent_url = hub
+        .public
+        .origin()
+        .replacen("https://", "wss://", 1)
+        .replacen("http://", "ws://", 1);
+    let view_link = view.map(|v| format!("{}/#{v}", hub.public.origin()));
+    json!({
+        "name": name,
+        "agent": agent,
+        "env": agent.map(|a| format!("export TAMALE_HUB_URL={agent_url}\nexport TAMALE_HUB_TOKEN={a}")),
+        "view_link": view_link,
+        "qr": view_link.as_deref().map(qr_svg),
+    })
+}
+
+/// Whether the dashboard request may change things: from the hub's own page.
+fn checked(hub: &Hub, ip: IpAddr, headers: &HeaderMap) -> Option<Response> {
+    if !origin_is(headers, &hub.public.origin()) {
+        return Some(error(StatusCode::FORBIDDEN, "Wrong origin."));
+    }
+    if hub.limited(ip) {
+        return Some(error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many failed attempts; try again later.",
+        ));
+    }
+    None
+}
+
+#[derive(Deserialize)]
+struct NewPair {
+    #[serde(default)]
+    label: Option<String>,
+}
+
+/// Makes a token pair from the page. The browser keeps the view half; the agent half
+/// is shown once.
+async fn api_pair_new(
+    State(hub): State<Arc<Hub>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(request): Json<NewPair>,
+) -> Response {
+    let ip = client_ip(peer, &headers);
+    if let Some(refused) = checked(&hub, ip, &headers) {
+        return refused;
+    }
+    if !hub.signup.open {
+        return error(
+            StatusCode::FORBIDDEN,
+            "This hub doesn't make tokens from its page; ask whoever runs it.",
+        );
+    }
+    {
+        let mut signups = hub.signups.lock().unwrap();
+        let times = signups.entry(ip).or_default();
+        times.retain(|t| t.elapsed() < SIGNUP_WINDOW);
+        if times.len() >= SIGNUPS_PER_IP {
+            return error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "That's enough new token pairs from here for today.",
+            );
+        }
+        times.push(Instant::now());
+    }
+    let (Ok(agent), Ok(view)) = (state::new_token("tha_"), state::new_token("thv_")) else {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, "No randomness.");
+    };
+    let max = hub.signup.max_pairs;
+    let made = hub.store.edit(|s| {
+        if s.pairs.len() >= max {
+            bail!("full");
+        }
+        let name = state::pair_name(request.label.as_deref(), &s.pairs)?;
+        s.pairs.push(state::Pair::new(&name, &agent, &view, true));
+        Ok(name)
+    });
+    let name = match made {
+        Ok(name) => name,
+        Err(e) if e.to_string() == "full" => {
+            return error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "This hub is full right now. You can run your own: see the README.",
+            );
+        }
+        Err(e) => {
+            eprintln!("making a pair: {e:#}");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "Couldn't save the new pair.");
+        }
+    };
+    let _ = hub.reload();
+    eprintln!("pair {name} made from the page by {ip}");
+    let (mut tokens, _) = hub.views(&headers);
+    tokens.push(view.clone());
+    let body = new_tokens(&hub, &name, Some(&agent), Some(&view));
+    with_view_cookie(&hub, guard(Json(body).into_response()), &tokens)
+}
+
+#[derive(Deserialize)]
+struct PairAction {
+    name: String,
+    #[serde(default)]
+    half: Option<String>,
+}
+
+/// The browser's tokens, and whether it holds `name`'s current view token, which is
+/// what lets it manage that pair.
+fn holds(hub: &Hub, headers: &HeaderMap, name: &str) -> (Vec<String>, bool) {
+    let (tokens, pairs) = hub.views(headers);
+    let held = pairs.iter().any(|p| p.name == name);
+    (tokens, held)
+}
+
+/// Replaces one half of a pair the browser holds.
+async fn api_pair_rotate(
+    State(hub): State<Arc<Hub>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(request): Json<PairAction>,
+) -> Response {
+    let ip = client_ip(peer, &headers);
+    if let Some(refused) = checked(&hub, ip, &headers) {
+        return refused;
+    }
+    let (tokens, held) = holds(&hub, &headers, &request.name);
+    if !held {
+        hub.fail(ip);
+        return error(StatusCode::NOT_FOUND, "No such pair under your tokens.");
+    }
+    let agent = request.half.as_deref() == Some("agent");
+    if !agent && request.half.as_deref() != Some("view") {
+        return error(StatusCode::BAD_REQUEST, "Rotate the agent or the view half.");
+    }
+    let Ok(token) = state::new_token(if agent { "tha_" } else { "thv_" }) else {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, "No randomness.");
+    };
+    let old_view = hub
+        .tokens
+        .read()
+        .unwrap()
+        .by_name(&request.name)
+        .map(|p| p.view_hash.clone());
+    let saved = hub.store.edit(|s| {
+        let pair = s
+            .pairs
+            .iter_mut()
+            .find(|p| p.name == request.name)
+            .context("gone")?;
+        if agent {
+            pair.agent_hash = state::hash(&token);
+        } else {
+            pair.view_hash = state::hash(&token);
+        }
+        Ok(())
+    });
+    if saved.is_err() {
+        return error(StatusCode::NOT_FOUND, "No such pair under your tokens.");
+    }
+    let _ = hub.reload();
+    eprintln!(
+        "pair {}: {} half rotated from the page by {ip}",
+        request.name,
+        if agent { "agent" } else { "view" }
+    );
+    let body = if agent {
+        new_tokens(&hub, &request.name, Some(&token), None)
+    } else {
+        new_tokens(&hub, &request.name, None, Some(&token))
+    };
+    let mut tokens = tokens;
+    if !agent {
+        // Swap the old view token for the new one in this browser.
+        tokens.retain(|t| Some(state::hash(t)) != old_view);
+        tokens.push(token);
+    }
+    with_view_cookie(&hub, guard(Json(body).into_response()), &tokens)
+}
+
+/// Deletes a pair the browser holds, dropping its sessions.
+async fn api_pair_delete(
+    State(hub): State<Arc<Hub>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(request): Json<PairAction>,
+) -> Response {
+    let ip = client_ip(peer, &headers);
+    if let Some(refused) = checked(&hub, ip, &headers) {
+        return refused;
+    }
+    let (tokens, held) = holds(&hub, &headers, &request.name);
+    if !held {
+        hub.fail(ip);
+        return error(StatusCode::NOT_FOUND, "No such pair under your tokens.");
+    }
+    let view = hub
+        .tokens
+        .read()
+        .unwrap()
+        .by_name(&request.name)
+        .map(|p| p.view_hash.clone());
+    let _ = hub.store.edit(|s| {
+        s.pairs.retain(|p| p.name != request.name);
+        Ok(())
+    });
+    let _ = hub.reload();
+    eprintln!("pair {} deleted from the page by {ip}", request.name);
+    let tokens: Vec<String> = tokens
+        .into_iter()
+        .filter(|t| Some(state::hash(t)) != view)
+        .collect();
+    with_view_cookie(
+        &hub,
+        guard(Json(json!({ "deleted": request.name })).into_response()),
+        &tokens,
     )
 }
 
@@ -1194,6 +1510,10 @@ async fn agent_socket(hub: Arc<Hub>, pair: state::Pair, ip: IpAddr, ws: WebSocke
         let Ok(frame) = serde_json::from_str::<ToHub>(&text) else {
             continue;
         };
+        if matches!(frame, ToHub::Status { .. }) {
+            // A session in use keeps its pair from expiring.
+            hub.touch(&pair.name);
+        }
         let mut sessions = hub.sessions.lock().unwrap();
         let Some(session) = sessions
             .get_mut(&sid)
@@ -1328,7 +1648,7 @@ mod tests {
 
     mod end_to_end {
         use super::super::*;
-        use crate::state::{Pair, Store, hash, new_token};
+        use crate::state::{Pair, Store, new_token};
         use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest};
 
         struct Setup {
@@ -1355,13 +1675,7 @@ mod tests {
                         ("mine", &agent, &view),
                         ("other", &other_agent, &other_view),
                     ] {
-                        s.pairs.push(Pair {
-                            name: name.into(),
-                            agent_hash: hash(a),
-                            view_hash: hash(v),
-                            created: 0,
-                            last_used: None,
-                        });
+                        s.pairs.push(Pair::new(name, a, v, false));
                     }
                     Ok(())
                 })
@@ -1373,6 +1687,10 @@ mod tests {
                 public,
                 Store {
                     dir: store.dir.clone(),
+                },
+                Signup {
+                    open: true,
+                    max_pairs: 4,
                 },
             )
             .unwrap();
@@ -1803,6 +2121,112 @@ mod tests {
                 .unwrap();
             assert_eq!(r.status(), 404, "the session cookie dies with its pair");
             let _ = std::fs::remove_dir_all(&setup.store.dir);
+        }
+
+        #[tokio::test]
+        async fn the_page_makes_rotates_and_deletes_pairs() {
+            let setup = start().await;
+            let port = setup.port;
+            let dash = format!("hub.localhost:{port}");
+            let origin = format!("http://{dash}");
+            let base = format!("http://127.0.0.1:{port}");
+            let http = reqwest::Client::new();
+            let post = |path: &str, cookie: &str, body: Value| {
+                http.post(format!("{base}{path}"))
+                    .header("host", &dash)
+                    .header("origin", &origin)
+                    .header("cookie", cookie)
+                    .json(&body)
+                    .send()
+            };
+
+            // Another site can't make pairs in a visitor's name.
+            let r = http.post(format!("{base}/api/pairs")).header("host", &dash)
+                .header("origin", "http://evil.example").json(&json!({})).send().await.unwrap();
+            assert_eq!(r.status(), 403);
+
+            let r = post("/api/pairs", "", json!({ "label": "My Laptop" })).await.unwrap();
+            assert_eq!(r.status(), 200);
+            let th = set_cookie(&r);
+            let made: Value = r.json().await.unwrap();
+            assert_eq!(made["name"], "my-laptop");
+            let agent = made["agent"].as_str().unwrap().to_string();
+            assert!(agent.starts_with("tha_"));
+            assert!(made["env"].as_str().unwrap().contains(&format!("TAMALE_HUB_TOKEN={agent}")));
+            assert!(made["env"].as_str().unwrap().contains(&format!("TAMALE_HUB_URL=ws://{dash}")));
+            assert!(made["view_link"].as_str().unwrap().starts_with(&format!("{origin}/#thv_")));
+            assert!(made["qr"].as_str().unwrap().contains("<svg"));
+            let stored = setup.store.load().unwrap();
+            let pair = stored.by_name("my-laptop").unwrap();
+            assert!(pair.web && stored.by_agent(&agent).is_some());
+
+            // The browser that made it holds its view half already, and the agent half works.
+            let list: Value = http.get(format!("{base}/api/sessions")).header("host", &dash)
+                .header("cookie", &th).send().await.unwrap().json().await.unwrap();
+            assert_eq!(list["pairs"][0]["name"], "my-laptop");
+            assert_eq!(list["signup"], true);
+            let sid = "abcdef0123456789abcdef0123456789";
+            let mut a = agent_hello(port, &agent, sid).await;
+            assert!(next_text(&mut a).await.contains("\"welcome\""));
+
+            // Two CLI pairs plus this one, and the test hub holds at most four.
+            let r = post("/api/pairs", "", json!({})).await.unwrap();
+            assert_eq!(r.status(), 200);
+            let r = post("/api/pairs", "", json!({})).await.unwrap();
+            assert_eq!(r.status(), 503);
+
+            // Only a holder of the pair's view token can manage it.
+            let r = post("/api/pairs/rotate", "", json!({ "name": "my-laptop", "half": "agent" })).await.unwrap();
+            assert_eq!(r.status(), 404);
+            let r = post("/api/pairs/rotate", &th, json!({ "name": "my-laptop", "half": "agent" })).await.unwrap();
+            assert_eq!(r.status(), 200);
+            let rotated: Value = r.json().await.unwrap();
+            assert!(rotated["view_link"].is_null());
+            let new_agent = rotated["agent"].as_str().unwrap();
+            assert_ne!(new_agent, agent);
+            // The old agent's session is dropped within the reload.
+            let code = tokio::time::timeout(Duration::from_secs(6), close_code(&mut a)).await.unwrap();
+            assert_eq!(code, close::BAD_TOKEN);
+
+            let r = post("/api/pairs/rotate", &th, json!({ "name": "my-laptop", "half": "view" })).await.unwrap();
+            assert_eq!(r.status(), 200);
+            let new_th = set_cookie(&r);
+            assert_ne!(new_th, th);
+            let rotated: Value = r.json().await.unwrap();
+            assert!(rotated["agent"].is_null() && rotated["qr"].as_str().unwrap().contains("<svg"));
+            // The old view token no longer lists anything; the new cookie does.
+            let old: Value = http.get(format!("{base}/api/sessions")).header("host", &dash)
+                .header("cookie", &th).send().await.unwrap().json().await.unwrap();
+            assert_eq!(old["tokens"], 0);
+
+            let r = post("/api/pairs/delete", &new_th, json!({ "name": "my-laptop" })).await.unwrap();
+            assert_eq!(r.status(), 200);
+            assert!(r.headers()["set-cookie"].to_str().unwrap().contains("Max-Age=0"));
+            assert!(setup.store.load().unwrap().by_name("my-laptop").is_none());
+            let _ = std::fs::remove_dir_all(&setup.store.dir);
+        }
+
+        #[tokio::test]
+        async fn unused_page_pairs_expire_but_cli_pairs_stay() {
+            let dir = std::env::temp_dir().join(format!("tamale-hub-expire-{}", state::hex(&state::random::<8>().unwrap())));
+            let store = Store::open(Some(dir.clone())).unwrap();
+            store.edit(|s| {
+                let mut old_web = Pair::new("old-web", "a1", "v1", true);
+                old_web.created = 0;
+                let mut idle_web = Pair::new("idle-web", "a2", "v2", true);
+                idle_web.last_used = Some(state::now() - IDLE_EXPIRY - 10);
+                let mut old_cli = Pair::new("old-cli", "a3", "v3", false);
+                old_cli.created = 0;
+                let fresh_web = Pair::new("fresh-web", "a4", "v4", true);
+                s.pairs.extend([old_web, idle_web, old_cli, fresh_web]);
+                Ok(())
+            }).unwrap();
+            let public = Public::parse("http://hub.localhost:1", true).unwrap();
+            let hub = Hub::new(public, Store { dir: dir.clone() }, Signup { open: true, max_pairs: 10 }).unwrap();
+            hub.sweep();
+            let names: Vec<String> = store.load().unwrap().pairs.into_iter().map(|p| p.name).collect();
+            assert_eq!(names, ["old-cli", "fresh-web"]);
+            let _ = std::fs::remove_dir_all(&dir);
         }
 
         #[tokio::test]

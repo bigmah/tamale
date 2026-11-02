@@ -35,6 +35,16 @@ prompt runs tools without asking; tamale warns when connecting.
 
 ## Tokens
 
+**From the page** (with `serve --signup open`, as tamale-hub.com runs): anyone can make a
+token pair on the hub's landing page. The browser that makes it keeps the view half; the
+page shows the agent half's `export` lines and a QR code of the view link once. Whoever
+holds a pair's view token can make a new agent token, a new view link, or delete the
+pair from the same page. Limits: 5 new pairs per IP per day, `--max-pairs` (default 500)
+in all; page-made pairs that never connect are deleted after 7 days, and after 90 days
+unused. With `--signup closed` (the default) only the CLI makes pairs.
+
+**From the CLI** (pairs made this way never expire):
+
 ```sh
 tamale-hub token new <name>                  # prints both halves once, with a QR code
 tamale-hub token list
@@ -73,7 +83,8 @@ in short:
 
 4. `cargo build -p tamale-hub --release`, then a systemd unit running
    `tamale-hub serve --listen 127.0.0.1:8787 --public-url https://hub.example --data-dir /var/lib/tamale-hub`
-   as its own user (see `tunnel_plan.md` for the hardened unit).
+   as its own user (see `tunnel_plan.md` for the hardened unit). Add `--signup open` to
+   let visitors make their own tokens.
 5. `tamale-hub token new mine`.
 
 To try it locally without DNS or TLS, browsers resolve `*.localhost` to this machine:

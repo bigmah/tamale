@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#17181d">
 <meta name="color-scheme" content="dark">
+<meta name="description" content="Drive your tamale sessions from your phone or any browser, wherever tamale runs.">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="tamale-hub">
 <title>tamale-hub</title>
@@ -15,29 +16,96 @@
 <body>
 <main>
   <header>
-    <span class="mark">🫔</span><span class="name">tamale-hub</span>
+    <a class="brand" href="/"><span class="mark">🫔</span><span class="name">tamale-hub</span></a>
     <span class="spacer"></span>
     <span class="pairs" id="pairs"></span>
   </header>
 
+  <!-- /open/<sid>: trading the view token for a ticket into one session. -->
   <section id="opening" hidden>
     <p class="lead" id="opening-text">Opening the session…</p>
     <p><a href="/" id="opening-back" hidden>See all sessions</a></p>
   </section>
 
+  <!-- For visitors without a view token. -->
+  <section id="landing" hidden>
+    <h1>Your tamale sessions, from anywhere.</h1>
+    <p class="intro">tamale-hub puts tamale's web UI on your phone or any browser, wherever tamale
+      runs: your laptop or a dozen throwaway servers. No port forwarding, no VPN. Each tamale
+      connects out to the hub; your browser holds the key that lets you in.</p>
+    <ol class="steps">
+      <li><strong>Make a token pair</strong> below. It has two halves: an <em>agent token</em> for
+        the machines that run tamale, and a <em>view link</em> for your browsers.</li>
+      <li><strong>On each machine</strong>, set the agent token and run <code>/web remote</code> in
+        tamale. The agent token alone can't read or drive anything, so it's fine on a VPS.</li>
+      <li><strong>On your phone</strong>, scan the view link. Your sessions show up here; tap one to
+        drive it.</li>
+    </ol>
+  </section>
+
+  <!-- Shown once, right after tokens are made or rotated. -->
+  <section id="made" class="card" hidden>
+    <h2 id="made-title">Your token pair</h2>
+    <p class="warn">These are shown once. The hub keeps only their hashes, so if you lose one,
+      rotate it below.</p>
+    <div id="made-agent">
+      <h3>1. On every machine that runs tamale</h3>
+      <p class="hint">Add these to the shell profile (or run them before starting tamale), then
+        run <code>/web remote</code> in tamale.</p>
+      <div class="secret"><pre id="made-env"></pre><button type="button" class="copy" data-copy="made-env">Copy</button></div>
+      <p class="hint">No tamale yet? <code>cargo install --git https://github.com/bigmah/tamale --locked</code></p>
+    </div>
+    <div id="made-view">
+      <h3 id="made-view-title">2. On your phone</h3>
+      <p class="hint">Scan this to open your sessions there. <strong>It controls every session of
+        this pair</strong>: treat it like an SSH key, and scan it rather than sending it. This
+        browser already holds it.</p>
+      <div class="qr"><img id="made-qr" alt="QR code of the view link" width="240" height="240"></div>
+      <div class="secret"><pre id="made-link"></pre><button type="button" class="copy" data-copy="made-link">Copy</button></div>
+    </div>
+    <button type="button" id="made-done">Done</button>
+  </section>
+
+  <!-- For browsers holding view tokens. -->
   <section id="list" hidden>
+    <h2>Sessions</h2>
     <ul id="sessions" class="sessions"></ul>
-    <p class="empty" id="empty" hidden>No sessions yet. Run <code>/web remote</code> in tamale on a machine
-      with <code>TAMALE_HUB_URL</code> and <code>TAMALE_HUB_TOKEN</code> set.</p>
+    <p class="empty" id="empty" hidden>No sessions connected. Run <code>/web remote</code> in tamale on
+      a machine with <code>TAMALE_HUB_URL</code> and <code>TAMALE_HUB_TOKEN</code> set.</p>
+  </section>
+
+  <section id="create" hidden>
+    <h2 id="create-title">Make a token pair</h2>
+    <form id="create-form" autocomplete="off">
+      <input id="label" name="label" type="text" maxlength="32" placeholder="Name (optional), e.g. laptop" spellcheck="false" autocapitalize="off">
+      <button type="submit" id="create-button">Make tokens</button>
+    </form>
+    <p class="error" id="create-error" hidden></p>
+  </section>
+
+  <section id="manage" hidden>
+    <h2>Token pairs on this browser</h2>
+    <ul id="pair-list" class="pair-list"></ul>
   </section>
 
   <section id="add">
-    <p class="lead" id="add-lead">Open your view link, or paste its view token (<code>thv_…</code>) here.</p>
+    <h2 id="add-title">Have a view link?</h2>
+    <p class="hint" id="add-lead">Open it on this device, or paste its token (<code>thv_…</code>) here.</p>
     <form id="add-form" autocomplete="off">
       <input id="token" name="token" type="password" placeholder="thv_…" spellcheck="false" autocapitalize="off">
-      <button type="submit">Add</button>
+      <button type="submit" class="secondary">Add</button>
     </form>
     <p class="error" id="error" hidden></p>
+  </section>
+
+  <section id="trust" class="note">
+    <h2>How much to trust this hub</h2>
+    <p>Sessions pass through this server unencrypted beyond TLS, so whoever runs it, or anyone who
+      breaks into it, could read them and send commands to your machines. It's a beta. For
+      anything sensitive, run your own hub (it's one small binary behind Caddy), and
+      keep tamale's permission mode on <code>ask</code> for remote work.</p>
+    <p>Unused pairs made here are deleted after 7 days if they never connect, and after 90 days
+      without use.</p>
   </section>
 
   <footer>

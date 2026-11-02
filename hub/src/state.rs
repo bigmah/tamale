@@ -22,6 +22,70 @@ pub struct Pair {
     pub created: u64,
     #[serde(default)]
     pub last_used: Option<u64>,
+    /// Made from the hub's page rather than the CLI; such pairs expire when unused.
+    #[serde(default)]
+    pub web: bool,
+}
+
+impl Pair {
+    /// A pair for `agent` and `view`, which only keeps their hashes.
+    pub fn new(name: &str, agent: &str, view: &str, web: bool) -> Self {
+        Self {
+            name: name.to_string(),
+            agent_hash: hash(agent),
+            view_hash: hash(view),
+            created: now(),
+            last_used: None,
+            web,
+        }
+    }
+}
+
+/// A name for a new pair: `label` cleaned up to lowercase letters, digits and dashes, or
+/// two random words and a number; made unique among `taken`.
+pub fn pair_name(label: Option<&str>, taken: &[Pair]) -> Result<String> {
+    const FIRST: [&str; 16] = [
+        "amber", "brisk", "calm", "dusty", "eager", "fuzzy", "gold", "hazy", "ivory", "jolly",
+        "keen", "lucky", "mellow", "nimble", "olive", "plucky",
+    ];
+    const SECOND: [&str; 16] = [
+        "otter", "heron", "maple", "comet", "pepper", "falcon", "cactus", "walrus", "lantern",
+        "pebble", "badger", "quail", "tamale", "salsa", "mango", "cedar",
+    ];
+    let cleaned: String = label
+        .unwrap_or("")
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    let base: String = cleaned.chars().take(32).collect();
+    let base = base.trim_end_matches('-').to_string();
+    let free = |name: &str| !taken.iter().any(|p| p.name == name);
+    if !base.is_empty() {
+        if free(&base) {
+            return Ok(base);
+        }
+        if let Some(name) = (2..100).map(|n| format!("{base}-{n}")).find(|n| free(n)) {
+            return Ok(name);
+        }
+    }
+    for _ in 0..100 {
+        let [a, b, n] = random::<3>()?;
+        let name = format!(
+            "{}-{}-{}",
+            FIRST[usize::from(a) % 16],
+            SECOND[usize::from(b) % 16],
+            10 + u32::from(n) % 90
+        );
+        if free(&name) {
+            return Ok(name);
+        }
+    }
+    bail!("couldn't find a free name")
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -226,13 +290,7 @@ mod tests {
         );
         store
             .edit(|s| {
-                s.pairs.push(Pair {
-                    name: "mine".into(),
-                    agent_hash: hash(&agent),
-                    view_hash: hash(&view),
-                    created: now(),
-                    last_used: None,
-                });
+                s.pairs.push(Pair::new("mine", &agent, &view, false));
                 Ok(())
             })
             .unwrap();
@@ -257,13 +315,7 @@ mod tests {
                 std::thread::spawn(move || {
                     store
                         .edit(|s| {
-                            s.pairs.push(Pair {
-                                name: format!("p{i}"),
-                                agent_hash: String::new(),
-                                view_hash: String::new(),
-                                created: 0,
-                                last_used: None,
-                            });
+                            s.pairs.push(Pair::new(&format!("p{i}"), "a", "v", false));
                             Ok(())
                         })
                         .unwrap()
@@ -275,6 +327,16 @@ mod tests {
         }
         assert_eq!(store.load().unwrap().pairs.len(), 8);
         let _ = fs::remove_dir_all(&store.dir);
+    }
+
+    #[test]
+    fn pair_names_are_cleaned_and_unique() {
+        let taken = vec![Pair::new("laptop", "a", "v", false)];
+        assert_eq!(pair_name(Some("My VPSs!"), &taken).unwrap(), "my-vpss");
+        assert_eq!(pair_name(Some("Laptop"), &taken).unwrap(), "laptop-2");
+        let random = pair_name(Some("  ***  "), &taken).unwrap();
+        assert_eq!(random.split('-').count(), 3, "{random}");
+        assert!(pair_name(Some(&"x".repeat(80)), &taken).unwrap().len() <= 32);
     }
 
     #[test]

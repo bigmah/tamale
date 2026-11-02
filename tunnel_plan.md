@@ -41,6 +41,17 @@ then on the box `cd /root/tamale && nice cargo +1.93.0 build -p tamale-hub --rel
 install -m 755 target/release/tamale-hub /usr/local/bin/ && systemctl restart tamale-hub`.
 (There's no default rustup toolchain on the box; 1.93.0 is the one pullspace pins.)
 
+**Self-serve tokens (added 2026-11-01):** the landing page at `/` lets visitors make a
+token pair (`POST /api/pairs`), and holders of a pair's view token rotate either half or
+delete it (`/api/pairs/rotate`, `/api/pairs/delete`), so nobody needs SSH access. Limits:
+5 pairs per IP per day, 500 in all (`--max-pairs`); page-made pairs (`web: true` in
+`state.json`) expire after 7 days if never used and after 90 days idle, unless a session
+is connected. The page says plainly that the operator can read and drive sessions. The
+production unit runs with `--signup open`; the binary defaults to closed. Before
+inviting people: make `github.com/bigmah/tamale` public (the page's install line points
+there), and consider the separate-session-domain hardening below, since strangers' pages
+then share a site with the dashboard.
+
 **Where the build differs from this plan:**
 
 - `/web remote` with no web server running starts the usual loopback one (random port,
@@ -60,7 +71,10 @@ install -m 755 target/release/tamale-hub /usr/local/bin/ && systemctl restart ta
 
 ### Non-goals (for now)
 
-- Hosted or multi-tenant plans. One hub serves one owner; anyone can run their own.
+- Paid plans and accounts. Since 2026-11-01 tamale-hub.com does let anyone make a token
+  pair on its page (`--signup open`; see Status), but each pair is still just tokens, and
+  people who need more trust than "the operator could read and drive my sessions" should
+  run their own hub until Phase 2.
 - Native apps and a `tamale remote` desktop client.
 - TLS in the hub itself. Caddy does TLS in front of it.
 - Accounts, sign-in, passwords or passkeys. **Tokens are the only credential.**
