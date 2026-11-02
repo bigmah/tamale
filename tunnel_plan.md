@@ -35,7 +35,7 @@ subdomain of it. `bigmah.com` and `pullspace.dev` are not touched.
 | DNS | `tamale-hub.com` and `*.tamale-hub.com` → `5.78.153.154` (Route 53, TTL 300) |
 | IAM | user `caddy-acme`, inline policy `tamale-hub-acme` (step 3); its key is only in `/var/lib/caddy/.aws/credentials` on the VPS |
 | Caddy | custom 2.10.2 + `caddy-dns/route53` v1.6.2 at `/usr/bin/caddy.custom`, selected by `update-alternatives`, stock binary diverted to `/usr/bin/caddy.default`. Wildcard and apex certificates issued. Backups of the original binary and Caddyfile in `/root/caddy-backup-20261101/` |
-| Hub | `/usr/local/bin/tamale-hub`, systemd unit `tamale-hub`, data in `/var/lib/tamale-hub`, source synced to `/root/tamale` |
+| Hub | `/usr/local/bin/tamale-hub`, systemd unit `tamale-hub`, data in `/var/lib/tamale-hub`, source a git checkout at `/root/tamale` that `deploy.sh` keeps on `main` |
 | Keys | made on the site since 2026-11-02 (`single_key.md`); only their hashes are on the box |
 | Code | `hub/` (binary), `hub/protocol/` (frames), `src/web/relay.rs`, `[hub]` settings, `/web remote` |
 | Tests | `cargo test --workspace` (hub in-process end to end, relay against a stand-in hub); `real_hub_relays_a_browser_end_to_end` (ignored) passed against the live hub |
