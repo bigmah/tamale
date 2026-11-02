@@ -206,7 +206,7 @@ const latest = {};
 
 /**
  * End-to-end encryption, on a session opened through a tamale-hub (see e2e.md). The hub's
- * redirect says so with `?e2e=1`, and the pairing key arrives in the fragment, which never
+ * redirect says so with `?e2e=1`, and the handshake's secret arrives in the fragment, which never
  * reaches a server; it's kept for this tab's reloads. `null` when this page talks plaintext,
  * as it does served locally. A hub that drops `e2e=1` gains nothing: tamale still refuses
  * unsealed messages, and answers with `hs0`, which this page takes as "you need a key".
@@ -243,7 +243,7 @@ function lock(title, text) {
   );
 }
 
-const NEEDS_KEY = "Run /web remote pair in this session's terminal, and scan the code it shows.";
+const NEEDS_KEY = "Scan this session's key on the hub's page, or paste it there.";
 
 /** Handles one frame of an encrypted connection; throws if it isn't what's due. */
 async function sealedFrame(link, data) {

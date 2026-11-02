@@ -449,15 +449,11 @@ impl App {
                 Some("local") => self.web_request = Some(WebRequest::Open { lan: false }),
                 Some("off") => self.web_request = Some(WebRequest::Close),
                 Some("remote") => match cmd.split_whitespace().nth(2) {
-                    // Pairing is the code on the screen this opens.
-                    None | Some("on" | "pair") => {
-                        self.web_request = Some(WebRequest::Remote { on: true })
-                    }
+                    None | Some("on") => self.web_request = Some(WebRequest::Remote { on: true }),
                     Some("off") => self.web_request = Some(WebRequest::Remote { on: false }),
-                    Some("rekey") => self.web_request = Some(WebRequest::Rekey),
                     Some(_) => self
                         .entries
-                        .push(Entry::Error("Usage: /web remote [off|pair|rekey]".into())),
+                        .push(Entry::Error("Usage: /web remote [off]".into())),
                 },
                 Some(_) => self
                     .entries

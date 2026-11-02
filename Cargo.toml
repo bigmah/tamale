@@ -39,5 +39,8 @@ hkdf = "0.12"
 sha2 = "0.10"
 base64 = "0.22"
 
+[dev-dependencies]
+rqrr = "0.10"
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

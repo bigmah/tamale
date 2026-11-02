@@ -284,3 +284,38 @@ fn backend_comes_from_files_and_environment() {
     let bad = dir.write("bad.toml", "[backend]\nkind = \"local\"\n");
     assert!(Settings::load_from(&dir.0, None, Some(&bad)).is_err());
 }
+
+#[test]
+fn the_hub_key_only_comes_from_the_environment_and_the_site() {
+    let settings = |vars: &[(&str, &str)]| {
+        let mut settings = Settings::default();
+        settings
+            .apply_env(|name| {
+                vars.iter()
+                    .find(|(k, _)| *k == name)
+                    .map(|(_, v)| v.to_string())
+            })
+            .unwrap();
+        settings.hub
+    };
+    let hub = settings(&[]);
+    assert_eq!(hub.url, "wss://tamale-hub.com");
+    assert_eq!(
+        hub.key_bytes().unwrap_err(),
+        "Set TAMALE_HUB_KEY to use the hub. Make a key at https://tamale-hub.com"
+    );
+    // The message points at the hub in use.
+    let hub = settings(&[("TAMALE_HUB_URL", "ws://hub.localhost:8787/")]);
+    assert!(hub.key_bytes().unwrap_err().ends_with("http://hub.localhost:8787"));
+    // Someone who set up the old tokens is told, rather than just asked for a key.
+    let hub = settings(&[("TAMALE_HUB_TOKEN", "tha_old")]);
+    assert!(hub.key_bytes().unwrap_err().contains("TAMALE_HUB_TOKEN has been replaced"));
+
+    let key = tamale_hub_protocol::encode_key(&[5; 32]);
+    let hub = settings(&[("TAMALE_HUB_KEY", &format!(" {key}\n")), ("TAMALE_HUB_TOKEN", "tha_old")]);
+    assert_eq!(hub.key_bytes().unwrap(), [5; 32]);
+    let hub = settings(&[("TAMALE_HUB_KEY", "tha_old")]);
+    assert!(hub.key_bytes().unwrap_err().contains("isn't a key"));
+    // Never from a settings file.
+    assert!(toml::from_str::<HubSettings>("key = \"thk_x\"\n").is_err());
+}

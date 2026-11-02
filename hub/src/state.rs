@@ -1,4 +1,5 @@
-//! The hub's only persistent state: token pairs, as SHA-256 hashes, in one `state.json`.
+//! The hub's only persistent state: keys, as SHA-256 hashes of their auth values (see
+//! `single_key.md`), in one `state.json`. The hub never sees a key itself.
 //!
 //! The CLI edits it under an advisory lock and replaces it atomically (temp file +
 //! rename); `serve` notices the new mtime and reloads. The file also holds a random
@@ -15,25 +16,24 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct Pair {
+pub struct Key {
     pub name: String,
-    pub agent_hash: String,
-    pub view_hash: String,
+    /// The SHA-256 of the key's auth value.
+    pub auth_hash: String,
     pub created: u64,
     #[serde(default)]
     pub last_used: Option<u64>,
-    /// Made from the hub's page rather than the CLI; such pairs expire when unused.
+    /// Made from the hub's page rather than the CLI; such keys expire when unused.
     #[serde(default)]
     pub web: bool,
 }
 
-impl Pair {
-    /// A pair for `agent` and `view`, which only keeps their hashes.
-    pub fn new(name: &str, agent: &str, view: &str, web: bool) -> Self {
+impl Key {
+    /// A key whose auth value is `auth`, which only keeps its hash.
+    pub fn new(name: &str, auth: &str, web: bool) -> Self {
         Self {
             name: name.to_string(),
-            agent_hash: hash(agent),
-            view_hash: hash(view),
+            auth_hash: hash(auth),
             created: now(),
             last_used: None,
             web,
@@ -41,9 +41,9 @@ impl Pair {
     }
 }
 
-/// A name for a new pair: `label` cleaned up to lowercase letters, digits and dashes, or
+/// A name for a new key: `label` cleaned up to lowercase letters, digits and dashes, or
 /// two random words and a number; made unique among `taken`.
-pub fn pair_name(label: Option<&str>, taken: &[Pair]) -> Result<String> {
+pub fn key_name(label: Option<&str>, taken: &[Key]) -> Result<String> {
     const FIRST: [&str; 16] = [
         "amber", "brisk", "calm", "dusty", "eager", "fuzzy", "gold", "hazy", "ivory", "jolly",
         "keen", "lucky", "mellow", "nimble", "olive", "plucky",
@@ -91,27 +91,21 @@ pub fn pair_name(label: Option<&str>, taken: &[Pair]) -> Result<String> {
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct State {
     #[serde(default)]
-    pub pairs: Vec<Pair>,
+    pub keys: Vec<Key>,
     /// Hex; signs session cookies. Made on first use.
     #[serde(default)]
     pub secret: String,
 }
 
 impl State {
-    /// The pair whose agent half is `token`.
-    pub fn by_agent(&self, token: &str) -> Option<&Pair> {
-        let hash = hash(token);
-        self.pairs.iter().find(|p| ct_eq(&p.agent_hash, &hash))
+    /// The key whose auth value is `auth`.
+    pub fn by_auth(&self, auth: &str) -> Option<&Key> {
+        let hash = hash(auth);
+        self.keys.iter().find(|k| ct_eq(&k.auth_hash, &hash))
     }
 
-    /// The pair whose view half is `token`.
-    pub fn by_view(&self, token: &str) -> Option<&Pair> {
-        let hash = hash(token);
-        self.pairs.iter().find(|p| ct_eq(&p.view_hash, &hash))
-    }
-
-    pub fn by_name(&self, name: &str) -> Option<&Pair> {
-        self.pairs.iter().find(|p| p.name == name)
+    pub fn by_name(&self, name: &str) -> Option<&Key> {
+        self.keys.iter().find(|k| k.name == name)
     }
 }
 
@@ -208,9 +202,9 @@ pub fn random<const N: usize>() -> Result<[u8; N]> {
     Ok(bytes)
 }
 
-/// A new token: `prefix` and 32 random bytes in lowercase base32.
-pub fn new_token(prefix: &str) -> Result<String> {
-    Ok(format!("{prefix}{}", base32(&random::<32>()?)))
+/// A new key, for whoever runs the hub to hand out. The site makes its own in the browser.
+pub fn new_key() -> Result<String> {
+    Ok(tamale_hub_protocol::encode_key(&random::<32>()?))
 }
 
 pub fn hash(token: &str) -> String {
@@ -219,24 +213,6 @@ pub fn hash(token: &str) -> String {
 
 pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-fn base32(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
-    let mut out = String::new();
-    let (mut buffer, mut bits) = (0u32, 0);
-    for &byte in bytes {
-        buffer = (buffer << 8) | u32::from(byte);
-        bits += 8;
-        while bits >= 5 {
-            bits -= 5;
-            out.push(ALPHABET[((buffer >> bits) & 31) as usize] as char);
-        }
-    }
-    if bits > 0 {
-        out.push(ALPHABET[((buffer << (5 - bits)) & 31) as usize] as char);
-    }
-    out
 }
 
 /// Compares in time that depends only on the lengths.
@@ -278,36 +254,46 @@ mod tests {
     }
 
     #[test]
-    fn tokens_are_prefixed_base32_and_only_hashes_are_stored() {
+    fn only_hashes_are_stored() {
         let store = temp_store();
-        let agent = new_token("tha_").unwrap();
-        let view = new_token("thv_").unwrap();
-        assert_eq!(agent.len(), 4 + 52);
-        assert!(
-            agent[4..]
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || (b'2'..=b'7').contains(&b))
-        );
+        let key = new_key().unwrap();
+        let bytes = tamale_hub_protocol::decode_key(&key).unwrap();
+        let auth = tamale_hub_protocol::auth_value(&bytes);
         store
             .edit(|s| {
-                s.pairs.push(Pair::new("mine", &agent, &view, false));
+                s.keys.push(Key::new("mine", &auth, false));
                 Ok(())
             })
             .unwrap();
         let text = fs::read_to_string(store.path()).unwrap();
-        assert!(!text.contains(&agent[4..]) && !text.contains(&view[4..]));
+        assert!(!text.contains(&key[4..]) && !text.contains(&auth));
         let mode = fs::metadata(store.path()).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
         let state = store.load().unwrap();
-        assert_eq!(state.by_agent(&agent).unwrap().name, "mine");
-        assert_eq!(state.by_view(&view).unwrap().name, "mine");
-        assert!(state.by_agent(&view).is_none() && state.by_view(&agent).is_none());
+        assert_eq!(state.by_auth(&auth).unwrap().name, "mine");
+        assert!(state.by_auth(&key).is_none());
         assert_eq!(state.secret.len(), 64);
         let _ = fs::remove_dir_all(&store.dir);
     }
 
     #[test]
-    fn concurrent_edits_keep_every_pair() {
+    fn token_pairs_from_before_keys_are_dropped_and_the_secret_stays() {
+        let store = temp_store();
+        fs::write(
+            store.path(),
+            r#"{"pairs":[{"name":"old","agent_hash":"a","view_hash":"v","created":1}],"secret":"abc"}"#,
+        )
+        .unwrap();
+        assert!(store.load().unwrap().keys.is_empty());
+        store.edit(|_| Ok(())).unwrap();
+        let text = fs::read_to_string(store.path()).unwrap();
+        assert!(!text.contains("agent_hash"));
+        assert_eq!(store.load().unwrap().secret, "abc");
+        let _ = fs::remove_dir_all(&store.dir);
+    }
+
+    #[test]
+    fn concurrent_edits_keep_every_key() {
         let store = std::sync::Arc::new(temp_store());
         let threads: Vec<_> = (0..8)
             .map(|i| {
@@ -315,7 +301,7 @@ mod tests {
                 std::thread::spawn(move || {
                     store
                         .edit(|s| {
-                            s.pairs.push(Pair::new(&format!("p{i}"), "a", "v", false));
+                            s.keys.push(Key::new(&format!("k{i}"), "a", false));
                             Ok(())
                         })
                         .unwrap()
@@ -325,18 +311,18 @@ mod tests {
         for t in threads {
             t.join().unwrap();
         }
-        assert_eq!(store.load().unwrap().pairs.len(), 8);
+        assert_eq!(store.load().unwrap().keys.len(), 8);
         let _ = fs::remove_dir_all(&store.dir);
     }
 
     #[test]
-    fn pair_names_are_cleaned_and_unique() {
-        let taken = vec![Pair::new("laptop", "a", "v", false)];
-        assert_eq!(pair_name(Some("My VPSs!"), &taken).unwrap(), "my-vpss");
-        assert_eq!(pair_name(Some("Laptop"), &taken).unwrap(), "laptop-2");
-        let random = pair_name(Some("  ***  "), &taken).unwrap();
+    fn key_names_are_cleaned_and_unique() {
+        let taken = vec![Key::new("laptop", "a", false)];
+        assert_eq!(key_name(Some("My VPSs!"), &taken).unwrap(), "my-vpss");
+        assert_eq!(key_name(Some("Laptop"), &taken).unwrap(), "laptop-2");
+        let random = key_name(Some("  ***  "), &taken).unwrap();
         assert_eq!(random.split('-').count(), 3, "{random}");
-        assert!(pair_name(Some(&"x".repeat(80)), &taken).unwrap().len() <= 32);
+        assert!(key_name(Some(&"x".repeat(80)), &taken).unwrap().len() <= 32);
     }
 
     #[test]

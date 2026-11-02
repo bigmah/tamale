@@ -32,24 +32,55 @@ pub struct Settings {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct HubSettings {
-    /// The hub's agent socket base, e.g. `wss://tamale-hub.com`.
-    pub url: Option<String>,
+    /// The hub's agent socket base.
+    pub url: String,
     pub connect: HubConnect,
     /// End-to-end encrypt relayed channels, so the hub only moves opaque bytes. Turning it
     /// off is for debugging.
     pub e2e: bool,
-    /// The agent token. Only from `TAMALE_HUB_TOKEN`, never a settings file.
+    /// The key, as the hub's site made it. Only from `TAMALE_HUB_KEY`, never a settings
+    /// file; tamale never makes one (see `single_key.md`).
     #[serde(skip)]
-    pub token: Option<String>,
+    pub key: Option<String>,
+    /// Whether `TAMALE_HUB_TOKEN`, which keys replaced, is still set.
+    #[serde(skip)]
+    pub old_token: bool,
+}
+
+impl HubSettings {
+    /// The key's bytes, or what to tell someone who has to set one.
+    pub fn key_bytes(&self) -> Result<[u8; 32], String> {
+        let site = self.site();
+        match &self.key {
+            Some(key) => tamale_hub_protocol::decode_key(key).ok_or_else(|| {
+                format!("TAMALE_HUB_KEY isn't a key (thk_…). Make one at {site}")
+            }),
+            None if self.old_token => Err(format!(
+                "TAMALE_HUB_TOKEN has been replaced: set TAMALE_HUB_KEY instead. Make a key at {site}"
+            )),
+            None => Err(format!(
+                "Set TAMALE_HUB_KEY to use the hub. Make a key at {site}"
+            )),
+        }
+    }
+
+    /// The hub's site, from its agent socket's base.
+    pub fn site(&self) -> String {
+        self.url
+            .trim_end_matches('/')
+            .replacen("wss://", "https://", 1)
+            .replacen("ws://", "http://", 1)
+    }
 }
 
 impl Default for HubSettings {
     fn default() -> Self {
         Self {
-            url: None,
+            url: "wss://tamale-hub.com".into(),
             connect: HubConnect::default(),
             e2e: true,
-            token: None,
+            key: None,
+            old_token: false,
         }
     }
 }
@@ -146,11 +177,12 @@ impl Settings {
             self.model.thinking = Thinking::parse_setting(&value).context("TAMALE_THINKING")?;
         }
         if let Some(value) = get("TAMALE_HUB_URL").filter(|s| !s.trim().is_empty()) {
-            self.hub.url = Some(value.trim().to_string());
+            self.hub.url = value.trim().to_string();
         }
-        if let Some(value) = get("TAMALE_HUB_TOKEN").filter(|s| !s.trim().is_empty()) {
-            self.hub.token = Some(value.trim().to_string());
+        if let Some(value) = get("TAMALE_HUB_KEY").filter(|s| !s.trim().is_empty()) {
+            self.hub.key = Some(value.trim().to_string());
         }
+        self.hub.old_token = get("TAMALE_HUB_TOKEN").is_some_and(|s| !s.trim().is_empty());
         if let Some(value) = get("TAMALE_CONTEXT_WINDOW") {
             self.model.context_window = Some(
                 value

@@ -139,7 +139,7 @@ impl App {
         &self,
         frame: &mut Frame,
         url: &str,
-        remote: Option<&str>,
+        remote: Option<web::HubState<'_>>,
         tabs: usize,
     ) {
         let dim = Style::new().fg(Color::DarkGray);
@@ -177,23 +177,23 @@ impl App {
             Line::from(Span::from(url.to_string()).fg(Color::Blue).underlined()),
             Line::default(),
         ];
-        if let Some(remote) = remote {
+        if let Some(web::HubState::Live(remote)) = remote {
             lines.extend([
                 Line::styled(
-                    "and anywhere through the hub (with your view token) at",
+                    "and anywhere through the hub, on browsers holding this key, at",
                     dim,
                 ),
                 Line::from(Span::from(remote.to_string()).fg(Color::Blue).underlined()),
                 Line::default(),
             ]);
-            // Opening it still needs a view token, but this much is secret.
-            if remote.contains("#k=") {
-                lines.push(Line::styled(
-                    "Scan once per device. This holds the machine's encryption key: don't share it.",
-                    dim,
-                ));
-            }
             lines.extend(qr_lines(remote));
+            lines.push(Line::default());
+        } else if let Some(web::HubState::Connecting(problem)) = remote {
+            // The conversation is hidden behind this screen, so what's wrong shows here.
+            lines.push(match problem {
+                Some(problem) => Line::from(Span::from(problem).fg(Color::Red)),
+                None => Line::styled("Connecting to the hub…", dim),
+            });
             lines.push(Line::default());
         } else if !url.starts_with("http://127.0.0.1") {
             // Served to the network: a code to scan beats typing the token on a phone.
@@ -221,7 +221,7 @@ impl App {
                 key("c"),
                 Span::styled(" copy link   ", dim),
                 key("esc"),
-                Span::styled(" back to the terminal   ", dim),
+                Span::styled(" stop serving, back to the terminal   ", dim),
                 key("ctrl+c"),
                 Span::styled(" quit", dim),
             ]),

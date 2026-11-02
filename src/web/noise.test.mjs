@@ -3,7 +3,7 @@
 // Prints what it sealed for tamale to open.
 import assert from 'node:assert/strict';
 import { Handshake, fromBase64, supported } from './noise.js';
-import { keyFromFragment, machineId, toBase64Url, unseal } from '../../hub/static/seal.js';
+import { fromKey, isKey, machineId, newKey, qrRows, qrSvg, toBase64Url, unseal } from '../../hub/static/seal.js';
 
 const v = JSON.parse(process.argv[2]);
 const psk = fromBase64(v.psk);
@@ -12,11 +12,34 @@ const b64 = (bytes) => Buffer.from(bytes).toString('base64');
 
 assert.equal(await supported(), true);
 
-// What the hub's page does with the key.
-assert.deepEqual([...keyFromFragment(`#${v.fragment}`)], [...psk]);
-assert.equal(toBase64Url(psk), v.fragment.slice(2));
-assert.equal(keyFromFragment('#thv_abc'), null);
+// What the hub's page derives from a key: the same as tamale and the hub.
+const derived = await fromKey(v.key);
+assert.equal(derived.auth, v.auth);
+assert.deepEqual([...derived.psk], [...psk]);
+assert.equal(derived.mid, v.mid);
+assert.equal(derived.id, v.id);
+assert.equal(toBase64Url(psk), v.psk);
 assert.equal(await machineId(psk), v.mid);
+
+// What counts as a key, as tamale decides it.
+assert.equal(isKey(v.key), true);
+assert.equal(isKey(v.key.slice(0, -1)), false);
+assert.equal(isKey(`${v.key}a`), false);
+assert.equal(isKey(v.key.toUpperCase()), false);
+assert.equal(isKey(`thk_${'a'.repeat(51)}b`), false, 'spare bits set');
+assert.equal(isKey('thv_abc'), false);
+await assert.rejects(fromKey('thv_abc'));
+assert.equal(v.spelling, v.key);
+for (let i = 0; i < 50; i += 1) {
+  const key = newKey();
+  assert.equal(key.length, 56);
+  assert.equal(isKey(key), true);
+}
+
+// The code the page draws for a key's link, which tamale's side reads back.
+const rows = await qrRows(`https://tamale-hub.com/#${v.key}`);
+assert.match(qrSvg(rows), /^<svg .*<\/svg>$/);
+
 assert.deepEqual(await unseal(psk, v.sid, 'label', v.label), { host: 'h', cwd: '~/x' });
 await assert.rejects(unseal(psk, v.sid, 'status', v.label), 'bound to its kind');
 await assert.rejects(unseal(psk, 'f'.repeat(32), 'label', v.label), 'bound to its session');
@@ -49,4 +72,4 @@ await assert.rejects(channel.open(v.down[0][0]));
 
 // What tamale will open.
 const up = await Promise.all(['hello from the browser', '', v.long].map((m) => channel.seal(m)));
-console.log(JSON.stringify(up.flat()));
+console.log(JSON.stringify({ up: up.flat(), rows, fresh: newKey() }));

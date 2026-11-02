@@ -19,6 +19,15 @@ mod relay;
 mod render;
 
 pub use relay::{Label, hostname};
+
+/// How a connection to a tamale-hub is going.
+#[derive(Clone, Debug, PartialEq)]
+pub enum HubState<'a> {
+    /// Connected; the link opens this session.
+    Live(&'a str),
+    /// Not yet, and what's gone wrong so far.
+    Connecting(Option<String>),
+}
 pub use render::{artifact_title, is_artifact};
 
 use std::collections::HashMap;
@@ -446,7 +455,7 @@ impl Server {
     }
 
     /// Makes the session reachable through the tamale-hub at `url` (`wss://…`), with
-    /// agent token `token`, end-to-end encrypted if there are `keys`. Progress arrives as
+    /// a key's auth value `token`, end-to-end encrypted if there are `keys`. Progress arrives as
     /// [`WebEvent::Hub`].
     pub fn connect_hub(
         &mut self,
@@ -476,9 +485,14 @@ impl Server {
         self.relay.as_ref().map(|r| r.open_url.as_str())
     }
 
-    /// Whether the hub has accepted this session (and so `hub_url` works).
-    pub fn hub_live(&self) -> bool {
-        self.relay.as_ref().is_some_and(|r| r.live())
+    /// How the connection to the hub is going, for the terminal's screen.
+    pub fn hub_state(&self) -> Option<HubState<'_>> {
+        let relay = self.relay.as_ref()?;
+        Some(if relay.live() {
+            HubState::Live(&relay.open_url)
+        } else {
+            HubState::Connecting(relay.problem())
+        })
     }
 
     /// Sends welcomed tabs what changed since the last sync.
@@ -1145,8 +1159,8 @@ mod tests {
         let mut server = Server::start(false).await.unwrap();
         let entries = vec![Entry::User("Fix the flaky test".into())];
         server.sync(view(&entries));
-        server.connect_hub(&hub, "tha_x", Label::default(), None);
-        assert_eq!(auth.recv().await.unwrap(), "Bearer tha_x");
+        server.connect_hub(&hub, "f00d", Label::default(), None);
+        assert_eq!(auth.recv().await.unwrap(), "Bearer f00d");
         let next = async |frames: &mut mpsc::UnboundedReceiver<ToHub>| {
             tokio::time::timeout(std::time::Duration::from_secs(5), frames.recv()).await.unwrap().unwrap()
         };
@@ -1187,7 +1201,7 @@ mod tests {
                 _ => {}
             }
         }
-        assert!(server.hub_live());
+        assert!(matches!(server.hub_state(), Some(HubState::Live(_))));
         assert!(server.hub_url().unwrap().ends_with(&format!("/open/{}", relay::sid())));
         assert!(server.disconnect_hub());
         assert_eq!(server.remote_tabs(), 0);
@@ -1252,11 +1266,12 @@ mod tests {
         let keys = e2e::Keys::from_psk(psk);
         server.connect_hub(
             &hub,
-            "tha_x",
+            "f00d",
             Label { host: "laptop".into(), cwd: LABEL.into(), model: "m".into() },
             Some(keys.clone()),
         );
-        assert!(server.hub_url().unwrap().ends_with(&format!("/open/{}#{}", relay::sid(), keys.fragment())));
+        // The link shown on the terminal has nothing secret in it.
+        assert!(server.hub_url().unwrap().ends_with(&format!("/open/{}", relay::sid())));
 
         // Everything the hub is sent, checked as it passes.
         let next = async |frames: &mut mpsc::UnboundedReceiver<String>| -> ToHub {
@@ -1403,14 +1418,16 @@ mod tests {
         assert_eq!(answer(&mut frames, 9).await.unwrap_err(), "e2e: wrong key");
     }
 
-    /// Against a real hub: `TAMALE_HUB_URL`, `TAMALE_HUB_TOKEN` and `TAMALE_HUB_VIEW` (a
-    /// view token of the same pair) set, then `cargo test real_hub -- --ignored`.
+    /// Against a real hub: `TAMALE_HUB_URL` and `TAMALE_HUB_KEY` set, then
+    /// `cargo test real_hub -- --ignored`.
     #[tokio::test]
     #[ignore]
     async fn real_hub_relays_a_browser_end_to_end() {
         use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest};
         let env = |k| std::env::var(k).unwrap_or_else(|_| panic!("{k} not set"));
-        let (hub, token, view_token) = (env("TAMALE_HUB_URL"), env("TAMALE_HUB_TOKEN"), env("TAMALE_HUB_VIEW"));
+        let hub = env("TAMALE_HUB_URL");
+        let key = tamale_hub_protocol::decode_key(&env("TAMALE_HUB_KEY")).expect("a key");
+        let token = tamale_hub_protocol::auth_value(&key);
         let origin = hub.replacen("wss://", "https://", 1);
         let mut server = Server::start(false).await.unwrap();
         let entries = vec![Entry::User("Remote smoke test".into())];
@@ -1430,7 +1447,7 @@ mod tests {
             r.headers()["set-cookie"].to_str().unwrap().split(';').next().unwrap().to_string()
         };
         let r = http.post(format!("{origin}/api/tokens")).header("origin", &origin)
-            .json(&json!({ "add": view_token })).send().await.unwrap();
+            .json(&json!({ "add": token })).send().await.unwrap();
         assert_eq!(r.status(), 200);
         let th = cookie_of(&r);
         assert!(th.starts_with("__Host-th="));

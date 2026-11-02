@@ -332,18 +332,55 @@ fn web_tab_click_ctrl_o_or_down_left_enter_open_the_web_ui() {
         app.take_web_request(),
         Some(WebRequest::Open { lan: false })
     ));
-    // Pairing shows the code on the same screen connecting does.
-    for command in ["/web remote", "/web remote on", "/web remote pair"] {
+    for command in ["/web remote", "/web remote on"] {
         app.command(command);
         assert!(matches!(
             app.take_web_request(),
             Some(WebRequest::Remote { on: true })
         ));
     }
-    app.command("/web remote rekey");
-    assert!(matches!(app.take_web_request(), Some(WebRequest::Rekey)));
-    app.command("/web remote nonsense");
-    assert!(app.take_web_request().is_none());
+    // Keys come from the hub's site, so these went with the pairing key.
+    for command in ["/web remote nonsense", "/web remote pair", "/web remote rekey"] {
+        app.command(command);
+        assert!(app.take_web_request().is_none(), "{command}");
+    }
+}
+
+#[test]
+fn the_web_session_screen_shows_what_became_of_the_hub() {
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (app, _rx) = App::new_with_channel(
+        client,
+        test_settings("claude-sonnet-4-6"),
+        Workspace::current().unwrap(),
+    );
+    let screen = |remote| {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 60)).unwrap();
+        terminal
+            .draw(|f| app.draw_web_session(f, "http://127.0.0.1:1/?t=x", remote, 0))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..60)
+            .map(|y| {
+                (0..100)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    use crate::web::HubState;
+    let refused = screen(Some(HubState::Connecting(Some(
+        "The hub refused this session".into(),
+    ))));
+    assert!(refused.contains("The hub refused this session"), "{refused}");
+    assert!(!refused.contains("anywhere through the hub"));
+    assert!(screen(Some(HubState::Connecting(None))).contains("Connecting to the hub"));
+    let live = screen(Some(HubState::Live("https://hub.example/open/ab")));
+    assert!(live.contains("https://hub.example/open/ab"), "{live}");
+    assert!(live.contains("stop serving"), "esc says what it does");
+    assert!(!screen(None).contains("hub"));
 }
 
 #[test]

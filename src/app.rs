@@ -79,8 +79,6 @@ pub enum WebRequest {
     Open { lan: bool },
     /// Connect to (or with `on: false` disconnect from) the `[hub]` tamale-hub.
     Remote { on: bool },
-    /// Replace this machine's pairing key.
-    Rekey,
     Close,
 }
 

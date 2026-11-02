@@ -1,6 +1,6 @@
 //! tamale-hub: a self-hosted relay that makes tamale sessions reachable from a phone or
-//! another computer. tamales connect out to it with an agent token; browsers holding the
-//! matching view token list and drive them. See tunnel_plan.md in the tamale repo.
+//! another computer. tamales connect out to it with a key; browsers holding the same key
+//! list and drive them. See single_key.md and tunnel_plan.md in the tamale repo.
 
 mod serve;
 mod state;
@@ -10,21 +10,20 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 
-use crate::state::{Pair, Store};
+use crate::state::{Key, Store};
 
 const USAGE: &str = "\
 Usage:
   tamale-hub serve --public-url https://tamale-hub.com [--listen 127.0.0.1:8787] [--data-dir DIR]
-                   [--signup open|closed] [--max-pairs N] [--insecure]
-  tamale-hub token new <name> [--public-url URL]   make a token pair; prints both halves once
-  tamale-hub token list
-  tamale-hub token revoke <name>                   drop the pair and every socket using it
-  tamale-hub token rotate <name> --agent|--view [--public-url URL]
+                   [--signup open|closed] [--max-keys N] [--insecure]
+  tamale-hub key new <name> [--public-url URL]   make a key; prints it once
+  tamale-hub key list
+  tamale-hub key revoke <name>                   drop the key and every socket using it
 
 --data-dir defaults to $TAMALE_HUB_DATA, else ~/.local/share/tamale-hub.
---signup open lets anyone make a token pair on the hub's page (default closed: only the
-CLI makes them); --max-pairs (default 500) caps how many the hub holds.
---public-url defaults to $TAMALE_HUB_PUBLIC_URL for the token commands' links.";
+--signup open lets anyone make a key on the hub's page (default closed: only this CLI
+makes them); --max-keys (default 500) caps how many the hub holds.
+--public-url defaults to $TAMALE_HUB_PUBLIC_URL for the key commands' links.";
 
 fn main() {
     if let Err(e) = run(std::env::args().skip(1).collect()) {
@@ -40,9 +39,7 @@ struct Args {
     data_dir: Option<PathBuf>,
     insecure: bool,
     signup: bool,
-    max_pairs: usize,
-    agent: bool,
-    view: bool,
+    max_keys: usize,
 }
 
 fn parse(args: Vec<String>) -> Result<Args> {
@@ -53,9 +50,7 @@ fn parse(args: Vec<String>) -> Result<Args> {
         data_dir: None,
         insecure: false,
         signup: false,
-        max_pairs: 500,
-        agent: false,
-        view: false,
+        max_keys: 500,
     };
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
@@ -72,13 +67,11 @@ fn parse(args: Vec<String>) -> Result<Args> {
                     other => bail!("--signup is open or closed, not {other}"),
                 }
             }
-            "--max-pairs" => {
-                out.max_pairs = value("--max-pairs")?
+            "--max-keys" => {
+                out.max_keys = value("--max-keys")?
                     .parse()
-                    .context("--max-pairs must be a number")?
+                    .context("--max-keys must be a number")?
             }
-            "--agent" => out.agent = true,
-            "--view" => out.view = true,
             "-h" | "--help" => {
                 println!("{USAGE}");
                 std::process::exit(0);
@@ -115,106 +108,72 @@ fn run(args: Vec<String>) -> Result<()> {
                     insecure: args.insecure,
                     signup: serve::Signup {
                         open: args.signup,
-                        max_pairs: args.max_pairs,
+                        max_keys: args.max_keys,
                     },
                 },
                 store,
             ))
         }
-        ["token", "new", name] => {
+        ["key", "new", name] => {
             let store = Store::open(args.data_dir)?;
-            let agent = state::new_token("tha_")?;
-            let view = state::new_token("thv_")?;
+            let key = state::new_key()?;
+            let bytes = tamale_hub_protocol::decode_key(&key).context("a key we just made")?;
+            let auth = tamale_hub_protocol::auth_value(&bytes);
             store.edit(|s| {
                 if s.by_name(name).is_some() {
-                    bail!("a pair named {name} already exists (rotate or revoke it)");
+                    bail!("a key named {name} already exists (revoke it first)");
                 }
-                s.pairs.push(Pair::new(name, &agent, &view, false));
+                s.keys.push(Key::new(name, &auth, false));
                 Ok(())
             })?;
-            println!("Made token pair {name}. Neither half is shown again.\n");
-            print_agent(&agent, public_url.as_deref());
-            print_view(&view, public_url.as_deref());
+            println!("Made key {name}. It isn't shown again.\n");
+            print_key(&key, public_url.as_deref());
             Ok(())
         }
-        ["token", "list"] => {
+        ["key", "list"] => {
             let state = Store::open(args.data_dir)?.load()?;
-            if state.pairs.is_empty() {
-                println!("No token pairs. Make one with: tamale-hub token new <name>");
+            if state.keys.is_empty() {
+                println!("No keys. Make one with: tamale-hub key new <name>");
             }
-            for pair in &state.pairs {
-                let used = pair.last_used.map_or("never used".to_string(), |t| {
+            for key in &state.keys {
+                let used = key.last_used.map_or("never used".to_string(), |t| {
                     format!("last used {}", ago(t))
                 });
-                println!("{:<20} made {}, {used}", pair.name, ago(pair.created));
+                println!("{:<20} made {}, {used}", key.name, ago(key.created));
             }
             Ok(())
         }
-        ["token", "revoke", name] => {
+        ["key", "revoke", name] => {
             Store::open(args.data_dir)?.edit(|s| {
-                let before = s.pairs.len();
-                s.pairs.retain(|p| p.name != *name);
-                if s.pairs.len() == before {
-                    bail!("no pair named {name}");
+                let before = s.keys.len();
+                s.keys.retain(|k| k.name != *name);
+                if s.keys.len() == before {
+                    bail!("no key named {name}");
                 }
                 Ok(())
             })?;
             println!("Revoked {name}. A running hub drops its sessions and tabs within seconds.");
             Ok(())
         }
-        ["token", "rotate", name] => {
-            if args.agent == args.view {
-                bail!("rotate needs exactly one of --agent or --view");
-            }
-            let token = state::new_token(if args.agent { "tha_" } else { "thv_" })?;
-            Store::open(args.data_dir)?.edit(|s| {
-                let pair = s
-                    .pairs
-                    .iter_mut()
-                    .find(|p| p.name == *name)
-                    .with_context(|| format!("no pair named {name}"))?;
-                if args.agent {
-                    pair.agent_hash = state::hash(&token);
-                } else {
-                    pair.view_hash = state::hash(&token);
-                }
-                Ok(())
-            })?;
-            if args.agent {
-                println!("New agent token for {name}; the old one stops working within seconds.\n");
-                print_agent(&token, public_url.as_deref());
-            } else {
-                println!("New view token for {name}; browsers holding the old one lose access.\n");
-                print_view(&token, public_url.as_deref());
-            }
-            Ok(())
-        }
         _ => bail!("{USAGE}"),
     }
 }
 
-fn agent_url(public_url: Option<&str>) -> String {
+fn print_key(key: &str, public_url: Option<&str>) {
     let base = public_url
         .unwrap_or("https://tamale-hub.com")
         .trim_end_matches('/');
-    base.replacen("https://", "wss://", 1)
-        .replacen("http://", "ws://", 1)
-}
-
-fn print_agent(token: &str, public_url: Option<&str>) {
-    println!("Agent token, for every machine that runs tamale (it can't read or drive anything):");
-    println!("  export TAMALE_HUB_URL={}", agent_url(public_url));
-    println!("  export TAMALE_HUB_TOKEN={token}");
-    println!("Then /web remote in tamale, or [hub] connect = \"auto\" to connect on startup.\n");
-}
-
-fn print_view(token: &str, public_url: Option<&str>) {
-    let base = public_url
-        .unwrap_or("https://tamale-hub.com")
-        .trim_end_matches('/');
-    let link = format!("{base}/#{token}");
-    println!("View link, for your phone and browsers. It controls every session of this pair:");
-    println!("treat it like an SSH key, and scan it rather than sending it.\n");
+    println!("It gives access to every machine that uses it: treat it like an SSH key.\n");
+    println!("On each machine that runs tamale, then /web remote in tamale:");
+    if base != "https://tamale-hub.com" {
+        let agent = base
+            .replacen("https://", "wss://", 1)
+            .replacen("http://", "ws://", 1);
+        println!("  export TAMALE_HUB_URL={agent}");
+    }
+    println!("  export TAMALE_HUB_KEY={key}\n");
+    let link = format!("{base}/#{key}");
+    println!("On your phone and browsers, scan this rather than sending it:\n");
     println!("  {link}\n");
     print_qr(&link);
 }

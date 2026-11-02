@@ -1,19 +1,20 @@
 //! End-to-end encryption between tamale and a browser, across a tamale-hub that only
 //! moves opaque bytes. The design and threat model are in `e2e.md`.
 //!
-//! A machine has one pairing key (PSK), which reaches browsers through a URL fragment and
-//! never reaches the hub. From it come the machine id the hub groups sessions by and the
-//! key that seals the session list's labels. Each browser channel then runs a Noise
-//! NNpsk0 handshake for keys of its own; `src/web/noise.js` is the other end.
+//! The handshake's secret (PSK) comes from the key every machine and browser share (see
+//! `single_key.md`), and never reaches the hub. From it come the id browsers find their key
+//! by and the key that seals the session list's labels. Each browser channel then runs a
+//! Noise NNpsk0 handshake for keys of its own; `src/web/noise.js` is the other end.
 
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use aes_gcm::aead::{Aead, Payload};
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
-use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+use base64::engine::general_purpose::STANDARD;
+#[cfg(test)]
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use hkdf::Hkdf;
 use sha2::Sha256;
 use snow::{Builder, TransportState};
@@ -29,25 +30,32 @@ const MORE: u8 = 0;
 const LAST: u8 = 1;
 const MAX_PIECE: usize = MAX_NOISE - TAG - 1;
 
-/// The file a machine's pairing key is kept in.
-pub fn key_path() -> Option<PathBuf> {
+/// Deletes the pairing key tamale kept per machine before keys came from the hub's site.
+/// Nothing uses it now, and it's still a secret some browsers trust until the hub upgrades.
+pub fn remove_old_pairing_key() {
     let data = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
-    Some(data.join("tamale").join("hub-pairing.key"))
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
+    if let Some(data) = data {
+        let _ = std::fs::remove_file(data.join("tamale").join("hub-pairing.key"));
+    }
 }
 
-/// A machine's pairing key and what's derived from it.
+/// The handshake's secret and what's derived from it.
 #[derive(Clone)]
 pub struct Keys {
     psk: [u8; 32],
     meta: [u8; 32],
-    /// The machine id: tells the hub and browsers which key a session uses, and reveals
-    /// nothing about it.
+    /// Tells the hub and browsers which key a session uses, and reveals nothing about it.
     pub mid: String,
 }
 
 impl Keys {
+    /// What the key `key` means for the encrypted channel.
+    pub fn from_key(key: &[u8; 32]) -> Self {
+        Self::from_psk(tamale_hub_protocol::e2e_secret(key))
+    }
+
     pub fn from_psk(psk: [u8; 32]) -> Self {
         let kdf = Hkdf::<Sha256>::new(None, &psk);
         let mut mid = [0u8; 16];
@@ -62,67 +70,6 @@ impl Keys {
             meta,
             mid: mid.iter().map(|b| format!("{b:02x}")).collect(),
         }
-    }
-
-    /// The key in `path`, made first if there isn't one.
-    pub fn load_or_create(path: &Path) -> Result<Self> {
-        match std::fs::read_to_string(path) {
-            Ok(text) => Self::parse(&text).with_context(|| format!("reading {}", path.display())),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::create(path, false),
-            Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
-        }
-    }
-
-    /// Replaces the key in `path`, so every browser has to pair again.
-    pub fn rekey(path: &Path) -> Result<Self> {
-        Self::create(path, true)
-    }
-
-    fn parse(text: &str) -> Result<Self> {
-        let bytes = URL_SAFE_NO_PAD
-            .decode(text.trim())
-            .context("not base64url")?;
-        let psk = <[u8; 32]>::try_from(bytes).map_err(|_| anyhow!("not a 32-byte key"))?;
-        Ok(Self::from_psk(psk))
-    }
-
-    /// Writes a new key to a private temporary file and moves it into place, so another
-    /// tamale starting now finds either no key or a whole one.
-    fn create(path: &Path, replace: bool) -> Result<Self> {
-        let mut psk = [0u8; 32];
-        getrandom::fill(&mut psk).map_err(|e| anyhow!("no randomness: {e}"))?;
-        let dir = path.parent().context("the key file has no directory")?;
-        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-        let temp = dir.join(format!("hub-pairing.key.{}", std::process::id()));
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        let result = options
-            .open(&temp)
-            .and_then(|mut file| file.write_all(URL_SAFE_NO_PAD.encode(psk).as_bytes()))
-            .and_then(|()| {
-                if replace {
-                    std::fs::rename(&temp, path)
-                } else {
-                    std::fs::hard_link(&temp, path)
-                }
-            });
-        let _ = std::fs::remove_file(&temp);
-        match result {
-            Ok(()) => Ok(Self::from_psk(psk)),
-            // Another tamale got there first.
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && !replace => {
-                let text = std::fs::read_to_string(path)?;
-                Self::parse(&text).with_context(|| format!("reading {}", path.display()))
-            }
-            Err(e) => Err(e).with_context(|| format!("writing {}", path.display())),
-        }
-    }
-
-    /// What goes after the `#` of a link that pairs a browser.
-    pub fn fragment(&self) -> String {
-        format!("k={}", URL_SAFE_NO_PAD.encode(self.psk))
     }
 
     /// Seals a label for the session list: AES-256-GCM with a random nonce, bound to the
@@ -379,39 +326,6 @@ mod tests {
     }
 
     #[test]
-    fn the_key_file_is_private_stable_and_replaceable() {
-        let dir =
-            std::env::temp_dir().join(format!("tamale-e2e-test-{}", crate::session::new_id()));
-        let path = dir.join("nested").join("hub-pairing.key");
-        let made = Keys::load_or_create(&path).unwrap();
-        let again = Keys::load_or_create(&path).unwrap();
-        assert_eq!(made.mid, again.mid);
-        assert_eq!(made.mid.len(), 32);
-        assert_eq!(made.psk, again.psk);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-            assert_eq!(mode & 0o777, 0o600);
-        }
-        assert_eq!(
-            std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
-            1,
-            "no temp left"
-        );
-        let new = Keys::rekey(&path).unwrap();
-        assert_ne!(new.mid, made.mid);
-        assert_eq!(Keys::load_or_create(&path).unwrap().mid, new.mid);
-
-        std::fs::write(&path, "short").unwrap();
-        assert!(
-            Keys::load_or_create(&path).is_err(),
-            "a damaged key is not replaced quietly"
-        );
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
     fn sealed_labels_differ_each_time_and_hide_the_text() {
         let keys = Keys::from_psk([7u8; 32]);
         let a = keys.seal(SID, "label", "secret-cwd").unwrap();
@@ -420,11 +334,19 @@ mod tests {
         assert!(!String::from_utf8_lossy(&STANDARD.decode(&a).unwrap()).contains("secret-cwd"));
     }
 
+    fn hex_sha256(text: &str) -> String {
+        use sha2::Digest;
+        Sha256::digest(text.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+
     /// `noise.js` and the hub page's `seal.js` under Node against this module, byte for
     /// byte. Skipped without Node 22+, unless `CI` is set.
     #[test]
     fn the_browser_code_agrees_with_this_code() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let version = std::process::Command::new("node").arg("--version").output();
         let major = version
             .ok()
@@ -446,8 +368,9 @@ mod tests {
             return;
         }
 
-        let psk = [0x42u8; 32];
-        let keys = Keys::from_psk(psk);
+        let key = [0x37u8; 32];
+        let psk = tamale_hub_protocol::e2e_secret(&key);
+        let keys = Keys::from_key(&key);
         let ephemeral = [0x11u8; 32];
         let mut browser = Initiator::new(&psk, SID, NONCE, Some(&ephemeral));
         let hs1 = browser.hs1(br#"{"v":1}"#);
@@ -458,8 +381,11 @@ mod tests {
             .map(|m| tamale.seal(m).unwrap())
             .collect();
         let vectors = serde_json::json!({
+            "key": tamale_hub_protocol::encode_key(&key),
+            "auth": tamale_hub_protocol::auth_value(&key),
+            "spelling": tamale_hub_protocol::encode_key(&tamale_hub_protocol::decode_key(&tamale_hub_protocol::encode_key(&key)).unwrap()),
+            "id": hex_sha256(&tamale_hub_protocol::auth_value(&key))[..16],
             "psk": URL_SAFE_NO_PAD.encode(psk),
-            "fragment": keys.fragment(),
             "mid": keys.mid,
             "sid": SID,
             "nonce": STANDARD.encode(NONCE),
@@ -481,8 +407,37 @@ mod tests {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+        let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+        // A key the page made is one tamale takes.
+        assert!(tamale_hub_protocol::decode_key(answer["fresh"].as_str().unwrap()).is_some());
+
+        // The code the page draws scans to the exact link, at a real key's length.
+        let rows: Vec<Vec<bool>> = serde_json::from_value(answer["rows"].clone()).unwrap();
+        let mut image = rqrr::PreparedImage::prepare_from_greyscale(
+            (rows.len() + 8) * 4,
+            (rows.len() + 8) * 4,
+            |x, y| {
+                let dark = rows
+                    .get((y / 4).wrapping_sub(4))
+                    .and_then(|row| row.get((x / 4).wrapping_sub(4)))
+                    .is_some_and(|d| *d);
+                if dark { 0 } else { 255 }
+            },
+        );
+        let grids = image.detect_grids();
+        assert_eq!(grids.len(), 1);
+        let (_, text) = grids[0].decode().unwrap();
+        assert_eq!(
+            text,
+            format!(
+                "https://tamale-hub.com/#{}",
+                tamale_hub_protocol::encode_key(&key)
+            )
+        );
+
         // What noise.js sealed, opened here.
-        let up: Vec<String> = serde_json::from_slice(&output.stdout).unwrap();
+        let up: Vec<String> = serde_json::from_value(answer["up"].clone()).unwrap();
         let mut opened = Vec::new();
         for sealed in &up {
             if let Some(message) = tamale.open(sealed, BIG).unwrap() {

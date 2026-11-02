@@ -2,7 +2,9 @@
 //! JSON text frames, tagged by `t`. A browser's `/web` messages ride inside `msg` frames
 //! unchanged, so this protocol doesn't change when the web UI does.
 
+use hkdf::Hkdf;
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 
 /// Bumped on incompatible changes to these frames.
 pub const PROTO: u32 = 2;
@@ -24,15 +26,15 @@ pub const MAX_BROWSER_MESSAGE: usize = 4 << 20;
 /// Close codes the hub ends an agent socket with. tamale stops retrying on the
 /// permanent ones (see [`is_permanent`]).
 pub mod close {
-    /// The agent token is missing, unknown or revoked.
+    /// The key is missing, unknown, replaced or deleted.
     pub const BAD_TOKEN: u16 = 4401;
     /// The `hello` was missing, malformed or from an unsupported protocol.
     pub const BAD_HELLO: u16 = 4400;
-    /// The sid is connected under another token pair.
+    /// The sid is connected under another key.
     pub const SID_TAKEN: u16 = 4409;
-    /// The pair has as many sessions as the hub allows.
+    /// The key has as many sessions as the hub allows.
     pub const TOO_MANY: u16 = 4429;
-    /// Another connection with the same sid and pair took over.
+    /// Another connection with the same sid and key took over.
     pub const REPLACED: u16 = 4410;
 }
 
@@ -42,6 +44,82 @@ pub fn is_permanent(code: u16) -> bool {
         code,
         close::BAD_TOKEN | close::BAD_HELLO | close::SID_TAKEN | close::REPLACED
     )
+}
+
+/// What starts a key: what machines and browsers share, and the hub never sees.
+pub const KEY_PREFIX: &str = "thk_";
+
+const BASE32: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
+/// 32 bytes in unpadded base32.
+const KEY_CHARS: usize = 52;
+
+/// `bytes` as a key: `thk_` and lowercase base32.
+pub fn encode_key(bytes: &[u8; 32]) -> String {
+    let mut out = String::with_capacity(KEY_PREFIX.len() + KEY_CHARS);
+    out.push_str(KEY_PREFIX);
+    let (mut buffer, mut bits) = (0u32, 0);
+    for &byte in bytes {
+        buffer = (buffer << 8) | u32::from(byte);
+        bits += 8;
+        while bits >= 5 {
+            bits -= 5;
+            out.push(BASE32[((buffer >> bits) & 31) as usize] as char);
+        }
+    }
+    out.push(BASE32[((buffer << (5 - bits)) & 31) as usize] as char);
+    out
+}
+
+/// The bytes of a key, if `text` is one.
+pub fn decode_key(text: &str) -> Option<[u8; 32]> {
+    let body = text.strip_prefix(KEY_PREFIX)?;
+    if body.len() != KEY_CHARS {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    let (mut buffer, mut bits, mut at) = (0u32, 0, 0);
+    for c in body.bytes() {
+        let value = BASE32.iter().position(|&b| b == c)? as u32;
+        buffer = (buffer << 5) | value;
+        bits += 5;
+        if bits >= 8 {
+            bits -= 8;
+            *out.get_mut(at)? = (buffer >> bits) as u8;
+            at += 1;
+        }
+    }
+    // The last character's spare bits are zero, so each key has one spelling.
+    (at == 32 && buffer & ((1 << bits) - 1) == 0).then_some(out)
+}
+
+fn derive(key: &[u8; 32], info: &[u8]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    Hkdf::<Sha256>::new(None, key)
+        .expand(info, &mut out)
+        .expect("32 bytes is far below HKDF's limit");
+    out
+}
+
+/// What proves access to the hub, in lowercase hex; the hub keeps only its SHA-256. It
+/// can't be turned back into the key or the handshake's secret.
+pub fn auth_value(key: &[u8; 32]) -> String {
+    derive(key, b"tamale-hub auth")
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// The secret of the end-to-end handshake (see `e2e.md`), which never reaches the hub.
+pub fn e2e_secret(key: &[u8; 32]) -> [u8; 32] {
+    derive(key, b"tamale-hub e2e")
+}
+
+/// Whether `auth` is well formed: 64 lowercase hex characters.
+pub fn valid_auth(auth: &str) -> bool {
+    auth.len() == 64
+        && auth
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// Whether `sid` is well formed: 32 lowercase hex characters, a valid DNS label.
@@ -86,7 +164,8 @@ pub enum ToHub {
         /// Empty when `e2e`: the hub gets `sealed` instead.
         #[serde(default)]
         label: Label,
-        /// Which machine's pairing key this session uses, for browsers to find theirs.
+        /// Which key this session uses (derived, and revealing nothing about it), for
+        /// browsers to find theirs.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mid: Option<String>,
         /// Whether relayed channels are end-to-end encrypted (see `e2e.md`).
@@ -152,6 +231,42 @@ pub enum ToAgent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keys_round_trip_and_have_one_spelling() {
+        let bytes: [u8; 32] = std::array::from_fn(|i| (i * 7 + 1) as u8);
+        let key = encode_key(&bytes);
+        assert_eq!(key.len(), 56);
+        assert!(key.starts_with("thk_"));
+        assert_eq!(decode_key(&key), Some(bytes));
+        assert_eq!(decode_key(&encode_key(&[0xff; 32])), Some([0xff; 32]));
+
+        assert_eq!(decode_key(&key[4..]), None, "no prefix");
+        assert_eq!(decode_key(&key[..55]), None, "too short");
+        assert_eq!(decode_key(&format!("{key}a")), None, "too long");
+        assert_eq!(decode_key(&key.to_uppercase()), None);
+        assert_eq!(decode_key(&format!("{}1", &key[..55])), None, "not base32");
+        // Only the top bit of the last character counts; the others must be zero.
+        assert_eq!(decode_key(&format!("{}b", &encode_key(&[0; 32])[..55])), None);
+    }
+
+    #[test]
+    fn what_a_key_derives_is_separate_and_stable() {
+        let key = [0x42u8; 32];
+        let auth = auth_value(&key);
+        assert!(valid_auth(&auth));
+        assert_eq!(auth, auth_value(&key));
+        assert_ne!(auth, auth_value(&[0x43; 32]));
+        let secret = e2e_secret(&key);
+        assert_ne!(secret, key);
+        assert_ne!(
+            auth,
+            secret.iter().map(|b| format!("{b:02x}")).collect::<String>()
+        );
+        assert!(!valid_auth("ABC"));
+        assert!(!valid_auth(&"A".repeat(64)));
+        assert!(!valid_auth(&"a".repeat(63)));
+    }
 
     #[test]
     fn frames_round_trip_with_short_tags() {

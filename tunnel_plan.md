@@ -1,5 +1,9 @@
 # Plan: tamale-hub tunnels (remote access to tamale sessions)
 
+> **Superseded in part by [`single_key.md`](single_key.md).** Token pairs (the agent and view
+> tokens) described here were replaced by one key, made on the hub's site. What's below is kept
+> for the relay's design and the infrastructure; read "agent token" and "view token" as the key.
+
 Supersedes the routing and page-serving design in `plan.md`. Sessions get **a subdomain
 each**, ngrok-style, so the hub is a plain pipe and every session is isolated by the
 browser exactly as it is on localhost.

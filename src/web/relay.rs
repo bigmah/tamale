@@ -1,6 +1,6 @@
 //! `/web remote`: makes this session reachable through a tamale-hub.
 //!
-//! tamale connects out to `wss://<hub>/agent` with an agent token and says `hello` with
+//! tamale connects out to `wss://<hub>/agent` with a key's auth value and says `hello` with
 //! this process's session id (sid). The hub serves the session at
 //! `https://<sid>.<hub>/`, and relays to it: page GETs (answered by [`super::asset`]) and
 //! each browser tab's socket as a channel `c`, whose messages go to the same
@@ -8,7 +8,7 @@
 //! other, so it gets the same `welcome` and updates. The frames are in
 //! `tamale-hub-protocol`.
 //!
-//! With a pairing key ([`e2e::Keys`]), a channel carries nothing but a Noise handshake and
+//! With the key's handshake secret ([`e2e::Keys`]), a channel carries nothing but a Noise handshake and
 //! then sealed messages, so the hub only moves opaque bytes: a tab exists only once its
 //! handshake succeeds, and anything unsealed closes the channel. See `e2e.md`.
 //!
@@ -58,18 +58,22 @@ pub fn sid() -> &'static str {
     })
 }
 
-/// The link that opens session `sid` through the hub whose agent socket is at `hub`
-/// (`wss://tamale-hub.com` → `https://tamale-hub.com/open/<sid>`).
-pub fn open_url(hub: &str, sid: &str) -> String {
+/// The site of the hub whose agent socket is at `hub`
+/// (`wss://tamale-hub.com` → `https://tamale-hub.com`).
+fn site_url(hub: &str) -> String {
     let base = hub.trim_end_matches('/');
-    let base = if let Some(rest) = base.strip_prefix("wss://") {
+    if let Some(rest) = base.strip_prefix("wss://") {
         format!("https://{rest}")
     } else if let Some(rest) = base.strip_prefix("ws://") {
         format!("http://{rest}")
     } else {
         base.to_string()
-    };
-    format!("{base}/open/{sid}")
+    }
+}
+
+/// The link that opens session `sid` through the hub whose agent socket is at `hub`.
+pub fn open_url(hub: &str, sid: &str) -> String {
+    format!("{}/open/{sid}", site_url(hub))
 }
 
 /// This machine's name, for the session list.
@@ -132,7 +136,7 @@ impl Throttle {
 
 /// A browser's channel.
 enum Channel {
-    /// In plaintext (no pairing key): a tab from the start.
+    /// In plaintext (`[hub] e2e = false`): a tab from the start.
     Plain(u64),
     /// Encrypted, and waiting for a handshake that answers this nonce.
     Waiting([u8; 16]),
@@ -150,11 +154,13 @@ impl Channel {
 }
 
 pub struct Relay {
-    /// The link that opens this session, with the pairing key in its fragment if any.
+    /// The link that opens this session, for a browser that holds the key. Nothing secret.
     pub open_url: String,
     shared: Arc<Shared>,
     status: watch::Sender<HubStatus>,
     live: Arc<AtomicBool>,
+    /// What's wrong with the connection right now, for the terminal's screen.
+    problem: Arc<Mutex<Option<String>>>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -168,30 +174,28 @@ impl Relay {
     ) -> Self {
         let (status, status_rx) = watch::channel(HubStatus::default());
         let live = Arc::new(AtomicBool::new(false));
-        // What's shown in the conversation leaves the key out: entries are saved with the
-        // session, and sent to every tab.
-        let plain_url = open_url(url, sid());
-        let open_url = match &keys {
-            Some(keys) => format!("{plain_url}#{}", keys.fragment()),
-            None => plain_url.clone(),
-        };
+        let problem = Arc::new(Mutex::new(None));
+        let open_url = open_url(url, sid());
         let task = tokio::spawn(run(
             shared.clone(),
             Target {
                 url: format!("{}/agent", url.trim_end_matches('/')),
                 token: token.to_string(),
                 label,
-                open_url: plain_url,
+                open_url: open_url.clone(),
+                site: site_url(url),
                 keys,
             },
             status_rx,
             live.clone(),
+            problem.clone(),
         ));
         Self {
             open_url,
             shared,
             status,
             live,
+            problem,
             task,
         }
     }
@@ -209,6 +213,10 @@ impl Relay {
 
     pub fn live(&self) -> bool {
         self.live.load(Ordering::Relaxed)
+    }
+
+    pub fn problem(&self) -> Option<String> {
+        self.problem.lock().unwrap().clone()
     }
 }
 
@@ -238,6 +246,8 @@ struct Target {
     token: String,
     label: Label,
     open_url: String,
+    /// The hub's site, for when a key needs replacing.
+    site: String,
     keys: Option<e2e::Keys>,
 }
 
@@ -254,8 +264,10 @@ async fn run(
     target: Target,
     mut status: watch::Receiver<HubStatus>,
     live: Arc<AtomicBool>,
+    problem: Arc<Mutex<Option<String>>>,
 ) {
-    let report = |result| {
+    let report = |result: Result<String, String>| {
+        *problem.lock().unwrap() = result.as_ref().err().cloned();
         let _ = shared.events.send(WebEvent::Hub(result));
     };
     let mut delay = Duration::from_secs(1);
@@ -271,6 +283,7 @@ async fn run(
             &live,
             &mut reported,
             &mut throttle,
+            &problem,
         )
         .await;
         live.store(false, Ordering::Relaxed);
@@ -311,6 +324,7 @@ async fn connection(
     live: &AtomicBool,
     reported: &mut Option<String>,
     throttle: &mut Throttle,
+    problem: &Mutex<Option<String>>,
 ) -> Ended {
     let mut request = match target.url.as_str().into_client_request() {
         Ok(request) => request,
@@ -329,7 +343,11 @@ async fn connection(
         Ok(Err(tungstenite::Error::Http(response))) => {
             let code = response.status();
             return if code == 401 || code == 403 {
-                Ended::Rejected("the agent token was not accepted (check TAMALE_HUB_TOKEN)".into())
+                Ended::Rejected(format!(
+                    "it doesn't know this key: it may have been replaced or deleted. Check \
+TAMALE_HUB_KEY, or make a new key at {}",
+                    target.site
+                ))
             } else {
                 Ended::Retry(format!("the hub answered {code}"))
             };
@@ -355,6 +373,7 @@ async fn connection(
     }
     live.store(true, Ordering::Relaxed);
     *reported = None;
+    *problem.lock().unwrap() = None;
     let _ = shared.events.send(WebEvent::Hub(Ok(format!(
         "Reachable through the hub at {}",
         target.open_url
@@ -434,7 +453,7 @@ fn text(frame: &impl serde::Serialize) -> Message {
     Message::Text(serde_json::to_string(frame).unwrap_or_default().into())
 }
 
-/// The first frame: with a pairing key, the label goes sealed.
+/// The first frame: with a handshake secret, the label goes sealed.
 fn hello(target: &Target) -> anyhow::Result<ToHub> {
     let (label, mid, sealed) = match &target.keys {
         None => (target.label.clone(), None, None),
@@ -453,7 +472,7 @@ fn hello(target: &Target) -> anyhow::Result<ToHub> {
     })
 }
 
-/// A status frame, with the title and model sealed if there's a pairing key. `None` if
+/// A status frame, with the title and model sealed if there's a handshake secret. `None` if
 /// they can't be, rather than send them in the clear.
 fn status_frame(keys: Option<&e2e::Keys>, s: HubStatus) -> Option<ToHub> {
     let Some(keys) = keys else {

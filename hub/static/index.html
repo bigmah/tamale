@@ -18,91 +18,76 @@
   <header>
     <a class="brand" href="/"><span class="mark">🫔</span><span class="name">tamale-hub</span></a>
     <span class="spacer"></span>
-    <span class="pairs" id="pairs"></span>
+    <span class="key-names" id="key-names"></span>
   </header>
 
-  <!-- /open/<sid>: trading the view token for a ticket into one session. -->
+  <!-- /open/<sid>: trading the browser's key for a ticket into one session. -->
   <section id="opening" hidden>
     <p class="lead" id="opening-text">Opening the session…</p>
     <p><a href="/" id="opening-back" hidden>See all sessions</a></p>
   </section>
 
-  <!-- /open/<sid> of an encrypted session whose machine this browser has no key for. -->
-  <section id="scan" hidden>
-    <p class="lead">🔒 This session is end-to-end encrypted, and this browser doesn't have its
-      machine's key yet.</p>
-    <p class="hint">In the session's terminal, run <code>/web remote pair</code> and scan the code
-      it shows with this device. Once per machine is enough.</p>
-    <p><a href="/">See all sessions</a></p>
-  </section>
-
-  <!-- For visitors without a view token. -->
+  <!-- For visitors without a key. -->
   <section id="landing" hidden>
     <h1>Your tamale sessions, from anywhere.</h1>
     <p class="intro">tamale-hub puts tamale's web UI on your phone or any browser, wherever tamale
-      runs: your laptop or a dozen throwaway servers. No port forwarding, no VPN. Each tamale
-      connects out to the hub; your browser holds the key that lets you in.</p>
+      runs: your laptop or a machine in the garage. No port forwarding, no VPN. Each tamale connects
+      out to the hub, and your browser holds the key that lets you in.</p>
     <ol class="steps">
-      <li><strong>Make a token pair</strong> below. It has two halves: an <em>agent token</em> for
-        the machines that run tamale, and a <em>view link</em> for your browsers.</li>
-      <li><strong>On each machine</strong>, set the agent token and run <code>/web remote</code> in
-        tamale. The agent token alone can't read or drive anything, so it's fine on a VPS.</li>
-      <li><strong>On your phone</strong>, scan the view link, then the code <code>/web remote</code>
-        shows, once per machine. That code holds the encryption key, which never reaches the hub.
-        Your sessions show up here; tap one to drive it.</li>
+      <li><strong>Make a key</strong> below.</li>
+      <li><strong>On each machine</strong>, set it where tamale runs and run
+        <code>/web remote</code> in tamale.</li>
+      <li><strong>On your phone</strong>, scan its code. Your sessions show up here; tap one to
+        drive it.</li>
     </ol>
   </section>
 
-  <!-- Shown once, right after tokens are made or rotated. -->
+  <!-- A key's setup: right after it's made or replaced, and whenever Show asks. -->
   <section id="made" class="card" hidden>
-    <h2 id="made-title">Your token pair</h2>
-    <p class="warn">These are shown once. The hub keeps only their hashes, so if you lose one,
-      rotate it below.</p>
-    <div id="made-agent">
-      <h3>1. On every machine that runs tamale</h3>
-      <p class="hint">Add these to the shell profile (or run them before starting tamale), then
-        run <code>/web remote</code> in tamale.</p>
-      <div class="secret"><pre id="made-env"></pre><button type="button" class="copy" data-copy="made-env">Copy</button></div>
-      <p class="hint">No tamale yet? <code>cargo install --git https://github.com/bigmah/tamale --locked</code></p>
-    </div>
-    <div id="made-view">
-      <h3 id="made-view-title">2. On your phone</h3>
-      <p class="hint">Scan this to open your sessions there. <strong>It controls every session of
-        this pair</strong>: treat it like an SSH key, and scan it rather than sending it. This
-        browser already holds it.</p>
-      <div class="qr"><img id="made-qr" alt="QR code of the view link" width="240" height="240"></div>
-      <div class="secret"><pre id="made-link"></pre><button type="button" class="copy" data-copy="made-link">Copy</button></div>
-    </div>
+    <h2 id="made-title">Your key</h2>
+    <p class="warn"><strong>This key gives access to every machine that uses it</strong>: treat it
+      like an SSH key. A machine you trust less, like a throwaway VPS, should get a key of its own.</p>
+    <h3>1. On each machine that runs tamale</h3>
+    <p class="hint">Add this to the shell profile (or run it before starting tamale), then run
+      <code>/web remote</code> in tamale.</p>
+    <div class="secret"><pre id="made-env"></pre><button type="button" class="copy" data-copy="made-env">Copy</button></div>
+    <p class="hint">No tamale yet? <code>cargo install --git https://github.com/bigmah/tamale --locked</code></p>
+    <h3>2. On your phone</h3>
+    <p class="hint">Scan this to open your sessions there. Scan it rather than sending it. This
+      browser already holds the key.</p>
+    <div class="qr"><img id="made-qr" alt="QR code of the key" width="240" height="240"></div>
+    <div class="secret"><pre id="made-link"></pre><button type="button" class="copy" data-copy="made-link">Copy</button></div>
     <button type="button" id="made-done">Done</button>
   </section>
 
-  <!-- For browsers holding view tokens. -->
+  <!-- For browsers holding keys. -->
   <section id="list" hidden>
     <h2>Sessions</h2>
     <ul id="sessions" class="sessions"></ul>
     <p class="empty" id="empty" hidden>No sessions connected. Run <code>/web remote</code> in tamale on
-      a machine with <code>TAMALE_HUB_URL</code> and <code>TAMALE_HUB_TOKEN</code> set.</p>
+      a machine with <code>TAMALE_HUB_KEY</code> set to one of your keys.</p>
   </section>
 
   <section id="create" hidden>
-    <h2 id="create-title">Make a token pair</h2>
+    <h2 id="create-title">Make a key</h2>
     <form id="create-form" autocomplete="off">
       <input id="label" name="label" type="text" maxlength="32" placeholder="Name (optional), e.g. laptop" spellcheck="false" autocapitalize="off">
-      <button type="submit" id="create-button">Make tokens</button>
+      <button type="submit" id="create-button">Make a key</button>
     </form>
     <p class="error" id="create-error" hidden></p>
   </section>
 
   <section id="manage" hidden>
-    <h2>Token pairs on this browser</h2>
-    <ul id="pair-list" class="pair-list"></ul>
+    <h2>Keys on this browser</h2>
+    <ul id="key-list" class="key-list"></ul>
   </section>
 
   <section id="add">
-    <h2 id="add-title">Have a view link?</h2>
-    <p class="hint" id="add-lead">Open it on this device, or paste its token (<code>thv_…</code>) here.</p>
+    <h2 id="add-title">Have a key?</h2>
+    <p class="hint">Scan its code with this device, or paste it (<code>thk_…</code>) here. It stays
+      in this browser.</p>
     <form id="add-form" autocomplete="off">
-      <input id="token" name="token" type="password" placeholder="thv_…" spellcheck="false" autocapitalize="off">
+      <input id="key" name="key" type="password" placeholder="thk_…" spellcheck="false" autocapitalize="off">
       <button type="submit" class="secondary">Add</button>
     </form>
     <p class="error" id="error" hidden></p>
@@ -110,23 +95,25 @@
 
   <section id="trust" class="note">
     <h2>How much to trust this hub</h2>
-    <p>Sessions are end-to-end encrypted between tamale and your browser, with a key that reaches
-      your phone by scanning a code and never reaches this server. Whoever runs the hub, or breaks
-      into it, can't read your prompts, code, tool output, artifacts, titles or directories, and
-      can't send commands to your machines.</p>
+    <p>Sessions are end-to-end encrypted between tamale and your browser. Your key is made in this
+      browser and never reaches this server. Whoever runs the hub, or breaks into it, can't read your
+      prompts, code, tool output, artifacts, titles or directories, and can't send commands to your
+      machines.</p>
     <p>Three limits. <strong>This server delivers the page code</strong>, so someone in control of
-      it could change that code to steal the key the next time a page loads; encryption makes an
-      attack take that active step, but doesn't rule it out. It still sees <strong>metadata</strong>:
-      which sessions exist and when, from which addresses, whether they're busy, and message sizes
-      and timing. And it can't protect a compromised laptop or phone. It's a beta: for anything
-      sensitive, run your own hub (it's one small binary behind Caddy), and keep tamale's permission
-      mode on <code>ask</code> for remote work.</p>
-    <p>Unused pairs made here are deleted after 7 days if they never connect, and after 90 days
+      it could change that code to steal a key the next time a page loads, or as one is made;
+      encryption makes an attack take that active step, but doesn't rule it out. It still sees
+      <strong>metadata</strong>: which sessions exist and when, from which addresses, whether they're
+      busy, and message sizes and timing. And it can't protect a compromised laptop or phone: <strong>a
+      machine that holds a key can reach every other machine using it</strong>, and in tamale's
+      <code>auto</code> mode run commands there without approval. Give machines you trust less a key
+      of their own. It's a beta: for anything sensitive, run your own hub (it's one small binary
+      behind Caddy), and keep tamale's permission mode on <code>ask</code> for remote work.</p>
+    <p>Unused keys made here are deleted after 7 days if they never connect, and after 90 days
       without use.</p>
   </section>
 
   <footer>
-    <button type="button" class="link" id="forget" hidden>Forget tokens on this browser</button>
+    <button type="button" class="link" id="forget" hidden>Forget keys on this browser</button>
   </footer>
 </main>
 </body>
