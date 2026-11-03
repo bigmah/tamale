@@ -6,12 +6,22 @@ API or from your Claude Code or Codex sign-in.
 
 ## Setup
 
-You need [Rust](https://rustup.rs). Then install tamale and pick where inference comes from:
+Install tamale (macOS and Linux):
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/bigmah/tamale/releases/latest/download/tamale-installer.sh | sh
+```
+
+Or build it from source with [Rust](https://rustup.rs):
 
 ```sh
 git clone https://github.com/bigmah/tamale.git && cd tamale
 cargo install --path . --locked
+```
 
+Then pick where inference comes from:
+
+```sh
 export ANTHROPIC_API_KEY=sk-ant-...  # then run: tamale
 tamale --backend claude-code         # or use your Claude Code sign-in
 tamale --backend codex               # or your Codex (ChatGPT) sign-in

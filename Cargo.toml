@@ -2,6 +2,7 @@
 name = "tamale"
 version = "0.1.0"
 edition = "2024"
+repository = "https://github.com/bigmah/tamale"
 
 [workspace]
 members = ["web/protocol", "hub", "hub/protocol"]
@@ -44,3 +45,8 @@ rqrr = "0.10"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
