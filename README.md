@@ -9,7 +9,7 @@ API or from your Claude Code or Codex sign-in.
 Install tamale (macOS and Linux):
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/bigmah/tamale/releases/latest/download/tamale-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/bigmah/tamale/releases/latest/download/install.sh | sh
 ```
 
 Or build it from source with [Rust](https://rustup.rs):

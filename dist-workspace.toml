@@ -17,3 +17,8 @@ install-path = "CARGO_HOME"
 hosting = "github"
 # Whether to install an updater program
 install-updater = false
+
+# Upload install.sh (the friendly wrapper around tamale-installer.sh) with each release.
+[[dist.extra-artifacts]]
+artifacts = ["install.sh"]
+build = ["true"]
