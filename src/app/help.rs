@@ -84,8 +84,12 @@ const COMMANDS: &[(&str, &str)] = &[
         "Use tamale from a browser tab too (keys in either switch to it); /browser off stops it",
     ),
     (
-        "/web [local|remote|off]",
-        "Open a chat-first web UI on your Wi-Fi with a code browser (/code there); /web local keeps it to this machine, /web remote makes it reachable anywhere through tamale-hub.com (set TAMALE_HUB_KEY to a key made on the site; encrypted so the hub can't read it; /web remote off disconnects), /web off stops it (ctrl+o or the Web tab opens it too)",
+        "/web [local|off]",
+        "Open a chat-first web UI on your Wi-Fi with a code browser (/code there); /web local keeps it to this machine, /web off stops it (ctrl+o or the Web tab opens it too)",
+    ),
+    (
+        "/remote [off]",
+        "Make the session reachable anywhere through tamale-hub.com (set TAMALE_HUB_KEY to a key made on the site; encrypted so the hub can't read it); /remote off disconnects (the Remote tab connects too)",
     ),
     (
         "/artifacts",
@@ -126,9 +130,10 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
             ),
             (
                 "↓ (below the prompt)",
-                "Focus the tabs: ←/→ pick Web (the web UI, like /web) or Diff, Enter/↓ opens it; ↑ or Esc back",
+                "Focus the tabs: ←/→ pick Remote (like /remote), Web (like /web) or Diff, Enter/↓ opens it; ↑ or Esc back",
             ),
             ("Ctrl+O / click Web", "Open the web UI on your Wi-Fi, like /web"),
+            ("Click Remote", "Connect to the hub, like /remote"),
             ("v / V (in a diff)", "Select lines; Enter quotes them into the prompt, y copies"),
             ("Esc", "Interrupt the agent (unsent queued messages return to the input)"),
             (

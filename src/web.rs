@@ -233,7 +233,7 @@ pub struct Server {
     shared: Arc<Shared>,
     mirror: Mirror,
     task: tokio::task::JoinHandle<()>,
-    /// The connection to a tamale-hub, while `/web remote` is on.
+    /// The connection to a tamale-hub, while `/remote` is on.
     relay: Option<relay::Relay>,
 }
 

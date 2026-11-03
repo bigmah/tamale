@@ -30,7 +30,7 @@ The directory you launch tamale in becomes its workspace. The sign-in backends n
 with no port forwarding or VPN:
 
 1. Make a key at [tamale-hub.com](https://tamale-hub.com). It's made in your browser.
-2. Run `export TAMALE_HUB_KEY=thk_…` on the machine, then `/web remote` in tamale.
+2. Run `export TAMALE_HUB_KEY=thk_…` on the machine, then `/remote` in tamale.
 3. Scan the key's QR code on your phone, and tap a session to drive it.
 
 **Anyone with the key can run commands on your machines**, so treat it like an SSH key.

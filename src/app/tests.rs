@@ -253,7 +253,7 @@ fn web_tab_click_ctrl_o_or_down_left_enter_open_the_web_ui() {
     );
     let lines = screen_lines(&mut app, 100, 30);
     let footer = &lines[28];
-    assert!(footer.ends_with(" ◉ Web  Chat   "), "{footer}");
+    assert!(footer.ends_with(" ⇄ Remote  ◉ Web  Chat   "), "{footer}");
 
     let click = |column, row| {
         Event::Mouse(MouseEvent {
@@ -273,6 +273,11 @@ fn web_tab_click_ctrl_o_or_down_left_enter_open_the_web_ui() {
         app.take_web_request(),
         Some(WebRequest::Open { lan: true })
     ));
+    app.on_event(click(80, 28));
+    assert!(matches!(
+        app.take_web_request(),
+        Some(WebRequest::Remote { on: true })
+    ));
 
     // In the prompt ← and → move the cursor; ↓ past its last line focuses the tabs.
     type_text(&mut app, "hi");
@@ -282,13 +287,11 @@ fn web_tab_click_ctrl_o_or_down_left_enter_open_the_web_ui() {
     app.on_event(key(KeyCode::Down));
     assert_eq!(app.tab_focus, Some(FooterTab::Chat));
     let footer = screen_lines(&mut app, 100, 30)[28].clone();
-    assert!(footer.ends_with("← ◉ Web  Chat   "), "{footer}");
+    assert!(footer.ends_with("← ⇄ Remote  ◉ Web  Chat   "), "{footer}");
     // ← only highlights Web; Enter or ↓ opens it.
     app.on_event(key(KeyCode::Left));
     assert_eq!(app.tab_focus, Some(FooterTab::Web));
     assert!(app.take_web_request().is_none());
-    app.on_event(key(KeyCode::Left));
-    assert_eq!(app.tab_focus, Some(FooterTab::Web), "nothing further left");
     for open in [KeyCode::Enter, KeyCode::Down] {
         app.on_event(key(open));
         assert!(matches!(
@@ -296,7 +299,21 @@ fn web_tab_click_ctrl_o_or_down_left_enter_open_the_web_ui() {
             Some(WebRequest::Open { lan: true })
         ));
     }
+    // Remote is the last one left, and works the same way.
+    app.on_event(key(KeyCode::Left));
+    assert_eq!(app.tab_focus, Some(FooterTab::Remote));
+    assert!(app.take_web_request().is_none());
+    app.on_event(key(KeyCode::Left));
+    assert_eq!(app.tab_focus, Some(FooterTab::Remote), "nothing further left");
+    for open in [KeyCode::Enter, KeyCode::Down] {
+        app.on_event(key(open));
+        assert!(matches!(
+            app.take_web_request(),
+            Some(WebRequest::Remote { on: true })
+        ));
+    }
     // Without a repository there is no Diff to the right of Chat.
+    app.on_event(key(KeyCode::Right));
     app.on_event(key(KeyCode::Right));
     app.on_event(key(KeyCode::Right));
     assert_eq!(app.tab_focus, Some(FooterTab::Chat));
@@ -332,15 +349,20 @@ fn web_tab_click_ctrl_o_or_down_left_enter_open_the_web_ui() {
         app.take_web_request(),
         Some(WebRequest::Open { lan: false })
     ));
-    for command in ["/web remote", "/web remote on"] {
+    for command in ["/remote", "/remote on"] {
         app.command(command);
         assert!(matches!(
             app.take_web_request(),
             Some(WebRequest::Remote { on: true })
         ));
     }
-    // Keys come from the hub's site, so these went with the pairing key.
-    for command in ["/web remote nonsense", "/web remote pair", "/web remote rekey"] {
+    app.command("/remote off");
+    assert!(matches!(
+        app.take_web_request(),
+        Some(WebRequest::Remote { on: false })
+    ));
+    // Keys come from the hub's site, so `pair` and `rekey` went with the pairing key.
+    for command in ["/remote nonsense", "/remote pair", "/remote rekey", "/web remote"] {
         app.command(command);
         assert!(app.take_web_request().is_none(), "{command}");
     }
@@ -1511,12 +1533,12 @@ async fn arrow_keys_switch_between_chat_and_diff_tabs() {
     assert!(!app.diff_open);
     app.on_event(key(KeyCode::Down));
     let footer = screen_lines(&mut app, 100, 30)[28].clone();
-    assert!(footer.contains("← ◉ Web  Chat  Diff 2 +2 −0 → "), "{footer}");
+    assert!(footer.contains("← ⇄ Remote  ◉ Web  Chat  Diff 2 +2 −0 → "), "{footer}");
     // → highlights Diff without opening it; ↓ (or Enter) opens it.
     app.on_event(key(KeyCode::Right));
     assert!(!app.diff_open);
     let footer = screen_lines(&mut app, 100, 30)[28].clone();
-    assert!(footer.contains("← ◉ Web  Chat  Diff 2 +2 −0   "), "{footer}");
+    assert!(footer.contains("← ⇄ Remote  ◉ Web  Chat  Diff 2 +2 −0   "), "{footer}");
     app.on_event(key(KeyCode::Down));
     assert!(app.diff_open);
     let event = rx.recv().await.unwrap();

@@ -316,7 +316,7 @@ async fn web_request(app: &mut App, web: &mut Option<web::Server>, request: WebR
 }
 
 /// With `[hub] connect = "auto"`, makes the session reachable through the hub from the
-/// start, without taking over the terminal the way `/web remote` does.
+/// start, without taking over the terminal the way `/remote` does.
 async fn connect_hub_on_start(app: &mut App, web: &mut Option<web::Server>) {
     let hub = app.settings_hub().clone();
     if hub.connect != config::HubConnect::Auto {

@@ -1,4 +1,4 @@
-//! `/web remote`: makes this session reachable through a tamale-hub.
+//! `/remote`: makes this session reachable through a tamale-hub.
 //!
 //! tamale connects out to `wss://<hub>/agent` with a key's auth value and says `hello` with
 //! this process's session id (sid). The hub serves the session at

@@ -448,16 +448,19 @@ impl App {
                 None | Some("on" | "lan") => self.open_web(),
                 Some("local") => self.web_request = Some(WebRequest::Open { lan: false }),
                 Some("off") => self.web_request = Some(WebRequest::Close),
-                Some("remote") => match cmd.split_whitespace().nth(2) {
-                    None | Some("on") => self.web_request = Some(WebRequest::Remote { on: true }),
-                    Some("off") => self.web_request = Some(WebRequest::Remote { on: false }),
-                    Some(_) => self
-                        .entries
-                        .push(Entry::Error("Usage: /web remote [off]".into())),
-                },
+                Some("remote") => self
+                    .entries
+                    .push(Entry::Error("Remote access is /remote now.".into())),
                 Some(_) => self
                     .entries
-                    .push(Entry::Error("Usage: /web [local|remote|off]".into())),
+                    .push(Entry::Error("Usage: /web [local|off]".into())),
+            },
+            "/remote" => match cmd.split_whitespace().nth(1) {
+                None | Some("on") => self.open_remote(),
+                Some("off") => self.web_request = Some(WebRequest::Remote { on: false }),
+                Some(_) => self
+                    .entries
+                    .push(Entry::Error("Usage: /remote [off]".into())),
             },
             other => self.entries.push(Entry::Error(format!(
                 "Unknown command: {other} (type /help to see all commands)"

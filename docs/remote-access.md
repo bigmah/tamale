@@ -18,14 +18,15 @@ The designs are in [`single_key.md`](../single_key.md) (keys),
 ## Using it
 
 1. **Make a key** on the site. It's made in your browser, and the hub never sees it.
-2. **On each machine that runs tamale**, set it and run `/web remote` in tamale:
+2. **On each machine that runs tamale**, set it and run `/remote` in tamale, or pick the **Remote**
+   tab in its footer:
 
    ```sh
    export TAMALE_HUB_KEY=thk_…
    ```
 
-   tamale never makes a key: without one, `/web remote` says where to get one. It connects to
-   tamale-hub.com unless `[hub] url` or `TAMALE_HUB_URL` says otherwise. `/web remote off`
+   tamale never makes a key: without one, `/remote` says where to get one. It connects to
+   tamale-hub.com unless `[hub] url` or `TAMALE_HUB_URL` says otherwise. `/remote off`
    disconnects, and `[hub] connect = "auto"` connects on startup.
 3. **On your phone**, scan the key's QR code from the site, once. Your sessions are listed
    there; tap one to drive it. Add the page to the home screen for an app-like icon.

@@ -164,7 +164,7 @@ fn print_key(key: &str, public_url: Option<&str>) {
         .unwrap_or("https://tamale-hub.com")
         .trim_end_matches('/');
     println!("It gives access to every machine that uses it: treat it like an SSH key.\n");
-    println!("On each machine that runs tamale, then /web remote in tamale:");
+    println!("On each machine that runs tamale, then /remote in tamale:");
     if base != "https://tamale-hub.com" {
         let agent = base
             .replacen("https://", "wss://", 1)

@@ -22,7 +22,7 @@ $H key new mine --public-url http://hub.localhost:8787 --data-dir /tmp/hub
 $H serve --insecure --public-url http://hub.localhost:8787 --data-dir /tmp/hub
 ```
 
-Then, in another terminal, run tamale and `/web remote`:
+Then, in another terminal, run tamale and `/remote`:
 
 ```sh
 TAMALE_HUB_URL=ws://hub.localhost:8787 TAMALE_HUB_KEY=thk_… tamale

@@ -56,6 +56,6 @@ deny = [] # e.g. ["bash:git push*", "bash:rm -rf *", "write_file:.env*"]
 # A tamale-hub to make this session reachable through from a phone or another computer
 # (see single_key.md). Make a key on the hub's site, and set it in TAMALE_HUB_KEY.
 url = "wss://tamale-hub.com"      # or TAMALE_HUB_URL
-connect = "manual"                # manual: only with /web remote; auto: also on startup
+connect = "manual"                # manual: only with /remote; auto: also on startup
 e2e = true                        # encrypt between tamale and the browser, so the hub sees
                                   # only opaque bytes (see e2e.md); false is for debugging

@@ -28,7 +28,7 @@ pub struct Settings {
     pub hub: HubSettings,
 }
 
-/// `[hub]`: a tamale-hub to make the session reachable through (`/web remote`).
+/// `[hub]`: a tamale-hub to make the session reachable through (`/remote`).
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct HubSettings {
@@ -88,7 +88,7 @@ impl Default for HubSettings {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HubConnect {
-    /// Only with `/web remote`.
+    /// Only with `/remote`.
     #[default]
     Manual,
     /// On startup, whenever `url` and the token are set.

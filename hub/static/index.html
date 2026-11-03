@@ -36,7 +36,7 @@
     <ol class="steps">
       <li><strong>Make a key</strong> below.</li>
       <li><strong>On each machine</strong>, set it where tamale runs and run
-        <code>/web remote</code> in tamale.</li>
+        <code>/remote</code> in tamale.</li>
       <li><strong>On your phone</strong>, scan its code. Your sessions show up here; tap one to
         drive it.</li>
     </ol>
@@ -49,7 +49,7 @@
       like an SSH key. A machine you trust less, like a throwaway VPS, should get a key of its own.</p>
     <h3>1. On each machine that runs tamale</h3>
     <p class="hint">Add this to the shell profile (or run it before starting tamale), then run
-      <code>/web remote</code> in tamale.</p>
+      <code>/remote</code> in tamale.</p>
     <div class="secret"><pre id="made-env"></pre><button type="button" class="copy" data-copy="made-env">Copy</button></div>
     <p class="hint">No tamale yet? <code>cargo install --git https://github.com/bigmah/tamale --locked</code></p>
     <h3>2. On your phone</h3>
@@ -64,7 +64,7 @@
   <section id="list" hidden>
     <h2>Sessions</h2>
     <ul id="sessions" class="sessions"></ul>
-    <p class="empty" id="empty" hidden>No sessions connected. Run <code>/web remote</code> in tamale on
+    <p class="empty" id="empty" hidden>No sessions connected. Run <code>/remote</code> in tamale on
       a machine with <code>TAMALE_HUB_KEY</code> set to one of your keys.</p>
   </section>
 

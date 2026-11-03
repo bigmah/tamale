@@ -30,6 +30,14 @@ impl App {
                 {
                     self.open_web()
                 }
+                MouseEventKind::Down(MouseButton::Left)
+                    if self.approval.is_none()
+                        && self.remote_tab.is_some_and(|tab| {
+                            tab.contains(Position::new(mouse.column, mouse.row))
+                        }) =>
+                {
+                    self.open_remote()
+                }
                 _ => {}
             },
             _ => {}
@@ -149,12 +157,15 @@ impl App {
             // ←/→ only highlight a tab; Enter or ↓ opens it, so nothing opens by surprise.
             let has_diff = self.tab_spans().is_some();
             match (key.code, tab) {
+                (KeyCode::Left, FooterTab::Web) => self.tab_focus = Some(FooterTab::Remote),
                 (KeyCode::Left, FooterTab::Chat) => self.tab_focus = Some(FooterTab::Web),
                 (KeyCode::Left, FooterTab::Diff) => self.tab_focus = Some(FooterTab::Chat),
+                (KeyCode::Right, FooterTab::Remote) => self.tab_focus = Some(FooterTab::Web),
                 (KeyCode::Right, FooterTab::Web) => self.tab_focus = Some(FooterTab::Chat),
                 (KeyCode::Right, FooterTab::Chat) if has_diff => {
                     self.tab_focus = Some(FooterTab::Diff)
                 }
+                (KeyCode::Enter | KeyCode::Down, FooterTab::Remote) => self.open_remote(),
                 (KeyCode::Enter | KeyCode::Down, FooterTab::Web) => self.open_web(),
                 (KeyCode::Enter | KeyCode::Down, FooterTab::Diff) => self.show_diff(),
                 (KeyCode::Enter | KeyCode::Up | KeyCode::Esc, _) => self.tab_focus = None,

@@ -467,8 +467,8 @@ impl App {
             0 => String::new(),
             n => format!(" +{n} dirs"),
         };
-        // Web sits left of Chat, Diff right of it, as ← and → reach them once ↓ has
-        // focused the tabs; a click on Web works too.
+        // Remote and Web sit left of Chat, Diff right of it, as ← and → reach them once ↓
+        // has focused the tabs; a click on Remote or Web works too.
         // The highlighted tab is filled; the others stay quiet, Chat marked as current.
         let focus = self.tab_focus;
         let picked = |tab| focus == Some(tab);
@@ -497,10 +497,11 @@ impl App {
         let arrow =
             |s: &'static str, shown: bool| Span::from(if shown { s } else { " " }).fg(Color::Cyan);
         let mut tabs = vec![
-            arrow("←", focus.is_some_and(|t| t != FooterTab::Web)),
-            Span::styled(" ◉ Web ", style(FooterTab::Web, Color::Blue)),
+            arrow("←", focus.is_some_and(|t| t != FooterTab::Remote)),
+            Span::styled(REMOTE_TAB, style(FooterTab::Remote, Color::Blue)),
+            Span::styled(WEB_TAB, style(FooterTab::Web, Color::Blue)),
         ];
-        let web_offset = tabs[0].content.width() as u16;
+        let remote_offset = tabs[0].content.width() as u16;
         tabs.extend(chat);
         tabs.push(arrow(
             "→",
@@ -562,6 +563,7 @@ impl App {
             "↑/↓ j/k scroll · pgup/pgdn page · esc close"
         } else if let Some(tab) = self.tab_focus {
             match tab {
+                FooterTab::Remote => "enter/↓ connect to the hub · ←/→ choose · ↑ back",
                 FooterTab::Web => "enter/↓ open the web UI · ←/→ choose · ↑ back",
                 FooterTab::Diff => "enter/↓ open the diff · ←/→ choose · ↑ back",
                 FooterTab::Chat => "←/→ choose a tab · enter/↑ back to the prompt",
@@ -640,11 +642,17 @@ impl App {
         frame.render_widget(Paragraph::new(vec![cwd_line, line]), area);
         frame.render_widget(Line::from(tabs).right_aligned(), area);
         // Clickable where it was drawn, right-aligned with the rest of the tabs.
-        let start = (area.x + area.width).saturating_sub(tabs_width as u16) + web_offset;
-        self.web_tab =
-            Some(Rect::new(start, area.y, " ◉ Web ".width() as u16, 1).intersection(area));
+        let start = (area.x + area.width).saturating_sub(tabs_width as u16) + remote_offset;
+        let remote_width = REMOTE_TAB.width() as u16;
+        self.remote_tab = Some(Rect::new(start, area.y, remote_width, 1).intersection(area));
+        self.web_tab = Some(
+            Rect::new(start + remote_width, area.y, WEB_TAB.width() as u16, 1).intersection(area),
+        );
     }
 }
+
+const REMOTE_TAB: &str = " ⇄ Remote ";
+const WEB_TAB: &str = " ◉ Web ";
 
 /// Compact token count, e.g. 950, 12.3k, 1.2M.
 pub(super) fn fmt_tokens(n: u64) -> String {

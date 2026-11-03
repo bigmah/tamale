@@ -22,7 +22,12 @@ impl App {
         self.web_request = Some(WebRequest::Open { lan: true });
     }
 
-    /// Reports the outcome of a `/web` request.
+    /// Asks to connect to the hub, as `/remote` and the Remote tab do.
+    pub(super) fn open_remote(&mut self) {
+        self.web_request = Some(WebRequest::Remote { on: true });
+    }
+
+    /// Reports the outcome of a `/web` or `/remote` request.
     pub fn on_web(&mut self, result: Result<String, String>) {
         self.entries.push(match result {
             Ok(message) => Entry::Info(message),
