@@ -1,0 +1,183 @@
+// Every key's sessions, as the hub's sidebar lists them: waiting for approval first, then
+// busy, then online, then by recent activity. Refreshes every few seconds while on screen.
+
+import SwiftUI
+import TamaleKit
+
+struct SessionListView: View {
+    @Environment(AppModel.self) private var app
+    @State private var adding = false
+
+    var body: some View {
+        Group {
+            if app.loaded && app.accounts.isEmpty {
+                WelcomeView(add: { adding = true })
+            } else {
+                list
+            }
+        }
+        .background(Theme.background)
+        .navigationTitle("Sessions")
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                NavigationLink(value: Route.library) {
+                    Label("Library", systemImage: "books.vertical")
+                }
+            }
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                NavigationLink(value: Route.keys) {
+                    Label("Keys", systemImage: "key")
+                }
+                Button("Add", systemImage: "qrcode.viewfinder") { adding = true }
+            }
+        }
+        .sheet(isPresented: $adding, onDismiss: { Task { await app.openPending() } }) {
+            AddKeyView()
+        }
+        .task(id: app.accounts.map(\.id)) {
+            // Polls while the list is on screen (the task ends when it goes away).
+            while !Task.isCancelled {
+                await app.refresh()
+                try? await Task.sleep(for: .seconds(4))
+            }
+        }
+    }
+
+    private var list: some View {
+        List {
+            ForEach(app.accounts) { account in
+                if let problem = app.problems[account.id] {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(account.name) on \(account.hubName)").font(.subheadline.weight(.medium))
+                            Text(problem).font(.caption).foregroundStyle(Theme.dim)
+                        }
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle").foregroundStyle(Theme.warning)
+                    }
+                    .listRowBackground(Theme.surface)
+                }
+            }
+            if app.rows.isEmpty {
+                ContentUnavailableView {
+                    Label(app.refreshing ? "Looking for sessions…" : "No sessions", systemImage: "terminal")
+                } description: {
+                    Text("Start tamale and type /remote to make a session reachable from here.")
+                }
+                .listRowBackground(Color.clear)
+            }
+            ForEach(app.rows) { row in
+                NavigationLink(value: Route.session(row.id)) {
+                    SessionRowView(row: row, showKey: app.accounts.count > 1)
+                }
+                .listRowBackground(Theme.surface)
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .refreshable { await app.refresh() }
+    }
+}
+
+struct SessionRowView: View {
+    var row: SessionRow
+    var showKey: Bool
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            StatusDot(session: row.session)
+                .padding(.top, 6)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(row.shownTitle)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(row.session.online ? Theme.bright : Theme.dim)
+                    .lineLimit(2)
+                Text(row.place)
+                    .font(.footnote.monospaced())
+                    .foregroundStyle(Theme.dim)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                HStack(spacing: 6) {
+                    if row.session.approval {
+                        Badge(text: "Needs approval", color: Theme.warning)
+                    } else if row.session.busy {
+                        Badge(text: "Working", color: Theme.accent)
+                    } else if !row.session.online {
+                        Badge(text: "Offline", color: Theme.faint)
+                    }
+                    if !row.model.isEmpty {
+                        Text(row.model).lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    Text(formatIdle(row.session.idle))
+                    if showKey {
+                        Text("· \(row.account.name)").lineLimit(1)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(Theme.faint)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+struct StatusDot: View {
+    var session: HubSession
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: 9, height: 9)
+            .overlay {
+                if session.busy && !session.approval {
+                    Circle().stroke(color.opacity(0.5), lineWidth: 3).scaleEffect(1.8)
+                }
+            }
+    }
+
+    var color: Color {
+        if !session.online { return Theme.faint.opacity(0.6) }
+        if session.approval { return Theme.warning }
+        if session.busy { return Theme.accent }
+        return Theme.added
+    }
+}
+
+struct Badge: View {
+    var text: String
+    var color: Color
+
+    var body: some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .foregroundStyle(color)
+            .background(color.opacity(0.15), in: Capsule())
+    }
+}
+
+struct WelcomeView: View {
+    var add: () -> Void
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Spacer()
+            Text("🫔").font(.system(size: 72))
+            Text("tamale").font(.largeTitle.weight(.semibold))
+            Text("See what your sessions are doing, answer approvals and send prompts from your phone.\n\nAdd the key from your hub's site: open it on a computer and scan its QR code, or paste the key.")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(Theme.dim)
+                .padding(.horizontal, 32)
+            Button(action: add) {
+                Label("Add a key", systemImage: "qrcode.viewfinder")
+                    .frame(maxWidth: 260)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.borderedProminent)
+            Spacer()
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
+}

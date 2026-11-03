@@ -1,2 +1,10 @@
 /target
 /web/client/target
+# The iOS app (apple/ios.md): the Xcode project is generated from apple/project.yml.
+apple/*.xcodeproj
+xcuserdata/
+DerivedData/
+*.xcuserstate
+apple/build/
+apple/Packages/*/.build/
+apple/Packages/*/.swiftpm/

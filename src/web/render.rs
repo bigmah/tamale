@@ -308,16 +308,7 @@ pub fn markdown_with(text: &str, mut artifact: Option<&mut dyn FnMut(&str) -> St
                 },
                 Tag::CodeBlock(kind) => {
                     let (lang, closed) = match kind {
-                        CodeBlockKind::Fenced(lang) => {
-                            let block = text[range].trim_end();
-                            let fence = block.trim_start().chars().next().unwrap_or('`');
-                            let closed = block.contains('\n')
-                                && block.lines().last().is_some_and(|l| {
-                                    let l = l.trim();
-                                    l.len() >= 3 && l.chars().all(|c| c == fence)
-                                });
-                            (lang.to_string(), closed)
-                        }
+                        CodeBlockKind::Fenced(lang) => (lang.to_string(), fence_closed(&text[range])),
                         CodeBlockKind::Indented => (String::new(), true),
                     };
                     code = Some((lang, String::new(), closed));
@@ -441,6 +432,77 @@ pub fn markdown_with(text: &str, mut artifact: Option<&mut dyn FnMut(&str) -> St
         finish(&mut out, block);
     }
     out
+}
+
+/// Whether a fenced block's source (as the parser's range gives it) has its closing fence.
+fn fence_closed(block: &str) -> bool {
+    let block = block.trim_end();
+    let fence = block.trim_start().chars().next().unwrap_or('`');
+    block.contains('\n')
+        && block.lines().last().is_some_and(|l| {
+            let l = l.trim();
+            l.len() >= 3 && l.chars().all(|c| c == fence)
+        })
+}
+
+/// The line that stands in for artifact `n` in [`split_artifacts`]'s markdown.
+pub fn artifact_marker(n: usize) -> String {
+    format!("<!-- artifact {n} -->")
+}
+
+/// Assistant markdown for native clients (see `apple/ios.md`): the text with each
+/// ```` ```html artifact ```` block replaced by an [`artifact_marker`] line of its own, and
+/// the blocks' documents with whether their closing fence has arrived.
+pub fn split_artifacts(text: &str) -> (String, Vec<(String, bool)>) {
+    let mut md = String::with_capacity(text.len());
+    let mut blocks = Vec::new();
+    let mut at = 0;
+    let mut current: Option<(std::ops::Range<usize>, String, bool)> = None;
+    for (event, range) in Parser::new_ext(text, Options::ENABLE_GFM).into_offset_iter() {
+        match event {
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(lang)))
+                if current.is_none() && is_artifact(&lang) =>
+            {
+                current = Some((range.clone(), String::new(), fence_closed(&text[range])));
+            }
+            Event::Text(t) => {
+                if let Some((_, body, _)) = &mut current {
+                    body.push_str(&t);
+                }
+            }
+            Event::End(TagEnd::CodeBlock) => {
+                if let Some((range, body, closed)) = current.take() {
+                    push_marked(&mut md, &text[at..range.start], blocks.len());
+                    at = range.end;
+                    while text[at..].starts_with('\n') {
+                        at += 1;
+                    }
+                    blocks.push((body, closed));
+                }
+            }
+            _ => {}
+        }
+    }
+    // An artifact still streaming in runs to the end.
+    if let Some((range, body, closed)) = current {
+        push_marked(&mut md, &text[at..range.start], blocks.len());
+        at = text.len();
+        blocks.push((body, closed));
+    }
+    md.push_str(&text[at..]);
+    (md, blocks)
+}
+
+fn push_marked(md: &mut String, before: &str, n: usize) {
+    md.push_str(before);
+    if !md.is_empty() && !md.ends_with('\n') {
+        md.push('\n');
+    }
+    if !md.is_empty() && !md.ends_with("\n\n") {
+        md.push('\n');
+    }
+    md.push_str(&artifact_marker(n));
+    md.push_str("\n\n");
 }
 
 pub fn is_artifact(lang: &str) -> bool {
@@ -575,6 +637,22 @@ mod tests {
         assert!(markdown(doc).contains("codeblock"));
         let plain = markdown_with("```html\n<p>x</p>\n```", Some(&mut register));
         assert!(plain.contains("codeblock"), "{plain}");
+    }
+
+    #[test]
+    fn native_markdown_takes_artifacts_out_and_marks_where_they_were() {
+        let doc = "Here:\n\n```html artifact\n<title>A</title><p>hi</p>\n```\nDone.\n\n```rust\nfn x() {}\n```";
+        let (md, blocks) = split_artifacts(doc);
+        assert_eq!(md, "Here:\n\n<!-- artifact 0 -->\n\nDone.\n\n```rust\nfn x() {}\n```");
+        assert_eq!(blocks, vec![("<title>A</title><p>hi</p>\n".to_string(), true)]);
+
+        let (md, blocks) = split_artifacts("Building:\n```html artifact\n<p>hi</p>\n``");
+        assert_eq!(md, "Building:\n\n<!-- artifact 0 -->\n\n");
+        assert_eq!(blocks, vec![("<p>hi</p>\n``".to_string(), false)]);
+
+        let (md, blocks) = split_artifacts("no artifacts\n```html\n<p>x</p>\n```");
+        assert_eq!(md, "no artifacts\n```html\n<p>x</p>\n```");
+        assert!(blocks.is_empty());
     }
 
     #[test]

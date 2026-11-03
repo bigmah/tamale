@@ -15,6 +15,8 @@
 
 pub mod e2e;
 mod files;
+#[cfg(test)]
+mod fixtures;
 mod relay;
 mod render;
 
@@ -125,11 +127,23 @@ post();})();</script>";
 /// Script added to each artifact so nothing needs sideways scrolling on a narrow screen.
 const ARTIFACT_FIT: &str = concat!("<script>", include_str!("web/artifact-fit.js"), "</script>");
 
+/// SHA-256 of `text` in lowercase hex: an artifact's stable name, the same in every
+/// process and Rust version, for clients that keep a library of them (see `apple/ios.md`).
+pub fn content_hash(text: &str) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
 /// Artifacts by id, and the id given to each document, so a re-rendered reply keeps its URLs.
 #[derive(Default)]
 struct Artifacts {
     ids: HashMap<u64, String>,
     pages: HashMap<String, Arc<str>>,
+    /// Each id's [`content_hash`] of the document as the model wrote it.
+    hashes: HashMap<String, String>,
 }
 
 impl Artifacts {
@@ -149,6 +163,9 @@ impl Artifacts {
                 bytes.iter().map(|b| format!("{b:02x}")).collect()
             })
             .clone();
+        self.hashes
+            .entry(id.clone())
+            .or_insert_with(|| content_hash(html));
         self.pages.entry(id.clone()).or_insert_with(|| {
             if let Some(dir) = dir {
                 let _ = save_artifact(dir, html);
@@ -685,9 +702,28 @@ fn entry_json(entry: &Entry, artifacts: &Mutex<Artifacts>, dir: Option<&std::pat
         Entry::Assistant(text) => {
             let mut artifacts = artifacts.lock().unwrap();
             let mut register = |html: &str| artifacts.register(html, dir);
-            json!({ "kind": "assistant", "html": render::markdown_with(text, Some(&mut register)) })
+            let html = render::markdown_with(text, Some(&mut register));
+            // For native clients, which render markdown themselves: the text without its
+            // artifacts, and the artifacts to put where their markers are.
+            let (md, blocks) = render::split_artifacts(text);
+            let blocks: Vec<Value> = blocks
+                .iter()
+                .map(|(body, done)| {
+                    let id = done.then(|| {
+                        let url = register(body);
+                        url.trim_start_matches("/artifact/").to_string()
+                    });
+                    json!({
+                        "id": id,
+                        "title": render::artifact_title(body).unwrap_or_else(|| "Artifact".into()),
+                        "done": done,
+                        "hash": done.then(|| content_hash(body)),
+                    })
+                })
+                .collect();
+            json!({ "kind": "assistant", "html": html, "md": md, "artifacts": blocks })
         }
-        Entry::Note(text) => json!({ "kind": "note", "html": render::markdown(text) }),
+        Entry::Note(text) => json!({ "kind": "note", "html": render::markdown(text), "md": text }),
         Entry::Info(text) => json!({ "kind": "info", "text": text }),
         Entry::Error(text) => json!({ "kind": "error", "text": text }),
         Entry::Tool {
@@ -864,8 +900,14 @@ fn handle(shared: &Arc<Shared>, id: u64, request: Value) {
         // On an encrypted session the page can't fetch `/artifact/<id>`; it asks here.
         "artifact" => {
             let artifact = str_field("id");
-            let page = shared.artifacts.lock().unwrap().pages.get(&artifact).cloned();
-            let reply = json!({ "t": "artifact", "id": artifact, "html": page.as_deref() });
+            let (page, hash) = {
+                let artifacts = shared.artifacts.lock().unwrap();
+                (
+                    artifacts.pages.get(&artifact).cloned(),
+                    artifacts.hashes.get(&artifact).cloned(),
+                )
+            };
+            let reply = artifact_reply(&artifact, page.as_deref(), hash.as_deref());
             shared.send_to(id, reply.to_string());
         }
         "artifacts" => {
@@ -883,6 +925,12 @@ fn handle(shared: &Arc<Shared>, id: u64, request: Value) {
         }
         _ => {}
     }
+}
+
+/// The answer to an `artifact` request: the page as served (with tamale's scripts), and
+/// the [`content_hash`] of the document as written.
+fn artifact_reply(id: &str, html: Option<&str>, hash: Option<&str>) -> Value {
+    json!({ "t": "artifact", "id": id, "html": html, "hash": hash })
 }
 
 /// The artifacts saved by the current session (its directory is `current`) and by
@@ -921,6 +969,7 @@ fn saved_artifacts(
                     "title": render::artifact_title(&html).unwrap_or_else(|| "Artifact".into()),
                     "file": e.path().display().to_string(),
                     "modified": modified,
+                    "hash": content_hash(&html),
                     "url": artifacts.lock().unwrap().register(&html, None),
                 });
                 Some((modified, item))
@@ -1019,6 +1068,49 @@ mod tests {
     }
 
     #[test]
+    fn native_clients_get_markdown_artifact_blocks_and_stable_hashes() {
+        let mut mirror = Mirror::default();
+        let doc = "<title>T</title><p>x</p>\n";
+        let entries = vec![
+            Entry::Assistant(format!("Sure.\n\n```html artifact\n{doc}```\n\nMore.")),
+            Entry::Note("*noted*".into()),
+            Entry::Assistant("```html artifact\n<title>Half</title>".into()),
+        ];
+        let sent = mirror.update(&view(&entries));
+        let message: Value = serde_json::from_str(&sent[0]).unwrap();
+        let items = message["items"].as_array().unwrap();
+
+        let reply = &items[0];
+        assert_eq!(reply["md"], "Sure.\n\n<!-- artifact 0 -->\n\nMore.");
+        assert!(reply["html"].as_str().unwrap().contains("data-src"), "the page's html stays");
+        let block = &reply["artifacts"][0];
+        assert_eq!(block["title"], "T");
+        assert_eq!(block["done"], true);
+        assert_eq!(block["hash"], content_hash(doc));
+        let id = block["id"].as_str().unwrap();
+        assert!(reply["html"].as_str().unwrap().contains(&format!("/artifact/{id}")));
+
+        assert_eq!(items[1]["md"], "*noted*");
+        assert!(items[1].get("artifacts").is_none());
+
+        let building = &items[2]["artifacts"][0];
+        assert_eq!(building["done"], false);
+        assert!(building["id"].is_null() && building["hash"].is_null());
+        assert_eq!(building["title"], "Half");
+
+        // The artifact reply names the document by the same hash, though the page served has
+        // tamale's scripts added.
+        let artifacts = mirror.artifacts.lock().unwrap();
+        let reply = artifact_reply(id, artifacts.pages.get(id).map(|p| &**p), artifacts.hashes.get(id).map(|h| h.as_str()));
+        assert_eq!(reply["hash"], content_hash(doc));
+        assert!(reply["html"].as_str().unwrap().contains("tamaleArtifactHeight"));
+        assert_eq!(
+            content_hash("abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
     fn artifacts_are_saved_once_under_their_title() {
         let dir = std::env::temp_dir().join(format!(
             "tamale-artifacts-test-{}",
@@ -1065,6 +1157,7 @@ mod tests {
         assert_eq!(sessions[0]["current"], true);
         assert_eq!(sessions[0]["items"][0]["title"], "New");
         assert_eq!(sessions[0]["items"][0]["url"], chat_url.as_str());
+        assert_eq!(sessions[0]["items"][0]["hash"], content_hash("<title>New</title>"));
         assert_eq!(sessions[1]["items"][0]["title"], "Old");
         let _ = std::fs::remove_dir_all(root);
     }
@@ -1488,6 +1581,76 @@ mod tests {
             }
         }
         assert_eq!(server.remote_tabs(), 1);
+    }
+
+    /// A stand-in session for the iOS app's integration test (`apple/scripts/integration.sh`):
+    /// connects to the hub at `TAMALE_HUB_URL` with `TAMALE_HUB_KEY`, end-to-end encrypted,
+    /// prints `SID=<sid>`, and answers each prompt with a reply and an artifact until
+    /// `TAMALE_FAKE_SECONDS` (default 120) pass.
+    #[tokio::test]
+    #[ignore]
+    async fn fake_session_for_the_apple_app() {
+        let env = |k| std::env::var(k).unwrap_or_else(|_| panic!("{k} not set"));
+        let hub = env("TAMALE_HUB_URL");
+        let key = tamale_hub_protocol::decode_key(&env("TAMALE_HUB_KEY")).expect("a key");
+        let seconds: u64 = std::env::var("TAMALE_FAKE_SECONDS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(120);
+        let mut server = Server::start(false).await.unwrap();
+        let mut entries = vec![
+            Entry::Info("Welcome! A stand-in session for the iOS app's tests.".into()),
+            Entry::User("Show me the plan".into()),
+            Entry::Assistant(
+                "Here it is.\n\n```html artifact\n<!doctype html><title>The plan</title><h1>Plan</h1>\n```".into(),
+            ),
+        ];
+        let mut approval = Some(Approval {
+            name: "bash".into(),
+            summary: "rm -rf target".into(),
+            description: "Clean the build".into(),
+            always: vec!["bash: rm *".into()],
+        });
+        let sync = |server: &mut Server, entries: &[Entry], approval: &Option<Approval>| {
+            let mut v = view(entries);
+            v.approval = approval.clone();
+            server.sync(v);
+        };
+        sync(&mut server, &entries, &approval);
+        server.connect_hub(
+            &hub,
+            &tamale_hub_protocol::auth_value(&key),
+            Label { host: "fake-host".into(), cwd: "~/dev/fake".into(), model: "fake-model".into() },
+            Some(e2e::Keys::from_key(&key)),
+        );
+        println!("SID={}", relay::sid());
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(seconds);
+        while let Ok(Some(event)) = tokio::time::timeout_at(deadline, server.events.recv()).await {
+            match event {
+                WebEvent::Connected(id) => server.welcome(id),
+                WebEvent::Send(text) => {
+                    approval.get_or_insert_with(|| Approval {
+                        name: "bash".into(),
+                        summary: "rm -rf target".into(),
+                        description: "Clean the build".into(),
+                        always: Vec::new(),
+                    });
+                    entries.push(Entry::User(text.clone()));
+                    entries.push(Entry::Assistant(format!(
+                        "You said **{text}**.\n\n```html artifact\n<!doctype html><title>Echo</title><p>{}</p>\n```",
+                        render::escape(&text)
+                    )));
+                }
+                WebEvent::Approve(choice, reason) => {
+                    approval = None;
+                    entries.push(Entry::Info(format!("approved: {choice:?} {}", reason.unwrap_or_default())));
+                }
+                WebEvent::Interrupt => entries.push(Entry::Info("interrupted".into())),
+                WebEvent::Hub(Err(e)) => eprintln!("hub: {e}"),
+                _ => {}
+            }
+            sync(&mut server, &entries, &approval);
+        }
     }
 
     #[test]

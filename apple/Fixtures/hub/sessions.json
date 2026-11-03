@@ -1,0 +1,49 @@
+{
+  "keys": [
+    {
+      "created": 1700000000,
+      "id": "0123456789abcdef",
+      "name": "mine",
+      "web": false
+    }
+  ],
+  "sessions": [
+    {
+      "approval": true,
+      "busy": true,
+      "cwd": "",
+      "e2e": true,
+      "host": "",
+      "idle": 0,
+      "key": "mine",
+      "mid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "model": "",
+      "online": true,
+      "open": "/open/feedfacefeedfacefeedfacefeedface",
+      "sealed_label": "SEALED-LABEL",
+      "sealed_status": "SEALED-STATUS",
+      "sid": "feedfacefeedfacefeedfacefeedface",
+      "title": "",
+      "viewers": 0
+    },
+    {
+      "approval": false,
+      "busy": false,
+      "cwd": "~/api",
+      "e2e": false,
+      "host": "vps-b",
+      "idle": 0,
+      "key": "mine",
+      "mid": null,
+      "model": "m",
+      "online": true,
+      "open": "/open/0123456789abcdef0123456789abcdef",
+      "sealed_label": null,
+      "sealed_status": null,
+      "sid": "0123456789abcdef0123456789abcdef",
+      "title": "",
+      "viewers": 0
+    }
+  ],
+  "signup": true
+}

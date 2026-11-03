@@ -77,6 +77,16 @@ impl Keys {
     pub fn seal(&self, sid: &str, kind: &str, plaintext: &str) -> Result<String> {
         let mut nonce = [0u8; 12];
         getrandom::fill(&mut nonce).map_err(|e| anyhow!("no randomness: {e}"))?;
+        self.seal_with(sid, kind, plaintext, nonce)
+    }
+
+    /// The meta key, for test vectors.
+    #[cfg(test)]
+    pub fn meta_key(&self) -> [u8; 32] {
+        self.meta
+    }
+
+    fn seal_with(&self, sid: &str, kind: &str, plaintext: &str, nonce: [u8; 12]) -> Result<String> {
         let cipher = Aes256Gcm::new_from_slice(&self.meta).map_err(|e| anyhow!("{e}"))?;
         let aad = format!("{sid}{kind}");
         let sealed = cipher
@@ -94,8 +104,40 @@ impl Keys {
     /// The handshake's first step for a responder: reads message 1 and writes message 2.
     /// Fails unless the sender holds this key and is answering `nonce` on session `sid`.
     pub fn respond(&self, sid: &str, nonce: &[u8], hs1: &str) -> Result<(Channel, String)> {
+        self.respond_with(sid, nonce, hs1, None)
+    }
+
+    /// [`Keys::seal`] with a given nonce, so test vectors come out the same every time.
+    #[cfg(test)]
+    pub fn seal_fixed(&self, sid: &str, kind: &str, plaintext: &str, nonce: [u8; 12]) -> Result<String> {
+        self.seal_with(sid, kind, plaintext, nonce)
+    }
+
+    /// [`Keys::respond`] with a given ephemeral key, for test vectors.
+    #[cfg(test)]
+    pub fn respond_fixed(
+        &self,
+        sid: &str,
+        nonce: &[u8],
+        hs1: &str,
+        ephemeral: &[u8; 32],
+    ) -> Result<(Channel, String)> {
+        self.respond_with(sid, nonce, hs1, Some(ephemeral))
+    }
+
+    fn respond_with(
+        &self,
+        sid: &str,
+        nonce: &[u8],
+        hs1: &str,
+        fixed: Option<&[u8; 32]>,
+    ) -> Result<(Channel, String)> {
         let prologue = prologue(sid, nonce);
-        let mut hs = builder(&self.psk, &prologue)?.build_responder()?;
+        let mut builder = builder(&self.psk, &prologue)?;
+        if let Some(key) = fixed {
+            builder = builder.fixed_ephemeral_key_for_testing_only(key);
+        }
+        let mut hs = builder.build_responder()?;
         let message = decode(hs1)?;
         let mut payload = vec![0u8; MAX_NOISE];
         hs.read_message(&message, &mut payload)?;

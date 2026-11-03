@@ -1,0 +1,11 @@
+{
+  "approval": {
+    "always": [
+      "bash: rm *"
+    ],
+    "description": "Clean the build",
+    "name": "bash",
+    "summary": "rm -rf target"
+  },
+  "t": "approval"
+}

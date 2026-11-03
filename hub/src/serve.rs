@@ -12,6 +12,11 @@
 //! ticket, which the session host trades for a cookie of its own, signed and scoped to
 //! that one session (see [`SessionCookie`]). A session's page, even a hostile one, so
 //! never holds anything that reaches another session.
+//!
+//! Native clients (the iOS app, `apple/ios.md`) send the auth value as
+//! `Authorization: Bearer` on `/api/sessions`, `/api/ticket` and the session socket instead.
+//! Browsers never attach that header on their own, so those requests skip the `Origin`
+//! checks that guard the cookies, and the socket needs no ticket round trip.
 
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
@@ -59,6 +64,8 @@ pub struct Options {
     pub public_url: String,
     pub insecure: bool,
     pub signup: Signup,
+    /// `<team id>.<bundle id>` of the iOS app that may open `/open/<sid>` links, if any.
+    pub apple_app_id: Option<String>,
 }
 
 /// Whether anyone may make a key from the hub's page.
@@ -203,6 +210,8 @@ pub struct Hub {
     /// When each IP made keys from the page, within the last day.
     signups: Mutex<HashMap<IpAddr, Vec<Instant>>>,
     signup: Signup,
+    /// The iOS app that universal links open (see [`apple_app_site_association`]).
+    apple_app_id: std::sync::OnceLock<String>,
     started: Instant,
     next: AtomicU64,
 }
@@ -220,6 +229,7 @@ impl Hub {
             failures: Mutex::new(HashMap::new()),
             signups: Mutex::new(HashMap::new()),
             signup,
+            apple_app_id: std::sync::OnceLock::new(),
             started: Instant::now(),
             next: AtomicU64::new(1),
         }))
@@ -281,6 +291,23 @@ impl Hub {
             .unwrap()
             .get(&ip)
             .is_some_and(|(n, since)| *n >= MAX_FAILURES && since.elapsed() <= FAILURE_WINDOW)
+    }
+
+    /// A native client's key, from `Authorization: Bearer <auth value>`. `None` without the
+    /// header; an error response (counted as a failure) for a key the hub doesn't know.
+    fn bearer(&self, ip: IpAddr, headers: &HeaderMap) -> Option<Result<state::Key, Response>> {
+        let auth = bearer_value(headers)?;
+        if self.limited(ip) {
+            return Some(Err(error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too many failed attempts; try again later.",
+            )));
+        }
+        let key = self.tokens.read().unwrap().by_auth(auth).cloned();
+        Some(key.ok_or_else(|| {
+            self.fail(ip);
+            error(StatusCode::UNAUTHORIZED, "This hub doesn't know that key.")
+        }))
     }
 
     /// The auth values in the browser's dashboard cookie that are still good, and their keys.
@@ -439,6 +466,15 @@ fn client_ip(peer: SocketAddr, headers: &HeaderMap) -> IpAddr {
     peer.ip()
 }
 
+/// The value of an `Authorization: Bearer` header, if there is one.
+fn bearer_value(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::trim)
+}
+
 fn origin_is(headers: &HeaderMap, expected: &str) -> bool {
     headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) == Some(expected)
 }
@@ -479,6 +515,9 @@ fn rewrite(public: &Public, mut request: Request) -> Request {
 pub async fn serve(options: Options, store: Store) -> Result<()> {
     let public = Public::parse(&options.public_url, options.insecure)?;
     let hub = Hub::new(public.clone(), store, options.signup)?;
+    if let Some(id) = options.apple_app_id {
+        let _ = hub.apple_app_id.set(id);
+    }
     let listener = tokio::net::TcpListener::bind(options.listen)
         .await
         .with_context(|| format!("couldn't listen on {}", options.listen))?;
@@ -553,6 +592,10 @@ pub async fn run(hub: Arc<Hub>, listener: tokio::net::TcpListener) -> Result<()>
         .route("/d/api/keys", post(api_key_new))
         .route("/d/api/keys/rotate", post(api_key_rotate))
         .route("/d/api/keys/delete", post(api_key_delete))
+        .route(
+            "/d/.well-known/apple-app-site-association",
+            get(apple_app_site_association),
+        )
         .route("/d/agent", get(agent))
         .route("/s/{sid}/__hub/auth", get(auth))
         .route("/s/{sid}/ws", get(session_socket))
@@ -641,6 +684,23 @@ fn framed_by_hub(csp: &str, hub_origin: &str) -> String {
         .to_string()
 }
 
+/// Lets the iOS app open the terminal's `/open/<sid>` links (universal links), when the hub
+/// was started with `--apple-app-id`.
+async fn apple_app_site_association(State(hub): State<Arc<Hub>>) -> Response {
+    let Some(id) = hub.apple_app_id.get() else {
+        return (StatusCode::NOT_FOUND, "Not found.").into_response();
+    };
+    let body = json!({
+        "applinks": {
+            "details": [{
+                "appIDs": [id],
+                "components": [{ "/": "/open/*", "comment": "a session, from the terminal's QR code" }],
+            }],
+        },
+    });
+    guard(Json(body).into_response())
+}
+
 async fn www(State(hub): State<Arc<Hub>>) -> Response {
     (
         StatusCode::PERMANENT_REDIRECT,
@@ -705,9 +765,17 @@ async fn api_tokens(
     with_view_cookie(&hub, guard(Json(body).into_response()), &tokens)
 }
 
-/// The sessions under the browser's keys.
-async fn api_sessions(State(hub): State<Arc<Hub>>, headers: HeaderMap) -> Response {
-    let (_, keys) = hub.views(&headers);
+/// The sessions under the browser's keys, or a native client's one key.
+async fn api_sessions(
+    State(hub): State<Arc<Hub>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let keys = match hub.bearer(client_ip(peer, &headers), &headers) {
+        Some(Ok(key)) => vec![key],
+        Some(Err(refused)) => return refused,
+        None => hub.views(&headers).1,
+    };
     let names: HashSet<&str> = keys.iter().map(|k| k.name.as_str()).collect();
     let now = state::now();
     let mut list: Vec<Value> = hub
@@ -988,10 +1056,16 @@ async fn api_ticket(
     Json(request): Json<TicketRequest>,
 ) -> Response {
     let ip = client_ip(peer, &headers);
-    if let Some(refused) = checked(&hub, ip, &headers) {
-        return refused;
-    }
-    let (_, keys) = hub.views(&headers);
+    let keys = match hub.bearer(ip, &headers) {
+        Some(Ok(key)) => vec![key],
+        Some(Err(refused)) => return refused,
+        None => {
+            if let Some(refused) = checked(&hub, ip, &headers) {
+                return refused;
+            }
+            hub.views(&headers).1
+        }
+    };
     if keys.is_empty() {
         return error(StatusCode::UNAUTHORIZED, NO_KEY);
     }
@@ -1247,14 +1321,28 @@ async fn session_socket(
     upgrade: WebSocketUpgrade,
 ) -> Response {
     let ip = client_ip(peer, &headers);
-    // Sibling session hosts are the same site, so the cookie alone isn't enough.
-    if !origin_is(&headers, &hub.public.session_origin(&sid)) {
-        hub.fail(ip);
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    if !session_allowed(&hub, &sid, &headers) {
-        hub.fail(ip);
-        return StatusCode::NOT_FOUND.into_response();
+    match hub.bearer(ip, &headers) {
+        // A native client: no cookie, so no Origin to check, but the key must be the
+        // session's (or the session unknown, as just after a restart).
+        Some(Ok(key)) => {
+            let owner = hub.sessions.lock().unwrap().get(&sid).map(|s| s.key.clone());
+            if owner.is_some_and(|name| name != key.name) {
+                hub.fail(ip);
+                return StatusCode::NOT_FOUND.into_response();
+            }
+        }
+        Some(Err(refused)) => return refused,
+        None => {
+            // Sibling session hosts are the same site, so the cookie alone isn't enough.
+            if !origin_is(&headers, &hub.public.session_origin(&sid)) {
+                hub.fail(ip);
+                return StatusCode::FORBIDDEN.into_response();
+            }
+            if !session_allowed(&hub, &sid, &headers) {
+                hub.fail(ip);
+                return StatusCode::NOT_FOUND.into_response();
+            }
+        }
     }
     let ended = {
         let sessions = hub.sessions.lock().unwrap();
@@ -1361,11 +1449,7 @@ async fn agent(
     if hub.limited(ip) {
         return StatusCode::TOO_MANY_REQUESTS.into_response();
     }
-    let auth = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .unwrap_or("");
+    let auth = bearer_value(&headers).unwrap_or("");
     let Some(key) = hub.tokens.read().unwrap().by_auth(auth).cloned() else {
         hub.fail(ip);
         eprintln!("agent rejected from {ip}: unknown key");
@@ -1705,6 +1789,7 @@ mod tests {
             auth: String,
             other_auth: String,
             store: Store,
+            hub: Arc<Hub>,
         }
 
         async fn start() -> Setup {
@@ -1735,12 +1820,13 @@ mod tests {
                 },
             )
             .unwrap();
-            tokio::spawn(run(hub, listener));
+            tokio::spawn(run(hub.clone(), listener));
             Setup {
                 port,
                 auth,
                 other_auth,
                 store,
+                hub,
             }
         }
 
@@ -1825,6 +1911,25 @@ mod tests {
                 .await
                 .unwrap();
             agent
+        }
+
+        /// Compares `value` with the iOS app's checked-in sample (see `apple/ios.md`), or
+        /// rewrites it with `UPDATE_FIXTURES` set.
+        fn check_fixture(name: &str, value: &Value) {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../apple/Fixtures")
+                .join(name);
+            let text = format!("{}\n", serde_json::to_string_pretty(value).unwrap());
+            if std::env::var_os("UPDATE_FIXTURES").is_some() {
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, &text).unwrap();
+                return;
+            }
+            let old = std::fs::read_to_string(&path).unwrap_or_default();
+            assert!(
+                old == text,
+                "apple/Fixtures/{name} is stale; run `UPDATE_FIXTURES=1 cargo test -p tamale-hub` and check it in"
+            );
         }
 
         fn set_cookie(response: &reqwest::Response) -> String {
@@ -2166,6 +2271,228 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(r.status(), 404, "the session cookie dies with its key");
+            let _ = std::fs::remove_dir_all(&setup.store.dir);
+        }
+
+        #[tokio::test]
+        async fn universal_links_are_served_only_when_configured() {
+            let setup = start().await;
+            let base = format!("http://127.0.0.1:{}", setup.port);
+            let dash = format!("hub.localhost:{}", setup.port);
+            let http = reqwest::Client::new();
+            let get = || {
+                http.get(format!("{base}/.well-known/apple-app-site-association"))
+                    .header("host", &dash)
+                    .send()
+            };
+            assert_eq!(get().await.unwrap().status(), 404);
+            setup.hub.apple_app_id.set("TEAM.com.example.tamale".into()).unwrap();
+            let r = get().await.unwrap();
+            assert_eq!(r.status(), 200);
+            assert_eq!(r.headers()["content-type"], "application/json");
+            let body: Value = r.json().await.unwrap();
+            assert_eq!(body["applinks"]["details"][0]["appIDs"][0], "TEAM.com.example.tamale");
+            assert_eq!(body["applinks"]["details"][0]["components"][0]["/"], "/open/*");
+            let _ = std::fs::remove_dir_all(&setup.store.dir);
+        }
+
+        #[tokio::test]
+        async fn a_native_client_uses_a_bearer_key_without_cookies_tickets_or_origin() {
+            let setup = start().await;
+            let port = setup.port;
+            let dash = format!("hub.localhost:{port}");
+            let sid = "0123456789abcdef0123456789abcdef".to_string();
+            let other_sid = "fedcba9876543210fedcba9876543210".to_string();
+            let session_host = format!("{sid}.hub.localhost:{port}");
+            let base = format!("http://127.0.0.1:{port}");
+            let http = reqwest::Client::new();
+            let failures = |hub: &Hub| hub.failures.lock().unwrap().values().map(|f| f.0).sum::<u32>();
+
+            let mut agent = agent_hello(port, &setup.auth, &sid).await;
+            assert!(next_text(&mut agent).await.contains("\"welcome\""));
+            let mut other_agent = agent_hello(port, &setup.other_auth, &other_sid).await;
+            assert!(next_text(&mut other_agent).await.contains("\"welcome\""));
+            let bearer = format!("Bearer {}", setup.auth);
+
+            // The list: only this key's sessions, with no cookie and no Origin.
+            let r = http
+                .get(format!("{base}/api/sessions"))
+                .header("host", &dash)
+                .header("authorization", &bearer)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 200);
+            assert!(r.headers().get("set-cookie").is_none());
+            let list: Value = r.json().await.unwrap();
+            assert_eq!(list["keys"].as_array().unwrap().len(), 1);
+            assert_eq!(list["keys"][0]["name"], "mine");
+            let sids: Vec<&str> = list["sessions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s["sid"].as_str().unwrap())
+                .collect();
+            assert_eq!(sids, [sid.as_str()]);
+
+            // An encrypted session too, for the app's sample of this list.
+            let e2e_sid = "feedfacefeedfacefeedfacefeedface";
+            let mut e2e_agent = ws(
+                port,
+                "/agent",
+                &[("host", dash.clone()), ("authorization", bearer.clone())],
+            )
+            .await
+            .unwrap();
+            let say = |frame: &ToHub| {
+                tungstenite::Message::Text(serde_json::to_string(frame).unwrap().into())
+            };
+            e2e_agent
+                .send(say(&ToHub::Hello {
+                    proto: protocol::PROTO,
+                    sid: e2e_sid.into(),
+                    label: Label::default(),
+                    mid: Some("a".repeat(32)),
+                    e2e: true,
+                    sealed: Some("SEALED-LABEL".into()),
+                }))
+                .await
+                .unwrap();
+            assert!(next_text(&mut e2e_agent).await.contains("\"welcome\""));
+            e2e_agent
+                .send(say(&ToHub::Status {
+                    busy: true,
+                    approval: true,
+                    title: String::new(),
+                    model: String::new(),
+                    sealed: Some("SEALED-STATUS".into()),
+                }))
+                .await
+                .unwrap();
+            let mut list: Value = loop {
+                let list: Value = http
+                    .get(format!("{base}/api/sessions"))
+                    .header("host", &dash)
+                    .header("authorization", &bearer)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json()
+                    .await
+                    .unwrap();
+                if list["sessions"][0]["sealed_status"].is_string() {
+                    break list;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            };
+            list["keys"][0]["id"] = "0123456789abcdef".into();
+            list["keys"][0]["created"] = 1_700_000_000.into();
+            for row in list["sessions"].as_array_mut().unwrap() {
+                row["idle"] = 0.into();
+            }
+            check_fixture("hub/sessions.json", &list);
+            drop(e2e_agent);
+
+            // A wrong key is a 401 and counts as a failure, everywhere.
+            let before = failures(&setup.hub);
+            let wrong = format!("Bearer {}", new_auth());
+            let r = http
+                .get(format!("{base}/api/sessions"))
+                .header("host", &dash)
+                .header("authorization", &wrong)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 401);
+            let r = http
+                .post(format!("{base}/api/ticket"))
+                .header("host", &dash)
+                .header("authorization", &wrong)
+                .json(&json!({"sid": sid}))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 401);
+            match ws(
+                port,
+                "/ws",
+                &[("host", session_host.clone()), ("authorization", wrong.clone())],
+            )
+            .await
+            {
+                Err(tungstenite::Error::Http(r)) => assert_eq!(r.status(), 401),
+                other => panic!("{:?}", other.map(|_| ())),
+            }
+            assert_eq!(failures(&setup.hub), before + 3);
+
+            // A ticket needs no Origin with a bearer; another key's session is a 404.
+            let r = http
+                .post(format!("{base}/api/ticket"))
+                .header("host", &dash)
+                .header("authorization", &bearer)
+                .json(&json!({"sid": sid}))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 200);
+            let r = http
+                .post(format!("{base}/api/ticket"))
+                .header("host", &dash)
+                .header("authorization", &bearer)
+                .json(&json!({"sid": other_sid}))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 404);
+            let other_host = format!("{other_sid}.hub.localhost:{port}");
+            match ws(
+                port,
+                "/ws",
+                &[("host", other_host), ("authorization", bearer.clone())],
+            )
+            .await
+            {
+                Err(tungstenite::Error::Http(r)) => assert_eq!(r.status(), 404),
+                other => panic!("{:?}", other.map(|_| ())),
+            }
+
+            // The socket: no cookie, no Origin, no ticket.
+            let mut tab = ws(
+                port,
+                "/ws",
+                &[("host", session_host.clone()), ("authorization", bearer.clone())],
+            )
+            .await
+            .unwrap();
+            let open: ToAgent = serde_json::from_str(&next_text(&mut agent).await).unwrap();
+            let ToAgent::Open { c } = open else {
+                panic!("{open:?}")
+            };
+            tab.send(tungstenite::Message::Text("{\"t\":\"hs1\"}".into()))
+                .await
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<ToAgent>(&next_text(&mut agent).await).unwrap(),
+                ToAgent::Msg {
+                    c,
+                    data: "{\"t\":\"hs1\"}".into()
+                }
+            );
+
+            // The cookie path is unchanged: without a bearer, Origin is still required.
+            assert!(
+                ws(port, "/ws", &[("host", session_host.clone())])
+                    .await
+                    .is_err()
+            );
+            let r = http
+                .post(format!("{base}/api/ticket"))
+                .header("host", &dash)
+                .json(&json!({"sid": sid}))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 403);
             let _ = std::fs::remove_dir_all(&setup.store.dir);
         }
 

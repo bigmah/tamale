@@ -1,0 +1,76 @@
+{
+  "from": 0,
+  "items": [
+    {
+      "kind": "info",
+      "text": "Welcome! tamale 0.1.2"
+    },
+    {
+      "kind": "user",
+      "text": "Why does login fail?\n```\nerror: 401\n```"
+    },
+    {
+      "cut": false,
+      "description": "Read src/auth.rs",
+      "error": false,
+      "kind": "tool",
+      "name": "read_file",
+      "output": "fn login() {}",
+      "summary": "src/auth.rs"
+    },
+    {
+      "cut": false,
+      "description": "Run the tests",
+      "error": true,
+      "kind": "tool",
+      "name": "bash",
+      "output": "1 failed",
+      "summary": "cargo test"
+    },
+    {
+      "cut": false,
+      "description": "Find cookie handling",
+      "error": false,
+      "kind": "tool",
+      "name": "grep",
+      "output": null,
+      "summary": "cookie"
+    },
+    {
+      "artifacts": [
+        {
+          "done": true,
+          "hash": "b9c6f945b8adc81d381931851a403c9aee8e88f64e876c33775f73d808d06720",
+          "id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+          "title": "Login flow"
+        }
+      ],
+      "html": "<p>I traced the bug.</p><ul><li><code>auth.rs</code> drops the cookie</li><li><strong>fix</strong>: keep it</li></ul><div class=\"artifact\" data-src=\"/artifact/a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0\" data-title=\"Login flow\"></div><p>Want me to apply it?</p>",
+      "kind": "assistant",
+      "md": "I traced the bug.\n\n- `auth.rs` drops the cookie\n- **fix**: keep it\n\n<!-- artifact 0 -->\n\nWant me to apply it?"
+    },
+    {
+      "html": "<p>Compacted the conversation: <em>3 turns</em> summarised.</p>",
+      "kind": "note",
+      "md": "Compacted the conversation: *3 turns* summarised."
+    },
+    {
+      "kind": "error",
+      "text": "The backend timed out."
+    },
+    {
+      "artifacts": [
+        {
+          "done": false,
+          "hash": null,
+          "id": null,
+          "title": "Draft"
+        }
+      ],
+      "html": "<p>Building:</p><div class=\"artifact building\"><div class=\"artifact-bar\"><span class=\"artifact-spark\"></span><span class=\"artifact-title\">Building Draft…</span><span class=\"artifact-meta\">2 lines</span></div></div>",
+      "kind": "assistant",
+      "md": "Building:\n\n<!-- artifact 0 -->\n\n"
+    }
+  ],
+  "t": "entries"
+}

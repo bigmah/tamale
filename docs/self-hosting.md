@@ -214,6 +214,13 @@ and anyone can make one on the hub's page, limited to 5 new keys per IP per day 
 (default 500) in all. Page-made keys that never connect are deleted after 7 days, and after 90 days
 unused.
 
+**The iPhone app.** The app (see [`ios.md`](ios.md)) works with any hub: it takes the hub from the
+key's QR code. Hubs from before it sign the app in with cookies, as a browser; newer ones take its
+key as `Authorization: Bearer`. For the terminal's `/open/<sid>` codes to open the app rather than
+Safari, start `serve` with `--apple-app-id <team id>.<bundle id>` (or set
+`TAMALE_HUB_APPLE_APP_ID`), which serves `/.well-known/apple-app-site-association`, and add your
+hub's domain to the app's associated domains.
+
 **What the hub stores.** The data dir holds `state.json` (mode 600): SHA-256 hashes of the keys'
 auth values and the secret that signs session cookies. No keys, no sessions, no history.
 

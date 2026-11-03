@@ -1,0 +1,29 @@
+{
+  "status": {
+    "backend": "anthropic",
+    "compacting": false,
+    "context": 12345,
+    "cost": 0.42,
+    "cost_partial": false,
+    "cwd": "~/dev/tamale",
+    "dirs": [
+      "~/dev/shared"
+    ],
+    "effort": "high",
+    "goal": "Fix login",
+    "input_tokens": 50000,
+    "mode": "default",
+    "model": "claude-opus-4",
+    "output_tokens": 4000,
+    "project": "tamale",
+    "queued": [
+      "then run the tests"
+    ],
+    "running": true,
+    "signed_in": true,
+    "since": 1700000000,
+    "thinking": "auto",
+    "window": 200000
+  },
+  "t": "status"
+}

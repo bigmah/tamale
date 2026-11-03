@@ -1,0 +1,20 @@
+{
+  "seq": 7,
+  "sessions": [
+    {
+      "current": true,
+      "items": [
+        {
+          "file": "/home/me/.local/share/tamale/sessions/session-1/login-flow.html",
+          "hash": "b9c6f945b8adc81d381931851a403c9aee8e88f64e876c33775f73d808d06720",
+          "modified": 1700000100,
+          "title": "Login flow",
+          "url": "/artifact/a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0"
+        }
+      ],
+      "title": "",
+      "updated": 1700000100
+    }
+  ],
+  "t": "artifacts"
+}

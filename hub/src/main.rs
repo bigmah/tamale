@@ -16,6 +16,7 @@ const USAGE: &str = "\
 Usage:
   tamale-hub serve --public-url https://tamale-hub.com [--listen 127.0.0.1:8787] [--data-dir DIR]
                    [--signup open|closed] [--max-keys N] [--insecure]
+                   [--apple-app-id TEAMID.bundle.id]
   tamale-hub key new <name> [--public-url URL]   make a key; prints it once
   tamale-hub key list
   tamale-hub key revoke <name>                   drop the key and every socket using it
@@ -23,7 +24,9 @@ Usage:
 --data-dir defaults to $TAMALE_HUB_DATA, else ~/.local/share/tamale-hub.
 --signup open lets anyone make a key on the hub's page (default closed: only this CLI
 makes them); --max-keys (default 500) caps how many the hub holds.
---public-url defaults to $TAMALE_HUB_PUBLIC_URL for the key commands' links.";
+--public-url defaults to $TAMALE_HUB_PUBLIC_URL for the key commands' links.
+--apple-app-id (or $TAMALE_HUB_APPLE_APP_ID) serves apple-app-site-association, so the
+iOS app opens the terminal's /open/<sid> links.";
 
 fn main() {
     if let Err(e) = run(std::env::args().skip(1).collect()) {
@@ -40,6 +43,7 @@ struct Args {
     insecure: bool,
     signup: bool,
     max_keys: usize,
+    apple_app_id: Option<String>,
 }
 
 fn parse(args: Vec<String>) -> Result<Args> {
@@ -51,6 +55,7 @@ fn parse(args: Vec<String>) -> Result<Args> {
         insecure: false,
         signup: false,
         max_keys: 500,
+        apple_app_id: None,
     };
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
@@ -60,6 +65,7 @@ fn parse(args: Vec<String>) -> Result<Args> {
             "--public-url" => out.public_url = Some(value("--public-url")?),
             "--data-dir" => out.data_dir = Some(value("--data-dir")?.into()),
             "--insecure" => out.insecure = true,
+            "--apple-app-id" => out.apple_app_id = Some(value("--apple-app-id")?),
             "--signup" => {
                 out.signup = match value("--signup")?.as_str() {
                     "open" => true,
@@ -110,6 +116,11 @@ fn run(args: Vec<String>) -> Result<()> {
                         open: args.signup,
                         max_keys: args.max_keys,
                     },
+                    apple_app_id: args
+                        .apple_app_id
+                        .clone()
+                        .or_else(|| std::env::var("TAMALE_HUB_APPLE_APP_ID").ok())
+                        .filter(|id| !id.is_empty()),
                 },
                 store,
             ))
