@@ -259,7 +259,7 @@ impl App {
     ) -> Self {
         let permissions = Policy::new(&settings.permissions, workspace.cwd.clone()).shared();
         let logins = match &backend {
-            Backend::Api(_) => Vec::new(),
+            Backend::Api(_) | Backend::Unset => Vec::new(),
             login => vec![login.clone()],
         };
         Self {
@@ -400,6 +400,9 @@ impl App {
 
     /// Sends `prompt` to the model while showing (and keeping for `/undo`) `shown`.
     fn send_prompt_as(&mut self, shown: String, prompt: String) {
+        if self.refuse_without_backend(&shown) {
+            return;
+        }
         let ctx = self.begin_turn_as(shown, prompt.clone());
         let turn = self.backend_turn(prompt);
         let atx = self.start_turn();

@@ -28,7 +28,8 @@ pub const HELP: &str = "usage: tamale [--backend <kind>] [--add-dir <path>] [--c
 
 Settings: built-in defaults < ~/.config/tamale/config.toml < project tamale.toml
           < --config < TAMALE_* environment variables < CLI flags.
-The api backend requires ANTHROPIC_API_KEY; claude-code requires the `claude` CLI and
+The api backend requires ANTHROPIC_API_KEY (without it, tamale asks which backend to use);
+claude-code requires the `claude` CLI and
 codex the `codex` CLI (tamale offers to sign in when they aren't). See config/default.toml for all settings.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

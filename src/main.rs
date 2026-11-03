@@ -52,8 +52,16 @@ async fn start(cli: cli::Cli) -> Result<()> {
     cli.apply(&mut settings);
     settings.validate()?;
 
-    let mut backend = Backend::connect(&settings.backend).await?;
-    if !backend.signed_in() {
+    // Without a key the TUI asks for a backend; a `-p` run can't ask, so it fails below.
+    let choose_backend = cli.print_prompt.is_none()
+        && settings.backend.kind == backend::Kind::Api
+        && !backend::api_key_set();
+    let mut backend = if choose_backend {
+        Backend::Unset
+    } else {
+        Backend::connect(&settings.backend).await?
+    };
+    if !backend.signed_in() && !choose_backend {
         let (name, login) = match &backend {
             Backend::Codex(_) => ("Codex", "codex login"),
             _ => ("Claude Code", "claude auth login"),
@@ -108,6 +116,9 @@ async fn start(cli: cli::Cli) -> Result<()> {
         },
         Some(cli::Resume::Pick) => app.resume_command(None),
         None => {}
+    }
+    if choose_backend {
+        app.ask_for_backend();
     }
     let result = run(&mut terminal, (app, rx)).await;
     let _ = execute!(

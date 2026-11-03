@@ -56,7 +56,7 @@ pub async fn remove(login: &Backend) -> Result<()> {
         match login {
             Backend::ClaudeCode(cc) => cc.logout().await?,
             Backend::Codex(codex) => codex.logout().await?,
-            Backend::Api(_) => {}
+            Backend::Api(_) | Backend::Unset => {}
         }
     }
     std::fs::remove_dir_all(&dir).with_context(|| format!("removing {}", dir.display()))?;

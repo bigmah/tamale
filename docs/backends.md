@@ -7,7 +7,7 @@ identically, and the footer shows the backend next to the working directory
 
 | Backend | Selected with | Authenticates with |
 | --- | --- | --- |
-| `api` (default) | `kind = "api"` | `ANTHROPIC_API_KEY` |
+| `api` (default) | `kind = "api"`, `--backend api`, `TAMALE_BACKEND` | `ANTHROPIC_API_KEY` |
 | `claude-code` | `kind = "claude-code"`, `--backend claude-code`, `TAMALE_BACKEND` | The Claude Code CLI's sign-in (Claude subscription or Console account) |
 | `codex` | `kind = "codex"`, `--backend codex`, `TAMALE_BACKEND` | The Codex CLI's sign-in (ChatGPT plan or OpenAI API key) |
 
@@ -15,6 +15,10 @@ identically, and the footer shows the backend next to the working directory
 switch, Esc to cancel; the current backend is marked with ●). `/backend api`,
 `/backend claude-code` and `/backend codex` (your default login of each CLI) switch
 directly. Codex logins work like Claude Code logins below (see [Codex](#codex)).
+
+If the `api` backend is selected and `ANTHROPIC_API_KEY` isn't set, tamale opens with this
+picker so you can choose (`-p` runs exit with an error instead). To skip it next time, set
+`kind` in `~/.config/tamale/config.toml` or `TAMALE_BACKEND`.
 
 **Several Claude Code logins.** Each signed-in Claude Code account is its own row in the
 picker, e.g. `Claude Code · Max · me@home.dev` and `Claude Code · Team · me@work.dev`.

@@ -19,7 +19,7 @@ git clone https://github.com/bigmah/tamale.git && cd tamale
 cargo install --path . --locked
 ```
 
-Then pick where inference comes from:
+Then run `tamale` and pick where inference comes from, or choose up front:
 
 ```sh
 export ANTHROPIC_API_KEY=sk-ant-...  # then run: tamale

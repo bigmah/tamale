@@ -1123,6 +1123,57 @@ async fn backend_switches_keep_the_conversation_and_drop_the_old_thread() {
     assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.starts_with("Already using")));
 }
 
+#[tokio::test]
+async fn without_a_backend_prompts_open_the_picker_and_stay_in_the_input() {
+    use backend::Kind;
+    use backends::Choice;
+
+    let (mut app, _rx) = App::new_with_channel(
+        Backend::Unset,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    assert!(app.logins.is_empty());
+    assert_eq!(app.backend_label(), "no backend");
+    assert!(!app.is_current(Choice::Api));
+
+    app.ask_for_backend();
+    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("Choose a backend")));
+    assert!(app.backend_picker.is_some());
+    app.on_event(key(KeyCode::Esc));
+    assert!(app.backend_picker.is_none());
+
+    // A prompt doesn't start a turn or join the history; it waits in the input.
+    type_text(&mut app, "hello");
+    app.on_event(key(KeyCode::Enter));
+    assert!(!app.is_running());
+    assert!(app.history.is_empty());
+    assert_eq!(app.input, "hello");
+    assert!(app.backend_picker.is_some());
+    app.on_event(key(KeyCode::Esc));
+
+    // Neither does a goal, and none is left behind.
+    app.input.clear();
+    app.cursor = 0;
+    app.command("/goal ship it");
+    assert!(app.goal.is_none());
+    assert!(!app.is_running());
+    assert_eq!(app.input, "/goal ship it");
+    app.on_event(key(KeyCode::Esc));
+
+    // The API row is a real switch, not "already using".
+    let before = app.entries.len();
+    app.command("/backend api");
+    assert_eq!(app.entries.len(), before);
+
+    // Choosing a backend makes it current.
+    let client = anthropic::Client::new("test-key").unwrap();
+    app.on_app_event(AppEvent::Backend(Ok(Backend::Api(client))));
+    assert!(app.is_current(Choice::Api));
+    assert_eq!(app.settings.backend.kind, Kind::Api);
+    assert_eq!(app.backend_label(), "Anthropic API");
+}
+
 fn key(code: KeyCode) -> Event {
     Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
 }

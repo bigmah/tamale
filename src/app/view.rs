@@ -16,6 +16,7 @@ use super::{
     App, EFFORT_CHOICES, FooterTab, QUIET_SUMMARY_CHARS, QUIET_TOOL_CALLS, SPINNER,
     TOOL_PREVIEW_LINES, effort_label,
 };
+use crate::backend;
 use crate::permissions;
 use crate::session;
 use crate::session::Entry;
@@ -145,10 +146,15 @@ impl App {
             .enumerate()
             .map(|(i, choice)| {
                 let (name, detail, signed_out) = match *choice {
-                    Choice::Api => (
+                    Choice::Api if backend::api_key_set() => (
                         "api",
                         "Anthropic API · ANTHROPIC_API_KEY".to_string(),
                         false,
+                    ),
+                    Choice::Api => (
+                        "api",
+                        "Anthropic API · ANTHROPIC_API_KEY not set".to_string(),
+                        true,
                     ),
                     Choice::Login(n) => {
                         let login = &self.logins[n];

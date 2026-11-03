@@ -78,16 +78,58 @@ impl App {
         }
     }
 
+    /// The row to start on: the current backend, or with none yet, the first signed-in
+    /// login (or the API when there's a key to use it with).
     fn current_choice(&self) -> usize {
-        self.backend_choices()
-            .into_iter()
-            .position(|c| self.is_current(c))
+        let choices = self.backend_choices();
+        let first_login = || {
+            choices
+                .iter()
+                .position(|c| matches!(*c, Choice::Login(i) if self.logins[i].signed_in()))
+        };
+        choices
+            .iter()
+            .position(|&c| self.is_current(c))
+            .or_else(|| {
+                let unset = matches!(self.backend, Backend::Unset);
+                (unset && !backend::api_key_set())
+                    .then(first_login)
+                    .flatten()
+            })
             .unwrap_or(0)
+    }
+
+    /// At startup without a backend: says why and opens the picker, unless another
+    /// picker (`--resume`) is already open; the first prompt opens it then.
+    pub fn ask_for_backend(&mut self) {
+        self.entries.push(Entry::Info(
+            "ANTHROPIC_API_KEY isn't set. Choose a backend to get started (/backend).".into(),
+        ));
+        if self.resume_picker.is_none() {
+            self.open_backend_picker();
+        }
+    }
+
+    /// With no backend yet, opens the picker instead of starting a turn, and puts `text`
+    /// back in the input to send afterwards. Returns whether it did.
+    pub(super) fn refuse_without_backend(&mut self, text: &str) -> bool {
+        if !matches!(self.backend, Backend::Unset) {
+            return false;
+        }
+        self.entries
+            .push(Entry::Info("Choose a backend first.".into()));
+        if self.input.is_empty() {
+            self.input = text.to_string();
+            self.cursor = self.input.len();
+        }
+        self.open_backend_picker();
+        true
     }
 
     /// `/login`: signs in to the current CLI login again (or switches its account).
     pub(super) fn login(&mut self) {
         match &self.backend {
+            Backend::Unset => self.open_backend_picker(),
             Backend::Api(_) => self.entries.push(Entry::Info(
                 "This session uses the Anthropic API with ANTHROPIC_API_KEY. To use a Claude \
 Code or Codex sign-in instead, pick one with /backend."
@@ -122,7 +164,9 @@ Code or Codex sign-in instead, pick one with /backend."
         if self.refuse_while_running() {
             return;
         }
-        let current = self.backend.kind() == kind && self.backend.login_dir().is_none();
+        let current = self.backend.kind() == kind
+            && self.backend.login_dir().is_none()
+            && !matches!(self.backend, Backend::Unset);
         if current {
             self.entries.push(Entry::Info(format!(
                 "Already using {}.",

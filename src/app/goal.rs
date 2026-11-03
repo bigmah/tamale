@@ -110,6 +110,7 @@ impl App {
                     "Can't set a goal while the agent is running (Esc to interrupt first).".into(),
                 ));
             }
+            condition if self.refuse_without_backend(&format!("/goal {condition}")) => {}
             condition => {
                 self.goal = Some(Goal {
                     condition: condition.to_string(),

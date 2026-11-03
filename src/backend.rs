@@ -7,6 +7,7 @@
 //!   calls tamale's tools through a local MCP bridge.
 //! - [`Backend::Codex`]: a signed-in Codex CLI run headlessly with `codex exec`, through
 //!   the same bridge.
+//! - [`Backend::Unset`]: none chosen yet, while the TUI asks which to use.
 
 pub mod claude_code;
 pub mod codex;
@@ -105,6 +106,14 @@ pub enum Backend {
     Api(anthropic::Client),
     ClaudeCode(ClaudeCode),
     Codex(Codex),
+    /// Nothing to run turns with yet: the API was configured without a key, and the TUI
+    /// asks for a backend. Its kind stays [`Kind::Api`], as in the settings.
+    Unset,
+}
+
+/// Whether the API backend can be used.
+pub fn api_key_set() -> bool {
+    std::env::var("ANTHROPIC_API_KEY").is_ok()
 }
 
 impl Backend {
@@ -113,7 +122,7 @@ impl Backend {
     pub async fn connect(settings: &BackendSettings) -> Result<Self> {
         match settings.kind {
             Kind::Api => {
-                if std::env::var("ANTHROPIC_API_KEY").is_err() {
+                if !api_key_set() {
                     bail!(
                         "ANTHROPIC_API_KEY is not set (or use your Claude Code sign-in with \
 the claude-code backend)"
@@ -134,7 +143,7 @@ the claude-code backend)"
 
     pub fn kind(&self) -> Kind {
         match self {
-            Self::Api(_) => Kind::Api,
+            Self::Api(_) | Self::Unset => Kind::Api,
             Self::ClaudeCode(_) => Kind::ClaudeCode,
             Self::Codex(_) => Kind::Codex,
         }
@@ -144,6 +153,7 @@ the claude-code backend)"
     pub fn label(&self) -> String {
         match self {
             Self::Api(_) => "Anthropic API".into(),
+            Self::Unset => "no backend".into(),
             Self::ClaudeCode(cc) => cc.label(),
             Self::Codex(codex) => codex.label(),
         }
@@ -152,7 +162,7 @@ the claude-code backend)"
     /// The label plus the signed-in account, to tell logins apart.
     pub fn label_with_account(&self) -> String {
         match self {
-            Self::Api(_) => self.label(),
+            Self::Api(_) | Self::Unset => self.label(),
             Self::ClaudeCode(cc) => cc.label_with_account(),
             Self::Codex(codex) => codex.label_with_account(),
         }
@@ -160,7 +170,7 @@ the claude-code backend)"
 
     pub fn email(&self) -> Option<&str> {
         match self {
-            Self::Api(_) => None,
+            Self::Api(_) | Self::Unset => None,
             Self::ClaudeCode(cc) => cc.account.email.as_deref(),
             Self::Codex(codex) => codex.account.email.as_deref(),
         }
@@ -169,7 +179,7 @@ the claude-code backend)"
     /// The directory a CLI login lives in; `None` is the CLI's default.
     pub fn login_dir(&self) -> Option<&Path> {
         match self {
-            Self::Api(_) => None,
+            Self::Api(_) | Self::Unset => None,
             Self::ClaudeCode(cc) => cc.config_dir.as_deref(),
             Self::Codex(codex) => codex.home.as_deref(),
         }
@@ -195,6 +205,7 @@ the claude-code backend)"
             Self::Api(_) => {
                 bail!("the API backend uses ANTHROPIC_API_KEY; there's nothing to sign in to")
             }
+            Self::Unset => bail!("no backend is selected; pick one with /backend"),
             Self::ClaudeCode(cc) => cc.login().await,
             Self::Codex(codex) => codex.login().await,
         }
@@ -212,6 +223,7 @@ the claude-code backend)"
     pub fn signed_in(&self) -> bool {
         match self {
             Self::Api(_) => true,
+            Self::Unset => false,
             Self::ClaudeCode(cc) => cc.account.logged_in,
             Self::Codex(codex) => codex.account.logged_in,
         }
@@ -223,6 +235,7 @@ the claude-code backend)"
                 let model = api_model(&client, &turn.model);
                 agent::run(model, turn.history, turn.config, turn.workspace, ctx, tx).await
             }
+            Self::Unset => no_backend(&tx),
             Self::ClaudeCode(cc) => cc.run(turn, ctx, tx).await,
             Self::Codex(codex) => codex.run(turn, ctx, tx).await,
         }
@@ -247,6 +260,7 @@ the claude-code backend)"
                 )
                 .await
             }
+            Self::Unset => no_backend(&tx),
             Self::ClaudeCode(cc) => cc.compact(turn, instructions, tx).await,
             Self::Codex(codex) => codex.compact(turn, instructions, tx).await,
         }
@@ -266,10 +280,17 @@ the claude-code backend)"
                 })
                 .map_err(|e| e.to_string()),
             // Claude Code has no model listing; it accepts the same model ids.
-            Self::ClaudeCode(_) => Ok(Vec::new()),
+            Self::ClaudeCode(_) | Self::Unset => Ok(Vec::new()),
             Self::Codex(codex) => codex.list_models().await.map_err(|e| format!("{e:#}")),
         }
     }
+}
+
+fn no_backend(tx: &mpsc::UnboundedSender<AgentEvent>) {
+    let _ = tx.send(AgentEvent::Error(
+        "No backend is selected; pick one with /backend.".into(),
+    ));
+    let _ = tx.send(AgentEvent::Done);
 }
 
 fn api_model(client: &anthropic::Client, name: &str) -> anthropic::completion::CompletionModel {
