@@ -1583,6 +1583,28 @@ mod tests {
         assert_eq!(server.remote_tabs(), 1);
     }
 
+    /// What the stand-in session answers "long" with: taller than the screen, with a background
+    /// of its own and a sticky header, as a real artifact has.
+    const LONG_ARTIFACT: &str = r#"<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Launch checklist</title>
+<style>
+body { margin: 0; background: #f6efe2; color: #2b2620; font: 16px/1.5 -apple-system, sans-serif; }
+header { position: sticky; top: 0; background: #b8532c; color: #fff; padding: 12px 16px; font-weight: 600; }
+section { padding: 8px 16px; }
+table { border-collapse: collapse; width: 100%; }
+td, th { border-bottom: 1px solid #d9cdb8; padding: 6px; text-align: left; }
+pre { background: #2b2620; color: #f6efe2; padding: 10px; border-radius: 6px; }
+footer { padding: 16px; background: #b8532c; color: #fff; }
+</style></head><body><header>Launch checklist</header><main id="m"></main><footer>The end of the page</footer>
+<script>
+let html = '';
+for (let i = 1; i <= 14; i++) {
+  html += `<section><h2>Step ${i}</h2><p>Everything that has to be true before step ${i} is done, in enough words to wrap across a few lines on a phone.</p>
+<table><tr><th>Owner</th><th>Due</th></tr><tr><td>Sam</td><td>Mar ${i}</td></tr></table><pre>make step-${i}</pre></section>`;
+}
+document.getElementById('m').innerHTML = html;
+</script></body></html>"#;
+
     /// A stand-in session for the iOS app's integration test (`apple/scripts/integration.sh`):
     /// connects to the hub at `TAMALE_HUB_URL` with `TAMALE_HUB_KEY`, end-to-end encrypted,
     /// prints `SID=<sid>`, and answers each prompt with a reply and an artifact until
@@ -1636,6 +1658,13 @@ mod tests {
                         always: Vec::new(),
                     });
                     entries.push(Entry::User(text.clone()));
+                    if text == "long" {
+                        entries.push(Entry::Assistant(format!(
+                            "A long one.\n\n```html artifact\n{LONG_ARTIFACT}\n```"
+                        )));
+                        sync(&mut server, &entries, &approval);
+                        continue;
+                    }
                     entries.push(Entry::Assistant(format!(
                         "You said **{text}**.\n\n```html artifact\n<!doctype html><title>Echo</title><p>{}</p>\n```",
                         render::escape(&text)

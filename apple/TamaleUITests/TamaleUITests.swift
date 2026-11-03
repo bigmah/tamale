@@ -45,6 +45,84 @@ final class TamaleUITests: XCTestCase {
         wait(text(app, containing: "Here it is."), app, timeout: 20)
     }
 
+    /// The viewer gives the whole screen to the page, and its controls get out of the way.
+    func testTheViewerFillsTheScreenAndItsControlsHideWhileReading() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let key = env["TAMALE_DEBUG_KEY"], let hub = env["TAMALE_DEBUG_HUB"] else {
+            throw XCTSkip("run apple/scripts/uitest.sh")
+        }
+        let app = XCUIApplication()
+        app.launchEnvironment = ["TAMALE_DEBUG_KEY": key, "TAMALE_DEBUG_HUB": hub]
+        app.launch()
+        let row = text(app, containing: "Show me the plan")
+        wait(row, app, timeout: 20)
+        row.tap()
+        let yes = app.buttons["Yes"]
+        wait(yes, app, timeout: 20)
+        yes.tap()
+
+        // Inline: the card runs edge to edge, and a short page gets a short card.
+        let inline = app.webViews.firstMatch
+        wait(inline, app, timeout: 15)
+        wait(inline.staticTexts["Plan"], app, timeout: 15)
+        XCTAssertEqual(inline.frame.width, app.frame.width, accuracy: 1)
+        let short = NSPredicate { _, _ in inline.frame.height < 150 }
+        wait(for: [expectation(for: short, evaluatedWith: nil)], timeout: 10)
+
+        let field = app.textFields.firstMatch.exists ? app.textFields.firstMatch : app.textViews.firstMatch
+        field.tap()
+        field.typeText("long")
+        app.buttons["Send"].tap()
+        // An approval takes the keyboard down, leaving room to read what it's about.
+        wait(yes, app, timeout: 15)
+        XCTAssertFalse(app.keyboards.firstMatch.waitForExistence(timeout: 1))
+        yes.tap()
+
+        let card = app.buttons["Launch checklist"]
+        wait(card, app, timeout: 15)
+        let loaded = expectation(for: NSPredicate(format: "isEnabled == true"), evaluatedWith: card)
+        wait(for: [loaded], timeout: 15)
+        card.tap()
+
+        let done = app.buttons["Done"]
+        wait(done, app, timeout: 10)
+        XCTAssertEqual(app.webViews.firstMatch.frame, app.frame)
+
+        // Reading hides the controls, leaving a handle that brings them back.
+        app.webViews.firstMatch.swipeUp()
+        let handle = app.buttons["Show controls"]
+        wait(handle, app, timeout: 5)
+        XCTAssertFalse(done.exists)
+        handle.tap()
+        wait(done, app, timeout: 5)
+
+        // Scrolling back up does too.
+        app.webViews.firstMatch.swipeUp()
+        wait(handle, app, timeout: 5)
+        app.webViews.firstMatch.swipeDown()
+        wait(done, app, timeout: 5)
+
+        // The end of the page clears the bar.
+        for _ in 0..<12 { app.webViews.firstMatch.swipeUp(velocity: .fast) }
+        // (The conversation's card, underneath, has the same page.)
+        let footer = app.webViews.firstMatch.staticTexts["The end of the page"]
+        wait(footer, app, timeout: 5)
+        wait(done, app, timeout: 5)
+        XCTAssertLessThan(footer.frame.maxY, done.frame.minY)
+
+        // The title goes back to the top, and from there a pull down closes it.
+        // (The conversation's card, underneath, has the same name.)
+        app.buttons["artifact-title"].tap()
+        wait(app.webViews.firstMatch.staticTexts["Step 1"], app, timeout: 5)
+        Thread.sleep(forTimeInterval: 1)
+        let web = app.webViews.firstMatch
+        web.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
+            .press(forDuration: 0.05, thenDragTo: web.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95)))
+        let closed = expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: done)
+        wait(for: [closed], timeout: 5)
+        wait(card, app, timeout: 5)
+    }
+
     func testAddsAKeyOpensASessionAndDrivesIt() throws {
         let env = ProcessInfo.processInfo.environment
         guard let key = env["TAMALE_DEBUG_KEY"], let hub = env["TAMALE_DEBUG_HUB"] else {
@@ -89,7 +167,7 @@ final class TamaleUITests: XCTestCase {
         wait(for: [loaded], timeout: 15)
         echo.tap()
         wait(app.buttons["Done"], app, timeout: 10)
-        XCTAssertTrue(app.navigationBars["Echo"].exists)
+        XCTAssertEqual(app.buttons["artifact-title"].label, "Echo")
         app.buttons["Done"].tap()
 
         app.navigationBars.buttons.element(boundBy: 0).tap()

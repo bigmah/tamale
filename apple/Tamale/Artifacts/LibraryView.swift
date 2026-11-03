@@ -76,8 +76,10 @@ struct GalleryView: View {
     /// Puts a prompt in the session's composer.
     var revise: (String) -> Void
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var context
     @State private var showing: (ArtifactSource, Gallery.Item, Bool)?
     @State private var waiting: (Gallery.Item, Bool)?
+    @State private var missing = false
 
     var body: some View {
         NavigationStack {
@@ -102,7 +104,9 @@ struct GalleryView: View {
                                         Spacer()
                                         if waiting?.0 == item { ProgressView() }
                                     }
+                                    .contentShape(Rectangle())
                                 }
+                                .listRowBackground(Theme.surface)
                             }
                         }
                     }
@@ -115,6 +119,8 @@ struct GalleryView: View {
                     .listRowBackground(Color.clear)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Theme.background)
             .navigationTitle("Gallery")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -122,9 +128,18 @@ struct GalleryView: View {
             }
             .onAppear { model.requestGallery() }
             .onChange(of: model.pages) {
-                guard let (item, current) = waiting, let page = model.pages[item.id], let html = page.html else { return }
+                guard let (item, current) = waiting, let page = model.pages[item.id] else { return }
                 waiting = nil
+                guard let html = page.html else {
+                    missing = true
+                    return
+                }
                 showing = (ArtifactSource(title: item.title, html: html, hash: page.hash ?? item.hash), item, current)
+            }
+            .alert("This artifact is no longer available", isPresented: $missing) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("tamale doesn't have it any more, and it isn't saved on this iPhone.")
             }
             .fullScreenCover(isPresented: Binding(get: { showing != nil }, set: { if !$0 { showing = nil } })) {
                 if let (source, item, current) = showing {
@@ -140,9 +155,17 @@ struct GalleryView: View {
         }
     }
 
+    private func saved(_ item: Gallery.Item) -> StoredArtifact? {
+        guard let hash = item.hash else { return nil }
+        return try? context.fetch(FetchDescriptor<StoredArtifact>(predicate: #Predicate { $0.contentHash == hash })).first
+    }
+
     private func open(_ item: Gallery.Item, current: Bool) {
         if let page = model.pages[item.id], let html = page.html {
             showing = (ArtifactSource(title: item.title, html: html, hash: page.hash ?? item.hash), item, current)
+        } else if let saved = saved(item) {
+            // The library's copy opens at once, connected or not.
+            showing = (ArtifactSource(title: item.title, html: saved.html, hash: saved.contentHash), item, current)
         } else {
             waiting = (item, current)
             model.requestArtifact(item.id)

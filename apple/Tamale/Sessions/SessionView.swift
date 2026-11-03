@@ -26,6 +26,8 @@ struct SessionView: View {
     @State private var viewing: ArtifactSource?
     @State private var showingGallery = false
     @State private var showingStatus = false
+    /// Revise asked for the composer, which can't take focus until the cover over it has gone.
+    @State private var focusAfterCover = false
     @FocusState private var composing: Bool
 
     var body: some View {
@@ -41,6 +43,10 @@ struct SessionView: View {
             Composer(model: model, draft: $draft, focused: $composing)
         }
         .animation(.snappy, value: model.approval)
+        // With the keyboard up as well, there'd be no conversation left to see what it's about.
+        .onChange(of: model.approval == nil) { _, none in
+            if !none { composing = false }
+        }
         .background(Theme.background)
         .navigationTitle(model.title.isEmpty ? row.shownTitle : model.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -78,22 +84,26 @@ struct SessionView: View {
         .onChange(of: phase) { _, phase in
             if phase == .active { model.resume() }
         }
-        .fullScreenCover(item: $viewing) { source in
-            ArtifactViewer(source: source, revise: { prompt in
-                draft = prompt
-                composing = true
-            })
+        .fullScreenCover(item: $viewing, onDismiss: focusIfAsked) { source in
+            ArtifactViewer(source: source, revise: revise)
         }
-        .sheet(isPresented: $showingGallery) {
-            GalleryView(model: model) { prompt in
-                draft = prompt
-                composing = true
-            }
+        .sheet(isPresented: $showingGallery, onDismiss: focusIfAsked) {
+            GalleryView(model: model, revise: revise)
         }
         .sheet(isPresented: $showingStatus) {
             StatusSheet(row: row, model: model)
                 .presentationDetents([.medium, .large])
         }
+    }
+
+    private func revise(_ prompt: String) {
+        draft = prompt
+        focusAfterCover = true
+    }
+
+    private func focusIfAsked() {
+        if focusAfterCover { composing = true }
+        focusAfterCover = false
     }
 }
 
@@ -131,6 +141,8 @@ struct Conversation: View {
     var model: SessionModel
     var open: (ArtifactSource) -> Void
     @State private var expandedGroups: Set<Int> = []
+    /// Artifact cards run past this to the screen's edges.
+    static let sidePadding: CGFloat = 14
 
     /// Entries with runs of tool calls folded into groups.
     enum Item: Identifiable {
@@ -187,7 +199,7 @@ struct Conversation: View {
                     }
                     Color.clear.frame(height: 1).id("bottom")
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, Self.sidePadding)
                 .padding(.vertical, 12)
             }
             .defaultScrollAnchor(.bottom)

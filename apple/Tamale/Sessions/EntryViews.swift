@@ -52,7 +52,8 @@ struct EntryView: View {
         let (markdown, artifacts) = entry.prose
         return MarkdownView(markdown) { n in
             if n < artifacts.count {
-                ArtifactCard(block: artifacts[n], model: model, open: open)
+                // A note sits in a box of its own, which the card stays inside.
+                ArtifactCard(block: artifacts[n], model: model, bleeds: entry.kind == .assistant, open: open)
             }
         }
         .foregroundStyle(Theme.foreground)
@@ -210,6 +211,7 @@ struct ApprovalCard: View {
                         .padding(8)
                 }
                 .frame(maxHeight: 120)
+                .fixedSize(horizontal: false, vertical: true)
                 .background(Theme.background, in: RoundedRectangle(cornerRadius: 6))
             }
             if refusing {

@@ -19,8 +19,10 @@ phone (below).
    web page uses. Send prompts (they queue while tamale is working), stop a run with the stop
    button, and answer approvals with **Yes**, **Always** or **No** (with a reason).
 
-**Artifacts** show inline at their own height; tap the title for full screen, where you can share
-the HTML, export a PDF, or **Revise** (which starts the prompt in the composer). The session menu
+**Artifacts** show inline at their own height; tap the title for full screen, where the page gets
+the whole display. The bar at the bottom hides as you scroll down and comes back when you scroll up
+or tap the handle left in its place; pull down from the top of the page to close. From the bar you
+can share the HTML, export a PDF, or **Revise** (which starts the prompt in the composer). The session menu
 has the **gallery** of every artifact the project's sessions saved. Each artifact you open is kept
 in the **Library**, readable offline and after the session ends.
 

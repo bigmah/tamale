@@ -189,7 +189,8 @@ origin, and the app keeps the same guarantee:
   a resizer that posts its height to `parent`. A `WKWebView` has no parent to hear it, so for
   inline cards read `document.documentElement.scrollHeight` with `evaluateJavaScript` after
   load and when the web view's `scrollView.contentSize` changes (KVO), not through a message
-  handler. The full-screen viewer just scrolls.
+  handler (measuring the content, since `scrollHeight` is never less than the frame). The
+  full-screen viewer just scrolls, edge to edge under a floating bar that hides as you read.
 - The artifacts guide already designs for 340–1400px and touch, so iPhone and iPad widths
   are covered.
 

@@ -14,9 +14,27 @@ enum ArtifactPage {
         + "style-src 'unsafe-inline' https:; img-src data: blob: https:; font-src data: https:; "
         + "media-src data: blob: https:; connect-src https:"
 
-    /// `html` with the CSP `<meta>` first in its head.
+    /// A page that doesn't size itself would otherwise be laid out 980px wide and shrunk to fit.
+    static let viewport = "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+
+    /// The bottom of the page's content. Not `documentElement.scrollHeight`, which is never less
+    /// than the frame, so a card could grow to fit a page but never shrink to one.
+    static let measureScript = """
+        (() => {
+          const b = document.body;
+          if (!b) return 0;
+          const margin = parseFloat(getComputedStyle(b).marginBottom) || 0;
+          const bottoms = [...b.children].map((c) => c.getBoundingClientRect().bottom);
+          return Math.ceil(Math.max(b.getBoundingClientRect().bottom + margin, ...bottoms) + scrollY);
+        })()
+        """
+
+    /// `html` with the CSP `<meta>` first in its head, and a viewport if it has none.
     static func secured(_ html: String) -> String {
-        let meta = "<meta http-equiv=\"Content-Security-Policy\" content=\"\(csp)\">"
+        var meta = "<meta http-equiv=\"Content-Security-Policy\" content=\"\(csp)\">"
+        if html.range(of: #"<meta[^>]+name\s*=\s*["']?viewport"#, options: [.regularExpression, .caseInsensitive]) == nil {
+            meta += viewport
+        }
         func after(_ tag: String) -> String.Index? {
             guard let open = html.range(of: tag, options: .caseInsensitive),
                   let close = html[open.lowerBound...].firstIndex(of: ">")
@@ -41,13 +59,18 @@ enum ArtifactPage {
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
         config.dataDetectorTypes = []
         let view = WKWebView(frame: CGRect(x: 0, y: 0, width: 320, height: 200), configuration: config)
-        view.isOpaque = false
-        view.backgroundColor = .clear
-        view.scrollView.backgroundColor = .clear
+        // Opaque white, as in a browser: a page with no background of its own is written for
+        // that, and its black text can't be read on the app's dark background.
+        view.isOpaque = true
+        view.backgroundColor = .white
         view.allowsLinkPreview = false
         if #available(iOS 16.4, *) { view.isInspectable = false }
         return view
     }
+}
+
+enum ArtifactScroll {
+    case hideControls, showControls, pulledPastTop
 }
 
 struct ArtifactWebView: UIViewRepresentable {
@@ -58,6 +81,14 @@ struct ArtifactWebView: UIViewRepresentable {
     var onLink: ((URL) -> Void)?
     /// Hands the web view out, for PDF export.
     var onWebView: ((WKWebView) -> Void)?
+    /// The first load finished (or failed), so there's something to show.
+    var onLoaded: (() -> Void)?
+    /// The color the page wants around it: its `theme-color`, else its background.
+    var onPageColor: ((UIColor) -> Void)?
+    /// What the reader's finger is doing, for controls floating over a scrolling page.
+    var onScroll: ((ArtifactScroll) -> Void)?
+    /// Room below the end of the page, so floating controls can't cover its last line.
+    var bottomInset: CGFloat = 0
 
     func makeUIView(context: Context) -> WKWebView {
         let view = ArtifactPage.makeWebView()
@@ -65,6 +96,13 @@ struct ArtifactWebView: UIViewRepresentable {
         view.uiDelegate = context.coordinator
         view.scrollView.isScrollEnabled = scrolls
         view.scrollView.bounces = scrolls
+        if scrolls {
+            // A page shorter than the screen can still be pulled down to close.
+            view.scrollView.alwaysBounceVertical = true
+            view.scrollView.contentInset.bottom = bottomInset
+            view.scrollView.verticalScrollIndicatorInsets.bottom = bottomInset
+            view.scrollView.delegate = context.coordinator
+        }
         context.coordinator.observe(view)
         onWebView?(view)
         return view
@@ -73,22 +111,32 @@ struct ArtifactWebView: UIViewRepresentable {
     func updateUIView(_ view: WKWebView, context: Context) {
         context.coordinator.parent = self
         context.coordinator.load(html, in: view)
+        context.coordinator.widthMayHaveChanged(view)
     }
 
     static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
-        coordinator.observation = nil
+        coordinator.observations = []
+        view.scrollView.delegate = nil
         view.stopLoading()
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
     @MainActor
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, UIScrollViewDelegate {
         var parent: ArtifactWebView
         var loaded: String?
         var allowNext = false
-        var observation: NSKeyValueObservation?
+        var observations: [NSKeyValueObservation] = []
         var lastHeight: CGFloat = 0
+        var lastWidth: CGFloat = 0
+        var lastOffset: CGFloat = 0
+        /// How far the finger has gone in the current direction.
+        var travel: CGFloat = 0
+        /// How far past the top a pull has to go to close the page.
+        static let pullToClose: CGFloat = 90
+        /// How far a scroll has to go in one direction to hide or show the controls.
+        static let chromeTravel: CGFloat = 16
 
         init(parent: ArtifactWebView) { self.parent = parent }
 
@@ -100,8 +148,44 @@ struct ArtifactWebView: UIViewRepresentable {
         }
 
         func observe(_ view: WKWebView) {
-            observation = view.scrollView.observe(\.contentSize, options: [.new]) { [weak self, weak view] _, _ in
-                Task { @MainActor in
+            observations = [
+                view.scrollView.observe(\.contentSize, options: [.new]) { [weak self, weak view] _, _ in
+                    Task { @MainActor in
+                        guard let self, let view else { return }
+                        self.measure(view)
+                    }
+                },
+                view.observe(\.underPageBackgroundColor, options: [.new]) { [weak self, weak view] _, _ in
+                    Task { @MainActor in
+                        guard let self, let view else { return }
+                        self.reportColor(view)
+                    }
+                },
+                view.observe(\.themeColor, options: [.new]) { [weak self, weak view] _, _ in
+                    Task { @MainActor in
+                        guard let self, let view else { return }
+                        self.reportColor(view)
+                    }
+                },
+            ]
+        }
+
+        func reportColor(_ view: WKWebView) {
+            if let color = view.themeColor ?? view.underPageBackgroundColor { parent.onPageColor?(color) }
+        }
+
+        /// A rotation reflows the page, which doesn't have to change its content size. Waits for
+        /// the new layout.
+        func widthMayHaveChanged(_ view: WKWebView) {
+            guard parent.onHeight != nil, view.bounds.width != lastWidth else { return }
+            lastWidth = view.bounds.width
+            measureSoon(view)
+        }
+
+        /// Pages draw late too (charts, say), and tell us nothing when they do.
+        func measureSoon(_ view: WKWebView) {
+            for delay in [0.3, 1.2] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak view] in
                     guard let self, let view else { return }
                     self.measure(view)
                 }
@@ -110,7 +194,7 @@ struct ArtifactWebView: UIViewRepresentable {
 
         func measure(_ view: WKWebView) {
             guard parent.onHeight != nil else { return }
-            view.evaluateJavaScript("Math.ceil(document.documentElement.scrollHeight)") { [weak self] value, _ in
+            view.evaluateJavaScript(ArtifactPage.measureScript) { [weak self] value, _ in
                 guard let self, let height = (value as? NSNumber).map({ CGFloat(truncating: $0) }), height > 0,
                       abs(height - self.lastHeight) > 1
                 else { return }
@@ -138,6 +222,47 @@ struct ArtifactWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             measure(webView)
+            measureSoon(webView)
+            reportColor(webView)
+            parent.onLoaded?()
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            parent.onLoaded?()
+        }
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            parent.onLoaded?()
+        }
+
+        // MARK: Scrolling
+
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            let y = scrollView.contentOffset.y + scrollView.adjustedContentInset.top
+            defer { lastOffset = y }
+            // Only the reader's scrolling: a rotation or a page's own layout moves this too.
+            guard scrollView.isTracking || scrollView.isDecelerating else { return }
+            let end = scrollView.contentSize.height + scrollView.adjustedContentInset.top
+                + scrollView.adjustedContentInset.bottom - scrollView.bounds.height
+            if y <= 4 || y >= end - 4 {
+                travel = 0
+                parent.onScroll?(.showControls)
+                return
+            }
+            let step = y - lastOffset
+            travel = travel * step < 0 ? step : travel + step
+            if travel > Self.chromeTravel {
+                parent.onScroll?(.hideControls)
+            } else if travel < -Self.chromeTravel {
+                parent.onScroll?(.showControls)
+            }
+        }
+
+        func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint,
+                                       targetContentOffset: UnsafeMutablePointer<CGPoint>) {
+            if scrollView.contentOffset.y + scrollView.adjustedContentInset.top < -Self.pullToClose {
+                parent.onScroll?(.pulledPastTop)
+            }
         }
 
         /// `window.open` and `target=_blank`: offered to Safari like other links, never a new view.

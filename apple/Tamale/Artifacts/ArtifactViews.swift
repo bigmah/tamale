@@ -1,5 +1,5 @@
 // Artifacts in the conversation: a card that shows the page inline at its own height, and the
-// full-screen viewer with share/export (HTML, PDF) and Revise.
+// edge-to-edge viewer with share/export (HTML, PDF) and Revise.
 
 import SwiftUI
 import SwiftData
@@ -18,13 +18,19 @@ struct ArtifactCard: View {
     var block: ArtifactBlock
     var model: SessionModel
     var open: (ArtifactSource) -> Void
+    /// Runs to the edges of the screen, past the conversation's side padding.
+    var bleeds = false
     @Query private var stored: [StoredArtifact]
-    @State private var height: CGFloat = 160
+    @Environment(\.verticalSizeClass) private var verticalSize
+    @State private var contentHeight: CGFloat = 120
+    @State private var loaded = false
     @State private var link: URL?
+    @State private var pageColor = Color.white
 
-    init(block: ArtifactBlock, model: SessionModel, open: @escaping (ArtifactSource) -> Void) {
+    init(block: ArtifactBlock, model: SessionModel, bleeds: Bool = false, open: @escaping (ArtifactSource) -> Void) {
         self.block = block
         self.model = model
+        self.bleeds = bleeds
         self.open = open
         let hash = block.hash ?? ""
         _stored = Query(filter: #Predicate<StoredArtifact> { $0.contentHash == hash })
@@ -44,6 +50,11 @@ struct ArtifactCard: View {
         guard let id = block.id, let page = model.pages[id] else { return false }
         return page.html == nil && stored.isEmpty
     }
+
+    /// The most of a page shown inline. Less on its side, where the screen is short.
+    private var tallest: CGFloat { verticalSize == .compact ? 280 : 520 }
+    private var clipped: Bool { contentHeight > tallest }
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: bleeds ? 0 : 10) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -65,29 +76,32 @@ struct ArtifactCard: View {
                             .foregroundStyle(Theme.dim)
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
+                .padding(.horizontal, bleeds ? Conversation.sidePadding : 12)
+                .frame(minHeight: 44)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(source == nil)
 
             if let source {
-                Divider().overlay(Theme.border)
                 ArtifactWebView(
                     html: source.html, scrolls: false,
-                    onHeight: { height = min(max($0, 60), 520) },
-                    onLink: { link = $0 })
-                    .frame(height: height)
+                    onHeight: { contentHeight = max($0, 44) },
+                    onLink: { link = $0 },
+                    onLoaded: { withAnimation(.easeOut(duration: 0.2)) { loaded = true } },
+                    onPageColor: { pageColor = Color(uiColor: $0) })
+                    .frame(height: min(contentHeight, tallest))
+                    .overlay {
+                        // Not a white flash while a dark page loads.
+                        if !loaded { Theme.surface.allowsHitTesting(false) }
+                    }
                     .overlay(alignment: .bottom) {
-                        if height >= 520 {
-                            Button("Open full screen") { open(source) }
-                                .font(.footnote.weight(.medium))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(.ultraThinMaterial, in: Capsule())
-                                .padding(8)
-                        }
+                        if clipped { more(source) }
+                    }
+                    .task {
+                        // A script that never finishes loading still leaves a page to see.
+                        try? await Task.sleep(for: .seconds(3))
+                        loaded = true
                     }
             } else if gone {
                 Text("tamale no longer has this artifact (it restarted). Ask for it again, or find it in the gallery.")
@@ -100,13 +114,46 @@ struct ArtifactCard: View {
                     .padding(16)
             }
         }
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.border, lineWidth: 0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .background(Theme.surface, in: shape)
+        .overlay {
+            if bleeds {
+                VStack {
+                    Theme.border.frame(height: 0.5)
+                    Spacer()
+                    Theme.border.frame(height: 0.5)
+                }
+                .allowsHitTesting(false)
+            } else {
+                shape.stroke(Theme.border, lineWidth: 0.5)
+            }
+        }
+        .clipShape(shape)
+        .padding(.horizontal, bleeds ? -Conversation.sidePadding : 0)
         .onAppear(perform: request)
         .onChange(of: block.id) { request() }
         .onChange(of: model.connection) { request() }
         .confirmsLinks($link)
+    }
+
+    /// The page goes on past the card: says so, and goes there.
+    private func more(_ source: ArtifactSource) -> some View {
+        Button {
+            open(source)
+        } label: {
+            Label("Open full screen", systemImage: "arrow.up.left.and.arrow.down.right")
+                .font(.footnote.weight(.semibold))
+                .padding(.horizontal, 14)
+                .frame(height: 36)
+                .background(.regularMaterial, in: Capsule())
+                .padding(.bottom, 12)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 48)
+                .background(
+                    LinearGradient(colors: [pageColor.opacity(0), pageColor], startPoint: .top, endPoint: .bottom)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func request() {
@@ -115,7 +162,9 @@ struct ArtifactCard: View {
     }
 }
 
-/// Full screen: the page scrolls, with share/export and Revise.
+/// Full screen, all of it: the page runs edge to edge under a small bar of controls that gets
+/// out of the way as you read. Scroll back up or tap the handle to bring it back; pull down from
+/// the top to close.
 struct ArtifactViewer: View {
     var source: ArtifactSource
     /// Puts the Revise prompt in the composer; nil where there's no session to send it to.
@@ -123,49 +172,177 @@ struct ArtifactViewer: View {
     /// What Revise says for an artifact from an earlier session, if not the usual prompt.
     var revisePrompt: String?
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     @State private var webView: WKWebView?
     @State private var link: URL?
+    @State private var htmlFile: URL?
     @State private var exported: URL?
     @State private var exporting = false
+    @State private var loaded = false
+    @State private var controls = true
+    @State private var pageColor: Color?
+
+    /// Height of the bar and the gap under it, kept clear below the end of the page.
+    private static let barSpace: CGFloat = 68
 
     var body: some View {
-        NavigationStack {
-            ArtifactWebView(html: source.html, scrolls: true, onLink: { link = $0 }, onWebView: { webView = $0 })
-                .ignoresSafeArea(edges: .bottom)
-                .background(Color.white)
-                .navigationTitle(source.title)
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Done") { dismiss() }
-                    }
-                    ToolbarItemGroup(placement: .primaryAction) {
-                        Menu {
-                            if let file = htmlFile() {
-                                ShareLink(item: file) { Label("Share HTML", systemImage: "doc.richtext") }
-                            }
-                            Button("Export PDF", systemImage: "doc") { exportPDF() }
-                            Button("Copy HTML", systemImage: "doc.on.doc") { UIPasteboard.general.string = source.html }
-                        } label: {
-                            if exporting { ProgressView() } else { Image(systemName: "square.and.arrow.up") }
-                        }
-                        if let revise {
-                            Button("Revise", systemImage: "pencil.line") {
-                                revise(revisePrompt ?? Prompts.revise(title: source.title))
-                                dismiss()
-                            }
-                        } else {
-                            Button("Copy revise prompt", systemImage: "pencil.line") {
-                                UIPasteboard.general.string = revisePrompt ?? Prompts.revise(title: source.title)
-                            }
-                        }
+        GeometryReader { geometry in
+            ZStack {
+                Theme.background.ignoresSafeArea()
+                ArtifactWebView(
+                    html: source.html, scrolls: true,
+                    onLink: { link = $0 },
+                    onWebView: { view in DispatchQueue.main.async { webView = view } },
+                    onLoaded: { withAnimation(.easeOut(duration: 0.2)) { loaded = true } },
+                    onPageColor: { pageColor = Color(uiColor: $0) },
+                    onScroll: scrolled,
+                    bottomInset: Self.barSpace)
+                    .ignoresSafeArea()
+                    .opacity(loaded ? 1 : 0)
+
+                if !loaded {
+                    ProgressView()
+                }
+
+                // Around the Dynamic Island the page keeps its color, rather than text sliding
+                // through the gap above a sticky header.
+                VStack(spacing: 0) {
+                    (pageColor ?? Theme.background)
+                        .frame(height: geometry.safeAreaInsets.top)
+                        .ignoresSafeArea(edges: .top)
+                        .opacity(loaded ? 1 : 0)
+                    Spacer()
+                }
+                .allowsHitTesting(false)
+
+                VStack(spacing: 0) {
+                    Spacer()
+                    if controls || voiceOver {
+                        bar.transition(.move(edge: .bottom).combined(with: .opacity))
+                    } else {
+                        handle.transition(.opacity)
                     }
                 }
-                .sheet(item: $exported) { file in
-                    ShareSheet(items: [file])
-                }
+                // A form in the page needs the space the keyboard leaves.
+                .ignoresSafeArea(.keyboard)
+            }
+        }
+        .statusBarHidden()
+        .persistentSystemOverlays(controls ? .automatic : .hidden)
+        .task {
+            htmlFile = writeHTMLFile()
+            // A script that never finishes loading still leaves a page to see.
+            try? await Task.sleep(for: .seconds(3))
+            withAnimation { loaded = true }
+        }
+        .sheet(item: $exported) { file in
+            ShareSheet(items: [file])
         }
         .confirmsLinks($link)
+    }
+
+    private func scrolled(_ event: ArtifactScroll) {
+        switch event {
+        case .pulledPastTop:
+            dismiss()
+        case .hideControls, .showControls:
+            let show = event == .showControls
+            if show != controls { withAnimation(.snappy(duration: 0.25)) { controls = show } }
+        }
+    }
+
+    private var bar: some View {
+        HStack(spacing: 0) {
+            barButton("Done", systemImage: "xmark") { dismiss() }
+            // The status bar is hidden, so this is the way back to the top.
+            Button {
+                guard let scroll = webView?.scrollView else { return }
+                scroll.setContentOffset(CGPoint(x: 0, y: -scroll.adjustedContentInset.top), animated: true)
+            } label: {
+                Text(source.title)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(Theme.bright)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Scrolls to the top")
+            .accessibilityIdentifier("artifact-title")
+            shareMenu
+            if let revise {
+                barButton("Revise", systemImage: "pencil.line") {
+                    revise(revisePrompt ?? Prompts.revise(title: source.title))
+                    dismiss()
+                }
+            }
+        }
+        .padding(.horizontal, 4)
+        .frame(height: 52)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
+        .frame(maxWidth: 560)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+    }
+
+    /// All that's left of the bar while reading.
+    private var handle: some View {
+        Button {
+            withAnimation(.snappy(duration: 0.25)) { controls = true }
+        } label: {
+            Capsule()
+                .fill(.regularMaterial)
+                .overlay(Capsule().stroke(Color.white.opacity(0.25), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.3), radius: 3)
+                .frame(width: 44, height: 6)
+                .frame(width: 96, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Show controls")
+    }
+
+    private func barButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.body.weight(.medium))
+                .foregroundStyle(Theme.bright)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+    }
+
+    private var shareMenu: some View {
+        Menu {
+            if let htmlFile {
+                ShareLink(item: htmlFile) { Label("Share HTML", systemImage: "doc.richtext") }
+            }
+            Button("Export PDF", systemImage: "doc") { exportPDF() }
+            Button("Copy HTML", systemImage: "doc.on.doc") { UIPasteboard.general.string = source.html }
+            if revise == nil {
+                // No session here to revise it in; the prompt can go to one.
+                Button("Copy revise prompt", systemImage: "pencil.line") {
+                    UIPasteboard.general.string = revisePrompt ?? Prompts.revise(title: source.title)
+                }
+            }
+        } label: {
+            Group {
+                if exporting {
+                    ProgressView()
+                } else {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(Theme.bright)
+                }
+            }
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+        }
+        .accessibilityLabel("Share")
     }
 
     private var fileName: String {
@@ -173,7 +350,7 @@ struct ArtifactViewer: View {
         return slug.isEmpty ? "artifact" : String(slug.prefix(60))
     }
 
-    private func htmlFile() -> URL? {
+    private func writeHTMLFile() -> URL? {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(fileName).html")
         try? source.html.write(to: url, atomically: true, encoding: .utf8)
         return url
