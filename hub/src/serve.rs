@@ -603,8 +603,42 @@ fn guard(mut response: Response) -> Response {
     response
 }
 
-async fn dashboard() -> Response {
-    guard(([(header::CONTENT_TYPE, "text/html; charset=utf-8")], PAGE).into_response())
+/// The hub's page, which shows sessions in frames. It's only ever framed by itself, when a
+/// session whose cookie has run out redirects its frame here to get another.
+async fn dashboard(State(hub): State<Arc<Hub>>) -> Response {
+    let mut response =
+        guard(([(header::CONTENT_TYPE, "text/html; charset=utf-8")], PAGE).into_response());
+    let csp = format!(
+        "default-src 'self'; img-src 'self' data:; frame-src 'self' {}; frame-ancestors 'self'; base-uri 'none'; form-action 'self'",
+        hub.public.session_origin("*"),
+    );
+    let headers = response.headers_mut();
+    if let Ok(csp) = csp.parse() {
+        headers.insert(header::CONTENT_SECURITY_POLICY, csp);
+    }
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("SAMEORIGIN"));
+    response
+}
+
+/// `csp` from a session's tamale, also letting the hub's page frame it. tamale serves the
+/// same page locally, where nothing may frame it; it doesn't know the hub's page will.
+fn framed_by_hub(csp: &str, hub_origin: &str) -> String {
+    csp.split(';')
+        .map(|directive| {
+            let trimmed = directive.trim();
+            match trimmed.strip_prefix("frame-ancestors") {
+                Some(sources) if sources.trim() == "'none'" => {
+                    format!(" frame-ancestors {hub_origin}")
+                }
+                // Every ancestor has to match, so frames inside the page need it too.
+                Some(_) => format!(" {trimmed} {hub_origin}"),
+                None => directive.to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(";")
+        .trim_start()
+        .to_string()
 }
 
 async fn www(State(hub): State<Arc<Hub>>) -> Response {
@@ -1170,11 +1204,17 @@ async fn tunnel(
                 | "cache-control"
                 | "content-security-policy"
                 | "referrer-policy"
-                | "x-frame-options"
         ) && let (Ok(n), Ok(v)) = (name.parse::<header::HeaderName>(), value.parse())
         {
             out.insert(n, v);
         }
+    }
+    let csp = out
+        .get(header::CONTENT_SECURITY_POLICY)
+        .and_then(|v| v.to_str().ok())
+        .map(|csp| framed_by_hub(csp, &hub.public.origin()));
+    if let Some(Ok(csp)) = csp.map(|csp| csp.parse()) {
+        out.insert(header::CONTENT_SECURITY_POLICY, csp);
     }
     out.insert(
         header::X_CONTENT_TYPE_OPTIONS,
@@ -1578,6 +1618,20 @@ async fn agent_socket(hub: Arc<Hub>, key: state::Key, ip: IpAddr, ws: WebSocket)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_hubs_page_may_frame_a_session() {
+        let hub = "https://hub.example";
+        assert_eq!(
+            framed_by_hub("default-src 'self'; frame-ancestors 'none'", hub),
+            "default-src 'self'; frame-ancestors https://hub.example"
+        );
+        assert_eq!(
+            framed_by_hub("sandbox allow-scripts; frame-ancestors 'self'", hub),
+            "sandbox allow-scripts; frame-ancestors 'self' https://hub.example"
+        );
+        assert_eq!(framed_by_hub("default-src 'self'", hub), "default-src 'self'");
+    }
 
     #[test]
     fn public_urls_need_https_unless_insecure() {
@@ -2409,7 +2463,10 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(r.status(), 200);
-            assert_eq!(r.headers()["x-frame-options"], "DENY");
+            assert_eq!(r.headers()["x-frame-options"], "SAMEORIGIN");
+            let csp = r.headers()["content-security-policy"].to_str().unwrap();
+            assert!(csp.contains("frame-ancestors 'self'"), "{csp}");
+            assert!(csp.contains(&format!("frame-src 'self' http://*.hub.localhost:{}", setup.port)), "{csp}");
             assert!(r.text().await.unwrap().contains("tamale-hub"));
             let _ = std::fs::remove_dir_all(&setup.store.dir);
         }

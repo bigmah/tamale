@@ -31,6 +31,11 @@ The designs are in [`single_key.md`](../single_key.md) (keys),
 3. **On your phone**, scan the key's QR code from the site, once. Your sessions are listed
    there; tap one to drive it. Add the page to the home screen for an app-like icon.
 
+The site lists your sessions beside the one you're in, and sessions you've opened keep running
+behind it (the four most recent), so switching back is instant. `Alt+↑`/`Alt+↓` moves between
+them and `Alt+1`–`9` jumps. Each session still runs on its own origin, in a frame only the hub's
+own page may embed.
+
 The site's **Show** button brings a key's export line and code back on a browser that holds it,
 which is how a second machine gets it. **New key** replaces it, and every machine and browser
 using it needs the new one. **Delete** ends it.

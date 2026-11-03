@@ -1,7 +1,8 @@
 // The hub's own page.
 //   /            a landing page for visitors; the session list and keys for browsers
 //                that hold them
-//   /open/<sid>  trades the browser's key for a ticket into that session and goes there
+//   /open/<sid>  the same, showing that session: it trades the browser's key for a ticket
+//                and loads the session in a frame, which stays running behind the others
 // Session labels come from agents and key names from whoever made them, so everything
 // here is built with textContent.
 //
@@ -157,10 +158,10 @@ async function restoreCookie() {
 }
 
 function ago(secs) {
-  if (secs < 60) return 'active now';
-  if (secs < 3600) return `idle ${Math.floor(secs / 60)}m`;
-  if (secs < 86400) return `idle ${Math.floor(secs / 3600)}h`;
-  return `idle ${Math.floor(secs / 86400)}d`;
+  if (secs < 60) return '';
+  if (secs < 3600) return `${Math.floor(secs / 60)}m`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h`;
+  return `${Math.floor(secs / 86400)}d`;
 }
 
 function el(tag, className, text) {
@@ -170,33 +171,49 @@ function el(tag, className, text) {
   return node;
 }
 
+const stateOf = (s) => (!s.online ? 'offline' : s.approval ? 'approval' : s.busy ? 'busy' : 'idle');
+
+/** The last two parts of a path: enough to tell projects apart in a narrow list. */
+function shortPath(path) {
+  const parts = (path || '').split('/').filter(Boolean);
+  return parts.length > 2 ? parts.slice(-2).join('/') : path || '';
+}
+
+const titleOf = (s) => s.title || shortPath(s.cwd).split('/').pop() || 'New session';
+
+/**
+ * The list's order, which only depends on where sessions are: rows that move when one gets
+ * busy would be under the pointer one moment and gone the next, and would change what
+ * Alt+1 means. The dots say what's going on. Gone machines sink, each to the end of its own.
+ */
+function ordered(sessions) {
+  const by = (s) => [s.host || '', s.online ? 0 : 1, s.cwd || '', s.sid];
+  return [...sessions].sort((a, b) => {
+    const [x, y] = [by(a), by(b)];
+    const i = x.findIndex((v, n) => v !== y[n]);
+    return i < 0 ? 0 : x[i] < y[i] ? -1 : 1;
+  });
+}
+
 function sessionItem(s, showKey) {
-  const link = el('a', 'session' + (s.online ? '' : ' offline'));
+  const state = stateOf(s);
+  const link = el('a', `session ${state === 'offline' ? 'offline' : ''}`);
   link.href = s.open;
-  const top = el('div', 'row');
-  if (s.encrypted) {
-    const lock = el('span', 'lock', '🔒');
-    lock.title = 'End-to-end encrypted: the hub can\'t read this session';
-    top.append(lock);
-  }
-  top.append(el('span', 'title', s.title || 'New session'));
-  let state;
-  if (!s.online) state = el('span', 'state offline', 'offline');
-  else if (s.approval) state = el('span', 'state approval', '● needs approval');
-  else if (s.busy) state = el('span', 'state busy', '● working');
-  else state = el('span', 'state idle', ago(s.idle));
-  top.append(state);
-  const meta = el('div', 'meta');
-  meta.append(el('span', 'host', s.host), document.createTextNode(` · ${s.cwd} · ${s.model}`));
-  if (s.viewers) meta.append(document.createTextNode(` · ${s.viewers} viewing`));
-  if (showKey) {
-    meta.append(document.createTextNode(' '));
-    meta.append(el('span', 'tag', s.key));
-  }
-  link.append(top, meta);
-  const item = el('li');
-  item.append(link);
-  return item;
+  link.dataset.sid = s.sid;
+  link.append(el('span', `dot ${state}`), el('span', 'title', titleOf(s)));
+  link.append(el('span', 'when', state === 'idle' ? ago(s.idle) : ''));
+  const meta = el('span', `meta ${state}`);
+  if (state === 'approval') meta.textContent = 'Needs approval';
+  else if (state === 'busy') meta.textContent = `Working · ${shortPath(s.cwd)}`;
+  else if (state === 'offline') meta.textContent = `Offline · ${shortPath(s.cwd)}`;
+  else meta.textContent = [shortPath(s.cwd), s.model].filter(Boolean).join(' · ');
+  if (!s.encrypted) meta.append(' ', el('span', 'tag', 'not encrypted'));
+  link.append(meta);
+  const details = [s.host, s.cwd, s.model];
+  if (s.viewers) details.push(`${s.viewers} viewing`);
+  if (showKey) details.push(`key: ${s.key}`);
+  link.title = details.filter(Boolean).join('\n');
+  return link;
 }
 
 function made(when) {
@@ -226,28 +243,269 @@ function keyItem(entry, sessions, held) {
 }
 
 let busy = false;
+/** What the list shows, in order; `null` until the hub has answered. */
+let sessions = null;
+let hasKeys = false;
+/** The session showing, its sid; `null` on the list or the keys. */
+let current = null;
+let drawn = '';
+
+/** Which screen shows. The stylesheet does the rest, from `data-view` on <body>. */
+function setView(view) {
+  document.body.dataset.view = view;
+}
+
+function drawList(showKey) {
+  const hosts = new Set(sessions.map((s) => s.host));
+  const nodes = [];
+  let host = null;
+  for (const s of sessions) {
+    if (hosts.size > 1 && s.host !== host) nodes.push(el('div', 'group', s.host));
+    host = s.host;
+    nodes.push(sessionItem(s, showKey));
+  }
+  // Every few seconds: don't take away the row under the keyboard if nothing changed.
+  const shape = nodes.map((n) => n.outerHTML).join('');
+  if (shape === drawn) return;
+  drawn = shape;
+  const focused = document.activeElement?.dataset?.sid;
+  $('sessions').replaceChildren(...nodes);
+  if (focused) $('sessions').querySelector(`[data-sid="${focused}"]`)?.focus();
+}
+
+/** Marks the session showing, and says what the window title and phone's bar should. */
+function drawCurrent() {
+  for (const row of $('sessions').querySelectorAll('.session')) {
+    row.classList.toggle('active', row.dataset.sid === current);
+  }
+  const showing = sessions?.find((s) => s.sid === current);
+  const waiting = (sessions ?? []).filter((s) => s.approval && s.sid !== current).length;
+  $('back-badge').textContent = waiting;
+  $('back-badge').hidden = !waiting;
+  $('bar-title').textContent = current ? (showing ? titleOf(showing) : '') : 'Keys';
+  $('bar-dot').className = `dot ${showing ? stateOf(showing) : ''}`;
+  $('bar-dot').hidden = !showing;
+  document.title = `${waiting ? `(${waiting}) ` : ''}${showing ? titleOf(showing) : 'tamale-hub'}`;
+}
 
 async function refresh() {
   if (busy) return;
   const { ok, data } = await api('/api/sessions');
   if (!ok) return;
   const rows = await Promise.all(data.sessions.map(readable));
-  const sessions = rows.filter(Boolean);
+  const all = rows.filter(Boolean);
   const held = await Promise.all(data.keys.map((k) => keys.byId(k.id)));
-  const has = data.keys.length > 0;
-  const showing = !$('made').hidden;
-  $('landing').hidden = has || showing;
-  $('list').hidden = !has;
-  $('manage').hidden = !has;
-  $('forget').hidden = !has;
+  hasKeys = data.keys.length > 0;
+  sessions = ordered(all);
+  $('landing').hidden = hasKeys || !$('made').hidden || !$('opening').hidden;
+  $('manage').hidden = !hasKeys;
+  $('forget').hidden = !hasKeys;
   $('create').hidden = !data.signup;
-  $('create-title').textContent = has ? 'Make another key' : 'Make a key';
-  $('add-title').textContent = has ? 'Add another key' : 'Have a key?';
-  $('key-names').textContent = has ? data.keys.map((k) => k.name).join(' · ') : '';
-  $('sessions').replaceChildren(...sessions.map((s) => sessionItem(s, data.keys.length > 1)));
+  $('create-title').textContent = hasKeys ? 'Make another key' : 'Make a key';
+  $('add-title').textContent = hasKeys ? 'Add another key' : 'Have a key?';
   $('empty').hidden = sessions.length > 0;
-  $('key-list').replaceChildren(...data.keys.map((k, i) => keyItem(k, sessions, held[i])));
+  $('key-list').replaceChildren(...data.keys.map((k, i) => keyItem(k, all, held[i])));
+  drawList(data.keys.length > 1);
+  // A session the hub has dropped has nothing left to reconnect to.
+  for (const sid of [...frames.keys()]) {
+    if (!sessions.some((s) => s.sid === sid)) closeFrame(sid);
+  }
+  if (current && !sessions.some((s) => s.sid === current)) {
+    current = null;
+    if (location.pathname.startsWith('/open/')) history.replaceState(null, '', '/');
+  }
+  const view = document.body.dataset.view;
+  if (!hasKeys) setView('public');
+  else if (hasKeys && !current && (view === 'public' || view === 'loading' || view === 'session')) setView('home');
+  drawCurrent();
 }
+
+// ---- sessions' frames. Each is its session's own origin, as a tab of it would be: this page
+// can't read it, and it talks to its tamale itself. Only so many stay connected at once.
+
+const MAX_FRAMES = 4;
+/** Open frames by sid, the most recently shown last. */
+const frames = new Map();
+/** Sessions whose ticket is on its way, so a double click doesn't spend two. */
+const opening = new Set();
+/** When a frame last asked to be opened again, to stop if the ticket isn't taking. */
+const reopened = new Map();
+
+function closeFrame(sid) {
+  frames.get(sid)?.remove();
+  frames.delete(sid);
+}
+
+function showFrame(sid) {
+  const frame = frames.get(sid);
+  for (const other of frames.values()) {
+    other.classList.toggle('active', other === frame);
+    other.inert = other !== frame;
+  }
+  if (!frame) return;
+  frames.delete(sid);
+  frames.set(sid, frame);
+  // Only pointers: on a phone, focus would throw the keyboard up over the session.
+  if (matchMedia('(pointer: fine)').matches) frame.focus();
+}
+
+/** Why `sid` can't be shown, on the page that can take a key. */
+function cantOpen(text) {
+  current = null;
+  $('opening-text').textContent = text;
+  $('opening').hidden = false;
+  setView(hasKeys ? 'keys' : 'public');
+  drawCurrent();
+}
+
+/** Opens sessions as whole pages from now on, in this tab. */
+function noFrames() {
+  try { sessionStorage.setItem('hub.noframes', '1'); } catch {}
+  framesOff = true;
+}
+
+let framesOff = (() => {
+  try { return sessionStorage.getItem('hub.noframes') === '1'; } catch { return false; }
+})();
+
+/** Shows session `sid`, loading it first if its frame isn't open. */
+async function showSession(sid) {
+  if (framesOff) {
+    const url = await ticketUrl(sid);
+    if (typeof url !== 'string') return cantOpen(url.problem);
+    // Back from the session should land on the list, not bounce into the session again.
+    history.replaceState(null, '', '/');
+    location.assign(url);
+    return;
+  }
+  current = sid;
+  $('opening').hidden = true;
+  setView('session');
+  drawCurrent();
+  showFrame(sid);
+  if (frames.has(sid) || opening.has(sid)) return;
+  opening.add(sid);
+  try {
+    const url = await ticketUrl(sid);
+    if (typeof url !== 'string') {
+      if (current === sid) cantOpen(url.problem);
+      return;
+    }
+    const frame = el('iframe');
+    frame.title = 'Session';
+    frame.allow = 'clipboard-read; clipboard-write';
+    frame.src = url;
+    frames.set(sid, frame);
+    $('frames').append(frame);
+    for (const old of [...frames.keys()].slice(0, Math.max(0, frames.size - MAX_FRAMES))) closeFrame(old);
+    if (current === sid) showFrame(sid);
+    else frame.inert = true;
+  } finally {
+    opening.delete(sid);
+  }
+}
+
+/** The address that lets this browser into `sid`, or `{ problem }`. */
+async function ticketUrl(sid) {
+  const { ok, data } = await api('/api/ticket', { sid });
+  if (!ok || !data.url) return { problem: data.error || "Couldn't open that session." };
+  if (!data.mid) return data.url;
+  const held = await keys.byMid(data.mid);
+  if (!held) return { problem: "This browser doesn't have this session's key anymore. Scan its code or paste it." };
+  return `${data.url}#k=${toBase64Url(held.psk)}`;
+}
+
+// ---- moving around.
+
+function go(path) {
+  if (location.pathname !== path) history.pushState(null, '', path);
+  route();
+}
+
+/** Shows what the address says. */
+function route() {
+  const sid = location.pathname.match(/^\/open\/([0-9a-f]{32})$/)?.[1];
+  if (sid) {
+    showSession(sid);
+  } else {
+    current = null;
+    showFrame(null);
+    $('opening').hidden = true;
+    if (document.body.dataset.view !== 'loading') setView(hasKeys ? 'home' : 'public');
+    drawCurrent();
+  }
+}
+
+function showKeys() {
+  current = null;
+  if (location.pathname !== '/') history.pushState(null, '', '/');
+  showFrame(null);
+  setView('keys');
+  drawCurrent();
+}
+
+/** `Alt+↑`/`Alt+↓`, or `Alt+<digit>` as a number; the sessions' pages pass these along. */
+function switchBy(move) {
+  const list = sessions ?? [];
+  if (!list.length) return;
+  const at = list.findIndex((s) => s.sid === current);
+  let next;
+  if (move === 'up') next = list[at <= 0 ? list.length - 1 : at - 1];
+  else if (move === 'down') next = list[(at + 1) % list.length];
+  else next = list[move - 1];
+  if (next) go(`/open/${next.sid}`);
+}
+
+/** The switch a key press asks for, if it does. */
+function keySwitch(ev) {
+  if (!ev.altKey || ev.ctrlKey || ev.metaKey) return null;
+  if (ev.key === 'ArrowUp') return 'up';
+  if (ev.key === 'ArrowDown') return 'down';
+  // `code`, since Alt+1 types a character on a Mac.
+  const digit = /^Digit([1-9])$/.exec(ev.code)?.[1];
+  return digit ? Number(digit) : null;
+}
+
+addEventListener('keydown', (ev) => {
+  const move = keySwitch(ev);
+  if (move === null) return;
+  ev.preventDefault();
+  switchBy(move);
+});
+
+addEventListener('message', (ev) => {
+  // Hub pages in a frame: its cookie ran out, and a session redirected it back here.
+  if (ev.origin === location.origin && typeof ev.data?.hubReopen === 'string') {
+    const sid = ev.data.hubReopen;
+    if (frames.get(sid)?.contentWindow !== ev.source) return;
+    closeFrame(sid);
+    const last = reopened.get(sid) ?? 0;
+    reopened.set(sid, Date.now());
+    // Twice running means the browser won't keep a frame's cookie: use whole pages instead.
+    if (Date.now() - last < 15000) noFrames();
+    if (current === sid) showSession(sid);
+    return;
+  }
+  // A session's page passing on a switch key, which only reaches the frame with focus.
+  const move = ev.data?.tamaleHubSwitch;
+  if (move === undefined) return;
+  if (![...frames.values()].some((f) => f.contentWindow === ev.source)) return;
+  if (move === 'up' || move === 'down' || (Number.isInteger(move) && move >= 1 && move <= 9)) switchBy(move);
+});
+
+document.addEventListener('click', (ev) => {
+  // Plain clicks stay in this page; a new tab or window gets the address as usual.
+  if (ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+  const row = ev.target.closest('a.session');
+  const home = ev.target.closest('a[data-nav]');
+  if (!row && !home) return;
+  ev.preventDefault();
+  go(row ? `/open/${row.dataset.sid}` : '/');
+});
+
+$('open-keys').addEventListener('click', showKeys);
+$('back').addEventListener('click', () => go('/'));
+addEventListener('popstate', route);
 
 /** What a machine sets: just the key on tamale-hub.com, which tamale defaults to. */
 function setupLines(key) {
@@ -268,7 +526,8 @@ async function showKey(key, title) {
   $('made-qr').src = 'data:image/svg+xml,' + encodeURIComponent(qrSvg(await qrRows(link)));
   $('made').hidden = false;
   $('landing').hidden = true;
-  $('made').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  $('page').scrollTop = 0;
+  showKeys();
 }
 
 $('made-done').addEventListener('click', () => {
@@ -330,32 +589,6 @@ async function remove(name, held) {
   refresh();
 }
 
-function needsKey(text) {
-  $('opening-text').textContent = text;
-  $('opening-back').hidden = false;
-  $('add').hidden = false;
-}
-
-async function open(sid) {
-  $('opening').hidden = false;
-  for (const id of ['add', 'trust', 'create']) $(id).hidden = true;
-  const { ok, data } = await api('/api/ticket', { sid });
-  if (!ok || !data.url) {
-    needsKey(data.error || "Couldn't open that session.");
-    return;
-  }
-  if (!data.mid) {
-    location.replace(data.url);
-    return;
-  }
-  const held = await keys.byMid(data.mid);
-  if (!held) {
-    needsKey("This browser doesn't have this session's key anymore. Scan its code or paste it.");
-    return;
-  }
-  location.replace(`${data.url}#k=${toBase64Url(held.psk)}`);
-}
-
 $('add-form').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const key = $('key').value.trim();
@@ -367,30 +600,36 @@ $('add-form').addEventListener('submit', async (ev) => {
   }
   if (!await addKey(key)) return;
   $('key').value = '';
-  if (location.pathname.startsWith('/open/')) location.reload();
-  else refresh();
+  await refresh();
+  route();
 });
 
 $('forget').addEventListener('click', async () => {
   if (!confirm('Forget the keys on this browser? You will need to scan or paste them again.')) return;
   await api('/api/tokens', { forget: true });
   await keys.clear();
+  for (const sid of [...frames.keys()]) closeFrame(sid);
+  current = null;
+  history.replaceState(null, '', '/');
+  setView('public');
   refresh();
 });
 
-await takeFragment();
-await restoreCookie();
-const opening = location.pathname.match(/^\/open\/([0-9a-f]{32})$/);
-// A link opened over this very page, from the scan screen say, only changes the fragment.
-addEventListener('hashchange', async () => {
-  await takeFragment();
-  if (opening) open(opening[1]);
-  else refresh();
-});
-if (opening) {
-  open(opening[1]);
+if (window !== window.top) {
+  // A session's frame, sent here because its cookie ran out: the page around it starts it again.
+  const sid = location.pathname.match(/^\/open\/([0-9a-f]{32})$/)?.[1];
+  window.parent.postMessage({ hubReopen: sid }, location.origin);
 } else {
-  refresh();
-  setInterval(() => { if (!document.hidden) refresh(); }, 5000);
+  await takeFragment();
+  await restoreCookie();
+  // A link opened over this very page, from the scan screen say, only changes the fragment.
+  addEventListener('hashchange', async () => {
+    await takeFragment();
+    await refresh();
+    route();
+  });
+  await refresh();
+  route();
+  setInterval(() => { if (!document.hidden) refresh(); }, 3000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
 }

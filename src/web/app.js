@@ -239,8 +239,28 @@ function lock(title, text) {
       h('div', { class: 'locked-box' },
         h('h1', { text: title }),
         h('p', { text }),
-        hub && h('p', {}, h('a', { href: `${location.protocol}//${hub}/open/${sid}`, text: 'Open it through the hub' })))),
+        hub && h('p', {}, h('a', { href: `${location.protocol}//${hub}/open/${sid}`, target: '_top', text: 'Open it through the hub' })))),
   );
+}
+
+// Inside a tamale-hub's page, which lists the sessions and says this page's name. Keys go to
+// the frame with focus, so the ones that switch sessions are passed up to it.
+if (window.parent !== window) {
+  document.documentElement.classList.add('framed');
+  const hub = `${location.protocol}//${location.host.split('.').slice(1).join('.')}`;
+  addEventListener('keydown', (ev) => {
+    if (!ev.altKey || ev.ctrlKey || ev.metaKey) return;
+    const digit = /^Digit([1-9])$/.exec(ev.code)?.[1];
+    const move = ev.key === 'ArrowUp' ? 'up' : ev.key === 'ArrowDown' ? 'down' : digit && Number(digit);
+    if (!move) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    window.parent.postMessage({ tamaleHubSwitch: move }, hub);
+  }, true);
+  // Back on this session from the hub's list: carry on typing.
+  addEventListener('focus', () => {
+    if (matchMedia('(pointer: fine)').matches) $('input')?.focus();
+  });
 }
 
 const NEEDS_KEY = "Scan this session's key on the hub's page, or paste it there.";

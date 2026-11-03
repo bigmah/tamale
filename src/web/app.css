@@ -99,6 +99,10 @@ svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width:
 
 /* ---------- top bar ---------- */
 
+/* In a tamale-hub's page, which has its own name on it. */
+.framed .brand { display: none; }
+.framed .wschip { margin-left: 0; }
+
 .topbar {
   display: flex;
   align-items: center;

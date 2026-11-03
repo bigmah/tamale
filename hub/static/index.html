@@ -13,108 +13,132 @@
 <link rel="stylesheet" href="/hub.css">
 <script type="module" src="/hub.js"></script>
 </head>
-<body>
-<main>
-  <header>
-    <a class="brand" href="/"><span class="mark">🫔</span><span class="name">tamale-hub</span></a>
-    <span class="spacer"></span>
-    <span class="key-names" id="key-names"></span>
-  </header>
+<body data-view="loading">
+<div class="shell">
+  <!-- The sessions: always beside the one showing, and the whole screen on a phone's home. -->
+  <aside class="rail" id="rail">
+    <a class="brand" href="/" data-nav><span class="mark">🫔</span><span class="name">tamale-hub</span></a>
+    <nav class="rail-list" aria-label="Sessions">
+      <div id="sessions"></div>
+      <p class="empty" id="empty" hidden>No sessions connected. Run <code>/remote</code> in tamale on
+        a machine with <code>TAMALE_HUB_KEY</code> set to one of your keys.</p>
+    </nav>
+    <button type="button" class="rail-keys" id="open-keys">Keys</button>
+  </aside>
 
-  <!-- /open/<sid>: trading the browser's key for a ticket into one session. -->
-  <section id="opening" hidden>
-    <p class="lead" id="opening-text">Opening the session…</p>
-    <p><a href="/" id="opening-back" hidden>See all sessions</a></p>
-  </section>
+  <div class="stage">
+    <!-- A phone's way back to the list, since the list isn't beside the session there. -->
+    <div class="bar" id="bar">
+      <button type="button" class="back" id="back" aria-label="All sessions">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5"/></svg>
+        <span class="back-badge" id="back-badge" hidden></span>
+      </button>
+      <span class="dot" id="bar-dot"></span>
+      <span class="bar-title" id="bar-title"></span>
+    </div>
 
-  <!-- For visitors without a key. -->
-  <section id="landing" hidden>
-    <h1>Your tamale sessions, from anywhere.</h1>
-    <p class="intro">tamale-hub puts tamale's web UI on your phone or any browser, wherever tamale
-      runs: your laptop or a machine in the garage. No port forwarding, no VPN. Each tamale connects
-      out to the hub, and your browser holds the key that lets you in.</p>
-    <ol class="steps">
-      <li><strong>Make a key</strong> below.</li>
-      <li><strong>On each machine</strong>, set it where tamale runs and run
-        <code>/remote</code> in tamale.</li>
-      <li><strong>On your phone</strong>, scan its code. Your sessions show up here; tap one to
-        drive it.</li>
-    </ol>
-  </section>
+    <!-- One frame per open session, kept running so switching back is instant. -->
+    <div class="frames" id="frames">
+      <p class="frames-note" id="frames-note">Opening the session…</p>
+    </div>
 
-  <!-- A key's setup: right after it's made or replaced, and whenever Show asks. -->
-  <section id="made" class="card" hidden>
-    <h2 id="made-title">Your key</h2>
-    <p class="warn"><strong>This key gives access to every machine that uses it</strong>: treat it
-      like an SSH key. A machine you trust less, like a throwaway VPS, should get a key of its own.</p>
-    <h3>1. On each machine that runs tamale</h3>
-    <p class="hint">Add this to the shell profile (or run it before starting tamale), then run
-      <code>/remote</code> in tamale.</p>
-    <div class="secret"><pre id="made-env"></pre><button type="button" class="copy" data-copy="made-env">Copy</button></div>
-    <p class="hint">No tamale yet? <code>cargo install --git https://github.com/bigmah/tamale --locked</code></p>
-    <h3>2. On your phone</h3>
-    <p class="hint">Scan this to open your sessions there. Scan it rather than sending it. This
-      browser already holds the key.</p>
-    <div class="qr"><img id="made-qr" alt="QR code of the key" width="240" height="240"></div>
-    <div class="secret"><pre id="made-link"></pre><button type="button" class="copy" data-copy="made-link">Copy</button></div>
-    <button type="button" id="made-done">Done</button>
-  </section>
+    <div class="placeholder" id="placeholder">
+      <span class="placeholder-mark">🫔</span>
+      <p>Pick a session.</p>
+      <p class="keys-hint"><kbd>Alt</kbd> <kbd>↑</kbd> <kbd>↓</kbd> moves between them, <kbd>Alt</kbd> <kbd>1</kbd>–<kbd>9</kbd> jumps.</p>
+    </div>
 
-  <!-- For browsers holding keys. -->
-  <section id="list" hidden>
-    <h2>Sessions</h2>
-    <ul id="sessions" class="sessions"></ul>
-    <p class="empty" id="empty" hidden>No sessions connected. Run <code>/remote</code> in tamale on
-      a machine with <code>TAMALE_HUB_KEY</code> set to one of your keys.</p>
-  </section>
+    <main class="page" id="page">
+      <div class="page-inner">
+        <a class="brand page-brand" href="/" data-nav><span class="mark">🫔</span><span class="name">tamale-hub</span></a>
 
-  <section id="create" hidden>
-    <h2 id="create-title">Make a key</h2>
-    <form id="create-form" autocomplete="off">
-      <input id="label" name="label" type="text" maxlength="32" placeholder="Name (optional), e.g. laptop" spellcheck="false" autocapitalize="off">
-      <button type="submit" id="create-button">Make a key</button>
-    </form>
-    <p class="error" id="create-error" hidden></p>
-  </section>
+        <!-- /open/<sid> when it can't be opened. -->
+        <section id="opening" hidden>
+          <p class="lead" id="opening-text"></p>
+          <p><a href="/" data-nav id="opening-back">See all sessions</a></p>
+        </section>
 
-  <section id="manage" hidden>
-    <h2>Keys on this browser</h2>
-    <ul id="key-list" class="key-list"></ul>
-  </section>
+        <!-- For visitors without a key. -->
+        <section id="landing" hidden>
+          <h1>Your tamale sessions, from anywhere.</h1>
+          <p class="intro">tamale-hub puts tamale's web UI on your phone or any browser, wherever tamale
+            runs: your laptop or a machine in the garage. No port forwarding, no VPN. Each tamale connects
+            out to the hub, and your browser holds the key that lets you in.</p>
+          <ol class="steps">
+            <li><strong>Make a key</strong> below.</li>
+            <li><strong>On each machine</strong>, set it where tamale runs and run
+              <code>/remote</code> in tamale.</li>
+            <li><strong>On your phone</strong>, scan its code. Your sessions show up here; tap one to
+              drive it.</li>
+          </ol>
+        </section>
 
-  <section id="add">
-    <h2 id="add-title">Have a key?</h2>
-    <p class="hint">Scan its code with this device, or paste it (<code>thk_…</code>) here. It stays
-      in this browser.</p>
-    <form id="add-form" autocomplete="off">
-      <input id="key" name="key" type="password" placeholder="thk_…" spellcheck="false" autocapitalize="off">
-      <button type="submit" class="secondary">Add</button>
-    </form>
-    <p class="error" id="error" hidden></p>
-  </section>
+        <!-- A key's setup: right after it's made or replaced, and whenever Show asks. -->
+        <section id="made" class="card" hidden>
+          <h2 id="made-title">Your key</h2>
+          <p class="warn"><strong>This key gives access to every machine that uses it</strong>: treat it
+            like an SSH key. A machine you trust less, like a throwaway VPS, should get a key of its own.</p>
+          <h3>1. On each machine that runs tamale</h3>
+          <p class="hint">Add this to the shell profile (or run it before starting tamale), then run
+            <code>/remote</code> in tamale.</p>
+          <div class="secret"><pre id="made-env"></pre><button type="button" class="copy" data-copy="made-env">Copy</button></div>
+          <p class="hint">No tamale yet? <code>cargo install --git https://github.com/bigmah/tamale --locked</code></p>
+          <h3>2. On your phone</h3>
+          <p class="hint">Scan this to open your sessions there. Scan it rather than sending it. This
+            browser already holds the key.</p>
+          <div class="qr"><img id="made-qr" alt="QR code of the key" width="240" height="240"></div>
+          <div class="secret"><pre id="made-link"></pre><button type="button" class="copy" data-copy="made-link">Copy</button></div>
+          <button type="button" id="made-done">Done</button>
+        </section>
 
-  <section id="trust" class="note">
-    <h2>How much to trust this hub</h2>
-    <p>Sessions are end-to-end encrypted between tamale and your browser. Your key is made in this
-      browser and never reaches this server. Whoever runs the hub, or breaks into it, can't read your
-      prompts, code, tool output, artifacts, titles or directories, and can't send commands to your
-      machines.</p>
-    <p>Three limits. <strong>This server delivers the page code</strong>, so someone in control of
-      it could change that code to steal a key the next time a page loads, or as one is made;
-      encryption makes an attack take that active step, but doesn't rule it out. It still sees
-      <strong>metadata</strong>: which sessions exist and when, from which addresses, whether they're
-      busy, and message sizes and timing. And it can't protect a compromised laptop or phone: <strong>a
-      machine that holds a key can reach every other machine using it</strong>, and in tamale's
-      <code>auto</code> mode run commands there without approval. Give machines you trust less a key
-      of their own. It's a beta: for anything sensitive, run your own hub (it's one small binary
-      behind Caddy), and keep tamale's permission mode on <code>ask</code> for remote work.</p>
-    <p>Unused keys made here are deleted after 7 days if they never connect, and after 90 days
-      without use.</p>
-  </section>
+        <section id="manage" hidden>
+          <h2>Keys on this browser</h2>
+          <ul id="key-list" class="key-list"></ul>
+        </section>
 
-  <footer>
-    <button type="button" class="link" id="forget" hidden>Forget keys on this browser</button>
-  </footer>
-</main>
+        <section id="create" hidden>
+          <h2 id="create-title">Make a key</h2>
+          <form id="create-form" autocomplete="off">
+            <input id="label" name="label" type="text" maxlength="32" placeholder="Name (optional), e.g. laptop" spellcheck="false" autocapitalize="off">
+            <button type="submit" id="create-button">Make a key</button>
+          </form>
+          <p class="error" id="create-error" hidden></p>
+        </section>
+
+        <section id="add">
+          <h2 id="add-title">Have a key?</h2>
+          <p class="hint">Scan its code with this device, or paste it (<code>thk_…</code>) here. It stays
+            in this browser.</p>
+          <form id="add-form" autocomplete="off">
+            <input id="key" name="key" type="password" placeholder="thk_…" spellcheck="false" autocapitalize="off">
+            <button type="submit" class="secondary">Add</button>
+          </form>
+          <p class="error" id="error" hidden></p>
+        </section>
+
+        <details id="trust" class="note">
+          <summary>How much to trust this hub</summary>
+          <p>Sessions are end-to-end encrypted between tamale and your browser. Your key is made in this
+            browser and never reaches this server. Whoever runs the hub, or breaks into it, can't read your
+            prompts, code, tool output, artifacts, titles or directories, and can't send commands to your
+            machines.</p>
+          <p>Three limits. <strong>This server delivers the page code</strong>, so someone in control of
+            it could change that code to steal a key the next time a page loads, or as one is made;
+            encryption makes an attack take that active step, but doesn't rule it out. It still sees
+            <strong>metadata</strong>: which sessions exist and when, from which addresses, whether they're
+            busy, and message sizes and timing. And it can't protect a compromised laptop or phone: <strong>a
+            machine that holds a key can reach every other machine using it</strong>, and in tamale's
+            <code>auto</code> mode run commands there without approval. Give machines you trust less a key
+            of their own. It's a beta: for anything sensitive, run your own hub (it's one small binary
+            behind Caddy), and keep tamale's permission mode on <code>ask</code> for remote work.</p>
+          <p>Unused keys made here are deleted after 7 days if they never connect, and after 90 days
+            without use.</p>
+        </details>
+
+        <button type="button" class="link" id="forget" hidden>Forget keys on this browser</button>
+      </div>
+    </main>
+  </div>
+</div>
 </body>
 </html>
