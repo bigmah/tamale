@@ -101,6 +101,39 @@ impl Keys {
         Ok(STANDARD.encode([nonce.as_slice(), &sealed].concat()))
     }
 
+    /// Opens a label [`Keys::seal`] sealed for the same session and kind.
+    #[cfg(unix)]
+    pub fn open(&self, sid: &str, kind: &str, sealed: &str) -> Result<String> {
+        let bytes = STANDARD.decode(sealed).context("not base64")?;
+        if bytes.len() < 12 {
+            bail!("too short");
+        }
+        let (nonce, sealed) = bytes.split_at(12);
+        let cipher = Aes256Gcm::new_from_slice(&self.meta).map_err(|e| anyhow!("{e}"))?;
+        let aad = format!("{sid}{kind}");
+        let plain = cipher
+            .decrypt(
+                Nonce::from_slice(nonce),
+                Payload {
+                    msg: sealed,
+                    aad: aad.as_bytes(),
+                },
+            )
+            .map_err(|_| anyhow!("sealed with another key"))?;
+        Ok(String::from_utf8(plain)?)
+    }
+
+    /// The initiator's first step, answering the `n` of a session's `hs0`: message 1.
+    #[cfg(unix)]
+    pub fn initiate(&self, sid: &str, n: &str) -> Result<(Handshake, String)> {
+        let nonce = STANDARD.decode(n).context("not base64")?;
+        let prologue = prologue(sid, &nonce);
+        let mut hs = builder(&self.psk, &prologue)?.build_initiator()?;
+        let mut out = vec![0u8; MAX_NOISE];
+        let n = hs.write_message(br#"{"v":1}"#, &mut out)?;
+        Ok((Handshake { hs }, STANDARD.encode(&out[..n])))
+    }
+
     /// The handshake's first step for a responder: reads message 1 and writes message 2.
     /// Fails unless the sender holds this key and is answering `nonce` on session `sid`.
     pub fn respond(&self, sid: &str, nonce: &[u8], hs1: &str) -> Result<(Channel, String)> {
@@ -171,6 +204,24 @@ fn decode(text: &str) -> Result<Vec<u8>> {
         bail!("too long for a Noise message");
     }
     Ok(bytes)
+}
+
+/// An initiator waiting for a session's `hs2`.
+#[cfg(unix)]
+pub struct Handshake {
+    hs: snow::HandshakeState,
+}
+
+#[cfg(unix)]
+impl Handshake {
+    pub fn finish(mut self, hs2: &str) -> Result<Channel> {
+        let mut out = vec![0u8; MAX_NOISE];
+        self.hs.read_message(&decode(hs2)?, &mut out)?;
+        Ok(Channel {
+            noise: self.hs.into_transport_mode()?,
+            partial: Vec::new(),
+        })
+    }
 }
 
 /// One browser channel's keys, after its handshake. Noise's counters mean a message that

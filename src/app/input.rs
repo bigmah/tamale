@@ -9,6 +9,11 @@ use crate::session::Entry;
 
 impl App {
     pub fn on_event(&mut self, event: Event) {
+        #[cfg(unix)]
+        if self.remote_view.is_some() {
+            self.on_remote_input(event);
+            return;
+        }
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
             Event::Paste(text) => {
@@ -37,6 +42,14 @@ impl App {
                         }) =>
                 {
                     self.open_remote()
+                }
+                MouseEventKind::Down(MouseButton::Left)
+                    if self.approval.is_none()
+                        && self.sessions_tab.is_some_and(|tab| {
+                            tab.contains(Position::new(mouse.column, mouse.row))
+                        }) =>
+                {
+                    self.command("/sessions")
                 }
                 _ => {}
             },
@@ -171,6 +184,17 @@ impl App {
                 (KeyCode::Right, FooterTab::Chat) if has_diff => {
                     self.tab_focus = Some(FooterTab::Diff)
                 }
+                (KeyCode::Right, FooterTab::Chat | FooterTab::Diff) => {
+                    self.tab_focus = Some(FooterTab::Sessions)
+                }
+                (KeyCode::Left, FooterTab::Sessions) if has_diff => {
+                    self.tab_focus = Some(FooterTab::Diff)
+                }
+                (KeyCode::Left, FooterTab::Sessions) => self.tab_focus = Some(FooterTab::Chat),
+                (KeyCode::Enter | KeyCode::Down, FooterTab::Sessions) => {
+                    self.tab_focus = None;
+                    self.command("/sessions");
+                }
                 (KeyCode::Enter | KeyCode::Down, FooterTab::Remote) => self.open_remote(),
                 (KeyCode::Enter | KeyCode::Down, FooterTab::Web) => self.open_web(),
                 (KeyCode::Enter | KeyCode::Down, FooterTab::Diff) => self.show_diff(),
@@ -207,9 +231,22 @@ impl App {
                 let mut policy = self.permissions.lock().unwrap();
                 policy.mode = policy.mode.next();
             }
+            KeyCode::Enter if !alt && !shift => self.submit(),
+            KeyCode::PageUp => self.scroll_back += 10,
+            KeyCode::PageDown => self.scroll_back = self.scroll_back.saturating_sub(10),
+            KeyCode::Up if shift => self.scroll_back += 1,
+            KeyCode::Down if shift => self.scroll_back = self.scroll_back.saturating_sub(1),
+            KeyCode::Up => self.cursor_up(),
+            KeyCode::Down => self.cursor_down(),
+            _ => self.on_edit_key(key, ctrl, alt, shift),
+        }
+    }
+
+    /// The keys that edit the prompt, whichever session it's for.
+    pub(super) fn on_edit_key(&mut self, key: KeyEvent, ctrl: bool, alt: bool, shift: bool) {
+        match key.code {
             KeyCode::Enter if alt || shift => self.insert_str("\n"),
             KeyCode::Char('j') if ctrl => self.insert_str("\n"),
-            KeyCode::Enter => self.submit(),
             KeyCode::Char('a') if ctrl => self.cursor = self.line_start(),
             KeyCode::Char('e') if ctrl => self.cursor = self.line_end(),
             KeyCode::Char('u') if ctrl => {
@@ -236,18 +273,12 @@ impl App {
             KeyCode::Right => self.cursor = self.next_boundary().unwrap_or(self.cursor),
             KeyCode::Home => self.cursor = self.line_start(),
             KeyCode::End => self.cursor = self.line_end(),
-            KeyCode::PageUp => self.scroll_back += 10,
-            KeyCode::PageDown => self.scroll_back = self.scroll_back.saturating_sub(10),
-            KeyCode::Up if shift => self.scroll_back += 1,
-            KeyCode::Down if shift => self.scroll_back = self.scroll_back.saturating_sub(1),
-            KeyCode::Up => self.cursor_up(),
-            KeyCode::Down => self.cursor_down(),
             _ => {}
         }
     }
 
     /// Moves to the line above, or recalls the previous prompt from the first line.
-    fn cursor_up(&mut self) {
+    pub(super) fn cursor_up(&mut self) {
         let start = self.line_start();
         if start > 0 {
             self.cursor = self.column_in_line(start - 1, self.input[start..self.cursor].chars().count());
@@ -259,7 +290,7 @@ impl App {
     }
 
     /// Moves to the line below, or recalls the next prompt (then the draft) from the last line.
-    fn cursor_down(&mut self) {
+    pub(super) fn cursor_down(&mut self) {
         let end = self.line_end();
         if end < self.input.len() {
             let column = self.input[self.line_start()..self.cursor].chars().count();

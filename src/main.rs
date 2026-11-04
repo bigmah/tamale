@@ -10,6 +10,8 @@ mod clipboard;
 mod config;
 mod diff;
 mod permissions;
+#[cfg(unix)]
+mod remote;
 mod screen;
 mod session;
 mod tools;
@@ -554,6 +556,7 @@ async fn run(
                         web::WebEvent::Disconnected => {}
                         web::WebEvent::Hub(result) => app.on_web(result),
                         web::WebEvent::Send(text) => app.web_send(text),
+                        web::WebEvent::TerminalSend(text) => app.terminal_send(text),
                         web::WebEvent::Interrupt => app.web_interrupt(),
                         web::WebEvent::Approve(choice, reason) => app.web_approve(choice, reason),
                     }
@@ -584,6 +587,7 @@ async fn run(
                     if let Some(w) = &web
                         && w.hub_url().is_some() {
                             app.set_hub_viewers(Some(w.remote_tabs()));
+                            app.set_web_viewers(w.web_remote_tabs());
                             app.set_hub_live(matches!(w.hub_state(), Some(web::HubState::Live(_))));
                         }
                     let session = web

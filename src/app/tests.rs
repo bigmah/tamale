@@ -253,7 +253,7 @@ fn web_tab_click_ctrl_o_or_down_left_enter_open_the_web_ui() {
     );
     let lines = screen_lines(&mut app, 100, 30);
     let footer = &lines[28];
-    assert!(footer.ends_with(" ⇄ Remote off  ◉ Web  Chat   "), "{footer}");
+    assert!(footer.ends_with(" ⇄ Remote off  ◉ Web  Chat  ≡ Sessions   "), "{footer}");
 
     let click = |column, row| {
         Event::Mouse(MouseEvent {
@@ -268,12 +268,12 @@ fn web_tab_click_ctrl_o_or_down_left_enter_open_the_web_ui() {
         app.take_web_request().is_none(),
         "a click elsewhere does nothing"
     );
-    app.on_event(click(88, 28));
+    app.on_event(click(76, 28));
     assert!(matches!(
         app.take_web_request(),
         Some(WebRequest::Open { lan: true })
     ));
-    app.on_event(click(80, 28));
+    app.on_event(click(66, 28));
     assert!(matches!(
         app.take_web_request(),
         Some(WebRequest::Remote { on: true })
@@ -287,7 +287,7 @@ fn web_tab_click_ctrl_o_or_down_left_enter_open_the_web_ui() {
     app.on_event(key(KeyCode::Down));
     assert_eq!(app.tab_focus, Some(FooterTab::Chat));
     let footer = screen_lines(&mut app, 100, 30)[28].clone();
-    assert!(footer.ends_with("← ⇄ Remote off  ◉ Web  Chat   "), "{footer}");
+    assert!(footer.ends_with("← ⇄ Remote off  ◉ Web  Chat  ≡ Sessions → "), "{footer}");
     // ← only highlights Web; Enter or ↓ opens it.
     app.on_event(key(KeyCode::Left));
     assert_eq!(app.tab_focus, Some(FooterTab::Web));
@@ -312,10 +312,13 @@ fn web_tab_click_ctrl_o_or_down_left_enter_open_the_web_ui() {
             Some(WebRequest::Remote { on: true })
         ));
     }
-    // Without a repository there is no Diff to the right of Chat.
+    // Without a repository there is no Diff between Chat and Sessions, the last one.
     app.on_event(key(KeyCode::Right));
     app.on_event(key(KeyCode::Right));
     app.on_event(key(KeyCode::Right));
+    app.on_event(key(KeyCode::Right));
+    assert_eq!(app.tab_focus, Some(FooterTab::Sessions));
+    app.on_event(key(KeyCode::Left));
     assert_eq!(app.tab_focus, Some(FooterTab::Chat));
     // Enter on Chat, ↑ and typing all go back to the prompt; typing still types.
     app.on_event(key(KeyCode::Enter));
@@ -385,7 +388,7 @@ fn the_remote_tab_says_whether_the_hub_is_connected_and_stays_clickable() {
     assert!(footer(&mut app).contains("⇄ Remote off"));
     app.set_hub_live(true);
     let on = footer(&mut app);
-    assert!(on.ends_with(" ⇄ Remote on  ◉ Web  Chat   "), "{on}");
+    assert!(on.ends_with(" ⇄ Remote on  ◉ Web  Chat  ≡ Sessions   "), "{on}");
     // The narrower tab is still where a click lands, on it and on Web beside it.
     let click = |column| {
         Event::Mouse(MouseEvent {
@@ -395,12 +398,12 @@ fn the_remote_tab_says_whether_the_hub_is_connected_and_stays_clickable() {
             modifiers: KeyModifiers::NONE,
         })
     };
-    app.on_event(click(73));
+    app.on_event(click(61));
     assert!(matches!(
         app.take_web_request(),
         Some(WebRequest::Remote { on: true })
     ));
-    app.on_event(click(86));
+    app.on_event(click(74));
     assert!(matches!(
         app.take_web_request(),
         Some(WebRequest::Open { .. })
@@ -1003,7 +1006,7 @@ fn status_shows_where_inference_comes_from_even_with_a_long_cwd() {
     assert!(row.contains(" cwd: …"), "{row}");
     assert!(row.contains("· via Anthropic API "), "{row}");
     assert!(
-        row.ends_with(" ◉ Web  Chat   "),
+        row.ends_with(" ◉ Web  Chat  ≡ Sessions   "),
         "the tabs stay visible: {row}"
     );
 }
@@ -1622,7 +1625,7 @@ async fn arrow_keys_switch_between_chat_and_diff_tabs() {
     app.on_app_event(event);
     assert!(!app.diff_open, "preloading stays on the chat");
     let footer = screen_lines(&mut app, 100, 30)[28].clone();
-    assert!(footer.contains(" ◉ Web  Chat  Diff 2 +2 −0   "), "{footer}");
+    assert!(footer.contains(" ◉ Web  Chat  Diff 2 +2 −0  ≡ Sessions   "), "{footer}");
 
     // In the prompt → only moves the cursor, even when empty; from the tabs it opens Diff.
     type_text(&mut app, "hi");
@@ -1636,12 +1639,12 @@ async fn arrow_keys_switch_between_chat_and_diff_tabs() {
     assert!(!app.diff_open);
     app.on_event(key(KeyCode::Down));
     let footer = screen_lines(&mut app, 100, 30)[28].clone();
-    assert!(footer.contains("← ⇄ Remote off  ◉ Web  Chat  Diff 2 +2 −0 → "), "{footer}");
+    assert!(footer.contains("← ⇄ Remote off  ◉ Web  Chat  Diff 2 +2 −0  ≡ Sessions → "), "{footer}");
     // → highlights Diff without opening it; ↓ (or Enter) opens it.
     app.on_event(key(KeyCode::Right));
     assert!(!app.diff_open);
     let footer = screen_lines(&mut app, 100, 30)[28].clone();
-    assert!(footer.contains("← ⇄ Remote off  ◉ Web  Chat  Diff 2 +2 −0   "), "{footer}");
+    assert!(footer.contains("← ⇄ Remote off  ◉ Web  Chat  Diff 2 +2 −0  ≡ Sessions → "), "{footer}");
     app.on_event(key(KeyCode::Down));
     assert!(app.diff_open);
     let event = rx.recv().await.unwrap();
@@ -1834,7 +1837,20 @@ async fn web_sessions_ask_for_artifacts_but_show_the_prompt_as_typed() {
 
     // Back in the TUI with a phone still watching through the hub, it gets artifacts too.
     app.set_hub_viewers(Some(1));
+    app.set_web_viewers(1);
     app.web_send("from the phone".into());
+    assert!(last_prompt(&app).contains("html artifact"));
+    app.task.take().unwrap().abort();
+    app.on_agent(app.turn, AgentEvent::Done);
+
+    // Another terminal driving it gets ordinary replies, even with the phone there.
+    app.terminal_send("from a terminal".into());
+    assert!(!last_prompt(&app).contains("html artifact"));
+    app.task.take().unwrap().abort();
+    app.on_agent(app.turn, AgentEvent::Done);
+
+    // And the phone gets its artifacts back with its next prompt.
+    app.web_send("from the phone again".into());
     assert!(last_prompt(&app).contains("html artifact"));
     app.task.take().unwrap().abort();
     app.finish_saves().await;
@@ -1962,6 +1978,7 @@ async fn sessions_picker_joins_stops_and_keeps_its_place() {
         state,
         attached: false,
         since: 0,
+        sid: format!("sid{id}"),
     };
     let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
     let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
@@ -2025,4 +2042,147 @@ async fn sessions_picker_joins_stops_and_keeps_its_place() {
     app.on_event(key(KeyCode::Enter));
     assert_eq!(app.take_switch_request(), None);
     assert!(matches!(app.entries.last(), Some(Entry::Error(_))));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sessions_tab_lists_both_kinds_and_drives_a_remote_one() {
+    use crate::background::{State, Status};
+    use crate::remote::{Approval, Event as RemoteEvent, HubSession, Incoming, Status as Remote};
+    let hub_session = |sid: &str, host: &str, title: &str| HubSession {
+        sid: sid.into(),
+        host: host.into(),
+        cwd: "~/x".into(),
+        title: title.into(),
+        e2e: true,
+        online: true,
+        ..Default::default()
+    };
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let mut settings = test_settings("test-model");
+    settings.hub.key = Some(tamale_hub_protocol::encode_key(&[1; 32]));
+    // Nothing listens there, which only means retrying.
+    settings.hub.url = "ws://127.0.0.1:1".into();
+    let (mut app, _rx) = App::new_with_channel(client, settings, Workspace::current().unwrap());
+
+    // The tab is at the far right, by click or by arrows.
+    let footer = screen_lines(&mut app, 100, 30)[28].clone();
+    assert!(footer.contains("≡ Sessions"), "{footer}");
+    let column = footer.chars().position(|c| c == '≡').unwrap() as u16;
+    app.on_event(Event::Mouse(crossterm::event::MouseEvent {
+        kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        column,
+        row: 28,
+        modifiers: KeyModifiers::NONE,
+    }));
+    assert!(app.sessions_picker.is_some());
+    app.sessions_picker = None;
+    app.on_event(key(KeyCode::Down));
+    app.on_event(key(KeyCode::Right));
+    assert_eq!(app.tab_focus, Some(super::FooterTab::Sessions));
+    app.on_event(key(KeyCode::Left));
+    assert_eq!(app.tab_focus, Some(super::FooterTab::Chat));
+    app.on_event(key(KeyCode::Right));
+    app.on_event(key(KeyCode::Enter));
+    assert_eq!(app.tab_focus, None);
+
+    // Both kinds, and a session on this machine isn't listed twice.
+    let picker = app.sessions_picker.as_mut().unwrap();
+    picker.sessions = vec![Status {
+        id: 1,
+        cwd: "/project".into(),
+        session_id: "s1".into(),
+        title: "local one".into(),
+        state: State::Idle,
+        attached: false,
+        since: 0,
+        sid: "aa".into(),
+    }];
+    app.on_app_event(AppEvent::HubSessions(Ok(vec![
+        hub_session("aa", "this-box", "local one"),
+        hub_session("bb", "far-box", "far away"),
+        hub_session(crate::web::sid(), "this-box", "this very session"),
+    ])));
+    let shown = screen(&mut app);
+    assert!(shown.contains("This machine") && shown.contains("local one"), "{shown}");
+    assert!(shown.contains("far away") && shown.contains("far-box"), "{shown}");
+    assert!(!shown.contains("this-box") && !shown.contains("this very"), "{shown}");
+
+    // A draft waits while the other session has the prompt.
+    app.input = "my draft".into();
+    app.cursor = app.input.len();
+    app.on_event(key(KeyCode::Down));
+    app.on_event(key(KeyCode::Enter));
+    assert!(app.remote_view.is_some());
+    assert!(app.sessions_picker.is_none());
+    assert_eq!(app.input, "");
+    let generation = app.remote_generation;
+
+    // What the session sends shows; what an old connection sends doesn't.
+    let entries = |from, items| RemoteEvent::Message(Incoming::Entries { from, items });
+    app.on_app_event(AppEvent::Remote(generation, RemoteEvent::Live));
+    app.on_app_event(AppEvent::Remote(
+        generation,
+        entries(0, vec![Entry::User("hello there".into()), Entry::Assistant("general".into())]),
+    ));
+    app.on_app_event(AppEvent::Remote(
+        generation - 1,
+        entries(0, vec![Entry::User("stale".into())]),
+    ));
+    let shown = screen(&mut app);
+    assert!(shown.contains("hello there") && shown.contains("general"), "{shown}");
+    assert!(!shown.contains("stale"), "{shown}");
+    assert!(shown.contains("connected") && shown.contains("far-box"), "{shown}");
+    assert!(app.entries.iter().all(|e| !matches!(e, Entry::User(_))), "this session's are its own");
+    app.on_app_event(AppEvent::Remote(
+        generation,
+        entries(1, vec![Entry::Assistant("kenobi".into())]),
+    ));
+    let shown = screen(&mut app);
+    assert!(shown.contains("kenobi") && !shown.contains("general"), "{shown}");
+
+    // Sent text leaves the prompt; approvals show and take the keyboard.
+    type_text(&mut app, "do it");
+    app.on_event(key(KeyCode::Enter));
+    assert_eq!(app.input, "");
+    app.on_app_event(AppEvent::Remote(
+        generation,
+        RemoteEvent::Message(Incoming::Approval(Some(Approval {
+            name: "bash".into(),
+            summary: "rm -rf target".into(),
+            description: "Run a command".into(),
+            always: Vec::new(),
+        }))),
+    ));
+    let shown = screen(&mut app);
+    assert!(shown.contains("rm -rf target") && shown.contains("Approve on far-box"), "{shown}");
+    type_text(&mut app, "x");
+    assert_eq!(app.input, "", "typing goes to the prompt's keys");
+
+    // Esc interrupts a working session and only then comes back; ctrl+c always does.
+    app.on_app_event(AppEvent::Remote(
+        generation,
+        RemoteEvent::Message(Incoming::Approval(None)),
+    ));
+    app.on_app_event(AppEvent::Remote(
+        generation,
+        RemoteEvent::Message(Incoming::Status(Box::new(Remote {
+            running: true,
+            ..Default::default()
+        }))),
+    ));
+    app.on_event(key(KeyCode::Esc));
+    assert!(app.remote_view.is_some(), "esc interrupts while it works");
+    app.on_event(Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)));
+    assert!(app.remote_view.is_none());
+    assert!(!app.should_quit, "leaving it doesn't quit this session");
+    assert_eq!(app.input, "my draft");
+
+    // A session that isn't encrypted isn't opened.
+    app.open_remote_view(HubSession {
+        e2e: false,
+        ..hub_session("cc", "old-box", "")
+    });
+    assert!(app.remote_view.is_none());
+    assert!(matches!(app.entries.last(), Some(Entry::Error(e)) if e.contains("old-box")));
 }

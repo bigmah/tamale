@@ -12,6 +12,8 @@ mod goal;
 mod help;
 mod input;
 mod prompts;
+#[cfg(unix)]
+mod remote;
 mod rewind;
 mod sessions;
 #[cfg(test)]
@@ -62,6 +64,12 @@ pub enum AppEvent {
     /// A session stopped from `/sessions` has gone (its id), or why it hasn't.
     #[cfg(unix)]
     SessionStopped(u32, Result<(), String>),
+    /// The hub's list of sessions, for an open `/sessions`.
+    #[cfg(unix)]
+    HubSessions(Result<Vec<crate::remote::HubSession>, String>),
+    /// News of the session being driven, tagged with which time it was opened.
+    #[cfg(unix)]
+    Remote(u64, crate::remote::Event),
 }
 
 /// What `/browser` and `/web` ask the event loop to do.
@@ -77,6 +85,7 @@ pub enum FooterTab {
     Web,
     Chat,
     Diff,
+    Sessions,
 }
 
 /// What `/web` and `/remote` asked of the event loop.
@@ -168,6 +177,8 @@ pub struct App {
     web_tab: Option<ratatui::layout::Rect>,
     /// Where the footer's Remote tab was last drawn, so a click on it connects to the hub.
     remote_tab: Option<ratatui::layout::Rect>,
+    /// The same for the Sessions tab.
+    sessions_tab: Option<ratatui::layout::Rect>,
     /// The footer tab picked with ←/→ after ↓ past the prompt's last line moved the
     /// keyboard there; Enter or ↓ opens it. `None` while the keyboard is in the prompt.
     tab_focus: Option<FooterTab>,
@@ -182,6 +193,11 @@ pub struct App {
     resume_picker: Option<ResumePicker>,
     #[cfg(unix)]
     sessions_picker: Option<background::SessionsPicker>,
+    /// A session on another machine being driven, in place of this one on screen.
+    #[cfg(unix)]
+    remote_view: Option<remote::RemoteView>,
+    #[cfg(unix)]
+    remote_generation: u64,
     /// The session the terminal should go to.
     #[cfg(unix)]
     switch_request: Option<u32>,
@@ -247,6 +263,10 @@ pub struct App {
     hub_viewers: Option<usize>,
     /// Whether the hub connection is up, rather than still being tried.
     hub_live: bool,
+    /// How many of those viewers show artifacts.
+    web_viewers: usize,
+    /// Whether the last prompt came from another terminal, so isn't written for the web UI.
+    plain_prompts: bool,
     /// A reply being continued in place after a token limit cut it off inside a code
     /// block: its entry and its length before the continuation.
     joining: Option<(usize, usize)>,
@@ -286,6 +306,7 @@ impl App {
             web_request: None,
             web_tab: None,
             remote_tab: None,
+            sessions_tab: None,
             tab_focus: None,
             settings,
             tx,
@@ -296,6 +317,10 @@ impl App {
             resume_picker: None,
             #[cfg(unix)]
             sessions_picker: None,
+            #[cfg(unix)]
+            remote_view: None,
+            #[cfg(unix)]
+            remote_generation: 0,
             #[cfg(unix)]
             switch_request: None,
             rewind_picker: None,
@@ -339,6 +364,8 @@ impl App {
             web_session: false,
             hub_viewers: None,
             hub_live: false,
+            web_viewers: 0,
+            plain_prompts: false,
             joining: None,
             should_quit: false,
             detachable: false,
@@ -404,7 +431,7 @@ impl App {
     /// Whether something on screen is animating (spinners).
     pub fn is_busy(&self) -> bool {
         #[cfg(unix)]
-        if self.sessions_picker.is_some() {
+        if self.sessions_picker.is_some() || self.remote_view.is_some() {
             return true;
         }
         self.is_running()
@@ -426,6 +453,7 @@ impl App {
         }
         self.input.clear();
         self.cursor = 0;
+        self.plain_prompts = false;
         self.submit_text(text);
     }
 
@@ -604,6 +632,10 @@ impl App {
             AppEvent::SessionSaved(id, result) => self.on_session_saved(&id, result),
             #[cfg(unix)]
             AppEvent::SessionStopped(id, result) => self.on_session_stopped(id, result),
+            #[cfg(unix)]
+            AppEvent::HubSessions(result) => self.on_hub_sessions(result),
+            #[cfg(unix)]
+            AppEvent::Remote(generation, event) => self.on_remote_event(generation, event),
             AppEvent::ClipboardPasted(Ok(text)) => self.on_paste(&text),
             AppEvent::ClipboardCopied(Ok(())) => self
                 .entries

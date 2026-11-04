@@ -94,6 +94,16 @@ impl App {
     pub fn web_send(&mut self, text: String) {
         let text = text.trim().to_string();
         if !text.is_empty() {
+            self.plain_prompts = false;
+            self.submit_text(text);
+        }
+    }
+
+    /// The same from another terminal driving this session, which wants ordinary replies.
+    pub fn terminal_send(&mut self, text: String) {
+        let text = text.trim().to_string();
+        if !text.is_empty() {
+            self.plain_prompts = true;
             self.submit_text(text);
         }
     }
@@ -111,12 +121,17 @@ impl App {
     /// Whether prompts ask for replies written for the web UI: during a web session, or
     /// while a browser or phone is watching through the hub from behind the TUI.
     pub(super) fn writes_for_web(&self) -> bool {
-        self.web_session || self.hub_viewers.is_some_and(|viewers| viewers > 0)
+        !self.plain_prompts
+            && (self.web_session || (self.hub_viewers.is_some() && self.web_viewers > 0))
     }
 
     /// What the footer's hub indicator shows: `None` when not connected to a hub.
     pub fn set_hub_viewers(&mut self, viewers: Option<usize>) {
         self.hub_viewers = viewers;
+    }
+
+    pub fn set_web_viewers(&mut self, viewers: usize) {
+        self.web_viewers = viewers;
     }
 
     pub fn set_hub_live(&mut self, live: bool) {

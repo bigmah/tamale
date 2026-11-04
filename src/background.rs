@@ -122,6 +122,9 @@ pub struct Status {
     pub attached: bool,
     /// When `state` last changed, in Unix seconds.
     pub since: u64,
+    /// Its id on a hub (see `web::sid`), which lists it if it's connected to one.
+    #[serde(default)]
+    pub sid: String,
 }
 
 /// Where servers keep their files. Only this user can enter it, which is what guards the

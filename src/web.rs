@@ -20,7 +20,7 @@ mod fixtures;
 mod relay;
 mod render;
 
-pub use relay::{Label, hostname};
+pub use relay::{Label, hostname, sid};
 
 /// How a connection to a tamale-hub is going.
 #[derive(Clone, Debug, PartialEq)]
@@ -30,7 +30,7 @@ pub enum HubState<'a> {
     /// Not yet, and what's gone wrong so far.
     Connecting(Option<String>),
 }
-pub use render::{artifact_title, is_artifact};
+pub use render::{artifact_marker, artifact_title, is_artifact};
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -186,6 +186,8 @@ pub enum WebEvent {
     Hub(Result<String, String>),
     /// A prompt or slash command.
     Send(String),
+    /// The same from another terminal, where replies shouldn't be written for the web UI.
+    TerminalSend(String),
     Interrupt,
     Approve(Choice, Option<String>),
 }
@@ -265,6 +267,9 @@ struct Client {
     welcomed: bool,
     /// Whether it connects through a tamale-hub rather than to this server directly.
     remote: bool,
+    /// Whether it's another terminal driving this session (see [`crate::remote`]), which
+    /// shows an artifact as one line.
+    terminal: bool,
 }
 
 struct Shared {
@@ -316,6 +321,7 @@ impl Shared {
                 tx,
                 welcomed: false,
                 remote,
+                terminal: false,
             },
         );
         let _ = self.events.send(WebEvent::Connected(id));
@@ -576,6 +582,17 @@ impl Server {
             .unwrap()
             .values()
             .filter(|c| c.remote)
+            .count()
+    }
+
+    /// How many of those show artifacts, unlike another terminal.
+    pub fn web_remote_tabs(&self) -> usize {
+        self.shared
+            .clients
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|c| c.remote && !c.terminal)
             .count()
     }
 }
@@ -877,8 +894,19 @@ fn handle(shared: &Arc<Shared>, id: u64, request: Value) {
         });
     };
     match request.get("t").and_then(Value::as_str).unwrap_or("") {
+        "terminal" => {
+            if let Some(client) = shared.clients.lock().unwrap().get_mut(&id) {
+                client.terminal = true;
+            }
+        }
         "send" => {
-            let _ = shared.events.send(WebEvent::Send(str_field("text")));
+            let terminal = shared.clients.lock().unwrap().get(&id).is_some_and(|c| c.terminal);
+            let text = str_field("text");
+            let _ = shared.events.send(if terminal {
+                WebEvent::TerminalSend(text)
+            } else {
+                WebEvent::Send(text)
+            });
         }
         "interrupt" => {
             let _ = shared.events.send(WebEvent::Interrupt);
@@ -1166,6 +1194,22 @@ mod tests {
         assert_eq!(sessions[0]["items"][0]["hash"], content_hash("<title>New</title>"));
         assert_eq!(sessions[1]["items"][0]["title"], "Old");
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn a_terminal_says_what_it_is_and_gets_ordinary_replies() {
+        let mut server = Server::start(false).await.unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let id = server.shared.add_client(tx, true);
+        assert!(matches!(server.events.recv().await, Some(WebEvent::Connected(_))));
+        assert_eq!((server.remote_tabs(), server.web_remote_tabs()), (1, 1));
+        handle(&server.shared, id, json!({ "t": "send", "text": "a" }));
+        assert!(matches!(server.events.recv().await, Some(WebEvent::Send(t)) if t == "a"));
+
+        handle(&server.shared, id, json!({ "t": "terminal" }));
+        assert_eq!((server.remote_tabs(), server.web_remote_tabs()), (1, 0));
+        handle(&server.shared, id, json!({ "t": "send", "text": "b" }));
+        assert!(matches!(server.events.recv().await, Some(WebEvent::TerminalSend(t)) if t == "b"));
     }
 
     #[tokio::test]

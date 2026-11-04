@@ -98,7 +98,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("/clear", "Clear the conversation and start fresh"),
     (
         "/sessions",
-        "See the other sessions running in the background, and join or stop them",
+        "See the other sessions on this machine, to join or stop, and on other machines through the hub, to drive from here (the Sessions tab opens it too)",
     ),
     (
         "/detach",
@@ -138,10 +138,11 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
             ),
             (
                 "↓ (below the prompt)",
-                "Focus the tabs: ←/→ pick Remote (like /remote), Web (like /web) or Diff, Enter/↓ opens it; ↑ or Esc back",
+                "Focus the tabs: ←/→ pick Remote (like /remote), Web (like /web), Diff or Sessions (like /sessions), Enter/↓ opens it; ↑ or Esc back",
             ),
             ("Ctrl+O / click Web", "Open the web UI on your Wi-Fi, like /web"),
             ("Click Remote", "Connect to the hub or show its QR code, like /remote"),
+            ("Click Sessions", "See and join other sessions, like /sessions"),
             ("v / V (in a diff)", "Select lines; Enter quotes them into the prompt, y copies"),
             ("Esc", "Interrupt the agent (unsent queued messages return to the input)"),
             (

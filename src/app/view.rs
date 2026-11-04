@@ -23,6 +23,11 @@ use crate::session::Entry;
 
 impl App {
     pub fn draw(&mut self, frame: &mut Frame) {
+        #[cfg(unix)]
+        if self.remote_view.is_some() {
+            self.draw_remote_view(frame);
+            return;
+        }
         let area = frame.area();
         let input_width = area.width.saturating_sub(4).max(1) as usize;
         let (rows, cursor) = wrap_input(&self.input, self.cursor, input_width);
@@ -519,10 +524,8 @@ impl App {
         ];
         let remote_offset = tabs[0].content.width() as u16;
         tabs.extend(chat);
-        tabs.push(arrow(
-            "→",
-            has_diff && focus.is_some_and(|t| t != FooterTab::Diff),
-        ));
+        tabs.push(Span::styled(SESSIONS_TAB, style(FooterTab::Sessions, Color::Blue)));
+        tabs.push(arrow("→", focus.is_some_and(|t| t != FooterTab::Sessions)));
         tabs.push(Span::from(" "));
         let tabs_width: usize = tabs.iter().map(|s| s.content.width()).sum();
         let fixed = " cwd: ".len()
@@ -585,6 +588,7 @@ impl App {
                 FooterTab::Remote => "enter/↓ connect to the hub · ←/→ choose · ↑ back",
                 FooterTab::Web => "enter/↓ open the web UI · ←/→ choose · ↑ back",
                 FooterTab::Diff => "enter/↓ open the diff · ←/→ choose · ↑ back",
+                FooterTab::Sessions => "enter/↓ see other sessions · ←/→ choose · ↑ back",
                 FooterTab::Chat => "←/→ choose a tab · enter/↑ back to the prompt",
             }
         } else if self.is_running() && self.detachable {
@@ -669,12 +673,18 @@ impl App {
         self.web_tab = Some(
             Rect::new(start + remote_width, area.y, WEB_TAB.width() as u16, 1).intersection(area),
         );
+        // At the right end, before its arrow and the margin.
+        let sessions_width = SESSIONS_TAB.width() as u16;
+        let sessions_start = (area.x + area.width).saturating_sub(sessions_width + 2);
+        self.sessions_tab =
+            Some(Rect::new(sessions_start, area.y, sessions_width, 1).intersection(area));
     }
 }
 
 const REMOTE_ON_TAB: &str = " ⇄ Remote on ";
 const REMOTE_OFF_TAB: &str = " ⇄ Remote off ";
 const WEB_TAB: &str = " ◉ Web ";
+const SESSIONS_TAB: &str = " ≡ Sessions ";
 
 /// Compact token count, e.g. 950, 12.3k, 1.2M.
 pub(super) fn fmt_tokens(n: u64) -> String {
@@ -903,7 +913,7 @@ fn draw_queued(frame: &mut Frame, area: Rect, queued: &[String]) {
 
 /// Wraps input text to `width` columns, returning visual rows and the
 /// (row, col) of the byte offset `cursor`.
-fn wrap_input(input: &str, cursor: usize, width: usize) -> (Vec<String>, (usize, usize)) {
+pub(super) fn wrap_input(input: &str, cursor: usize, width: usize) -> (Vec<String>, (usize, usize)) {
     let mut rows = vec![String::new()];
     let mut col = 0;
     let mut pos = None;

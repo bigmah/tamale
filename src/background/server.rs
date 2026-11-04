@@ -128,6 +128,7 @@ impl Host {
                 state: State::Idle,
                 attached: false,
                 since: crate::session::now(),
+                sid: crate::web::sid().to_string(),
             },
             idle_since: None,
             quit: false,
@@ -263,6 +264,7 @@ impl Host {
             state,
             attached: self.client.is_some(),
             since,
+            sid: self.status.sid.clone(),
         };
         if status != self.status {
             self.status = status;
