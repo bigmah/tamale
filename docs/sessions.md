@@ -24,6 +24,38 @@ and drain before exit. Resume sees pending updates immediately. A disposable `.i
 inside the sessions directory caches listing metadata; older sessions are indexed on
 first listing, and changed files or missing/corrupt indexes are reparsed automatically.
 
+## Background sessions
+
+An interactive session runs in a background process of its own, and the terminal is only a
+window onto it. So work carries on when the terminal goes away, even if you close it.
+
+- `Ctrl+C` during a turn detaches: tamale exits and the agent keeps going. `Esc` still
+  interrupts. `Ctrl+C` while idle clears the input, then ends the session as it always has.
+  `/detach` leaves at any time.
+- Running `tamale` with no arguments offers to go back to any open session in the current
+  directory that no terminal is showing. `tamale --continue` goes straight to the latest one, or
+  if there isn't one, resumes the latest saved session.
+- `tamale ls` lists open sessions and what they're doing. `tamale attach [<id>]` goes back to one
+  and `tamale kill <id>` ends one (it stays saved, so `--continue` can resume it).
+- `/sessions` lists the other open sessions inside the TUI. `Enter` joins one, leaving the current
+  session running (a session with nothing in it just closes), and `x` stops one: twice if it's
+  mid-turn. It stays saved either way.
+- One terminal shows a session at a time; attaching from another takes it over.
+- An approval prompt waits while you're away, and `tamale ls` shows `needs approval`. With
+  `[permissions] mode = "auto"`, nothing waits.
+- A session with nothing running and no terminal or web tab open exits after 24 hours. It stays
+  saved.
+- `/resume` refuses a session that's still open elsewhere, since two processes would overwrite
+  each other's saves.
+- Sessions end when the machine restarts. The latest save survives, and `--continue` resumes
+  from there.
+- `--foreground` keeps the session in the terminal's own process: nothing keeps running after it
+  exits, and `Ctrl+C` interrupts a turn instead of detaching.
+
+Each one is `tamale --server`, with files in `.servers/` under the sessions directory: `<id>.sock`,
+a socket only you can reach; `<id>.json`, what `tamale ls` shows; and `<id>.log`, its stderr, kept
+if it dies.
+
 ## Checkpoints and undo
 
 Before the agent's first write to a file in a turn, the file's original contents (or

@@ -1825,3 +1825,145 @@ async fn a_reply_cut_off_inside_a_code_block_continues_in_the_same_entry() {
     app.on_agent(app.turn, AgentEvent::Continuing("Continuing…".into()));
     assert!(matches!(app.entries.last(), Some(Entry::Info(_))));
 }
+
+#[tokio::test]
+async fn ctrl_c_detaches_a_running_turn_only_on_a_server() {
+    let ctrl_c = || Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    app.set_detachable();
+
+    // Running: leaves the turn going.
+    app.task = Some(tokio::spawn(std::future::pending()));
+    app.on_event(ctrl_c());
+    assert!(app.take_detach_request());
+    assert!(!app.take_detach_request());
+    assert!(app.is_running() && !app.should_quit);
+
+    // Also from an approval prompt, which stays up for whoever comes back.
+    let (reply, _answer) = tokio::sync::oneshot::channel();
+    app.approval = Some(approval::Prompt::new(
+        "bash".into(),
+        "cargo test".into(),
+        "Run tests".into(),
+        vec![],
+        reply,
+    ));
+    app.on_event(ctrl_c());
+    assert!(app.take_detach_request());
+    assert!(app.approval.is_some() && app.is_running());
+    app.approval = None;
+    app.task.take().unwrap().abort();
+
+    // Idle: clears the input, then quits, since nothing would be left running.
+    app.input = "draft".into();
+    app.on_event(ctrl_c());
+    assert!(app.input.is_empty() && !app.take_detach_request() && !app.should_quit);
+    app.on_event(ctrl_c());
+    assert!(app.should_quit && !app.take_detach_request());
+}
+
+#[tokio::test]
+async fn ctrl_c_interrupts_a_running_turn_in_the_foreground() {
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    app.task = Some(tokio::spawn(std::future::pending()));
+    app.on_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('c'),
+        KeyModifiers::CONTROL,
+    )));
+    assert!(!app.is_running());
+    assert!(!app.take_detach_request() && !app.should_quit);
+
+    type_text(&mut app, "/detach");
+    app.on_event(Event::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )));
+    assert!(!app.take_detach_request());
+    assert!(matches!(app.entries.last(), Some(Entry::Error(_))));
+}
+
+#[tokio::test]
+async fn sessions_picker_joins_stops_and_keeps_its_place() {
+    use crate::background::{State, Status};
+    let status = |id, state| Status {
+        id,
+        cwd: "/project".into(),
+        session_id: format!("s{id}"),
+        title: format!("title {id}"),
+        state,
+        attached: false,
+        since: 0,
+    };
+    let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    app.set_detachable();
+    let open = |app: &mut App| {
+        app.sessions_picker = Some(background::SessionsPicker {
+            sessions: vec![status(1, State::Running), status(2, State::Idle)],
+            ..Default::default()
+        });
+    };
+
+    // A session mid-turn takes a second `x`, and anything else calls that off. The stop
+    // itself goes to a session that isn't there, which only reports back.
+    open(&mut app);
+    app.on_event(key(KeyCode::Char('x')));
+    let picker = app.sessions_picker.as_ref().unwrap();
+    assert_eq!(picker.confirming, Some(1));
+    assert!(picker.stopping.is_empty());
+    app.on_event(key(KeyCode::Down));
+    app.on_event(key(KeyCode::Up));
+    let picker = app.sessions_picker.as_ref().unwrap();
+    assert_eq!(picker.confirming, None);
+    app.on_event(key(KeyCode::Char('x')));
+    app.on_event(key(KeyCode::Char('x')));
+    assert_eq!(app.sessions_picker.as_ref().unwrap().stopping, [1]);
+
+    // An idle one goes at the first.
+    app.on_event(key(KeyCode::Down));
+    app.on_event(key(KeyCode::Char('x')));
+    assert_eq!(app.sessions_picker.as_ref().unwrap().stopping, [1, 2]);
+
+    // The selection follows its session through a refresh, and a gone one is forgotten.
+    let picker = app.sessions_picker.as_mut().unwrap();
+    picker.update(vec![status(3, State::Idle), status(2, State::Idle)]);
+    assert_eq!(picker.selected, 1);
+    assert_eq!(picker.stopping, [2]);
+    picker.update(vec![]);
+    assert_eq!(picker.selected, 0);
+    let empty = screen(&mut app);
+    assert!(empty.contains("No other sessions are open"), "{empty}");
+
+    // Enter closes the picker and asks to go there.
+    open(&mut app);
+    app.on_event(key(KeyCode::Down));
+    let screen_text = screen(&mut app);
+    assert!(screen_text.contains("title 2"), "{screen_text}");
+    app.on_event(key(KeyCode::Enter));
+    assert!(app.sessions_picker.is_none());
+    assert_eq!(app.take_switch_request(), Some(2));
+    assert_eq!(app.take_switch_request(), None);
+    assert!(app.is_blank_session());
+
+    // In the foreground there's no switching, only directions.
+    app.detachable = false;
+    open(&mut app);
+    app.on_event(key(KeyCode::Enter));
+    assert_eq!(app.take_switch_request(), None);
+    assert!(matches!(app.entries.last(), Some(Entry::Error(_))));
+}

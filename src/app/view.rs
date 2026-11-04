@@ -57,6 +57,10 @@ impl App {
         if self.backend_picker.is_some() {
             self.draw_backend_picker(frame, chat_area);
         }
+        #[cfg(unix)]
+        if self.sessions_picker.is_some() {
+            self.draw_sessions_picker(frame, chat_area);
+        }
         if self.resume_picker.is_some() {
             self.draw_resume_picker(frame, chat_area);
         }
@@ -574,6 +578,8 @@ impl App {
                 FooterTab::Diff => "enter/↓ open the diff · ←/→ choose · ↑ back",
                 FooterTab::Chat => "←/→ choose a tab · enter/↑ back to the prompt",
             }
+        } else if self.is_running() && self.detachable {
+            "esc to interrupt · ctrl+c to detach"
         } else if self.is_running() {
             "esc to interrupt"
         } else {
@@ -702,7 +708,7 @@ pub(super) fn render_quiet<'a>(entries: &'a [Entry], width: u16, lines: &mut Vec
 }
 
 /// A path with the home directory shown as `~`.
-fn tilde(path: &std::path::Path) -> String {
+pub(super) fn tilde(path: &std::path::Path) -> String {
     match std::env::var_os("HOME")
         .and_then(|home| path.strip_prefix(home).ok().map(|p| p.to_path_buf()))
     {

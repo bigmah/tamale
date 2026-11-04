@@ -36,7 +36,7 @@ mod tests;
 pub type WebTerminal = Terminal<FrameBackend>;
 
 /// Largest size, in cells, accepted from a tab.
-const MAX_CELLS: u16 = 1000;
+pub const MAX_CELLS: u16 = 1000;
 
 const PAGE: &str = include_str!("browser/index.html");
 /// Built by `web/build.sh`.

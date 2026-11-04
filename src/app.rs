@@ -3,6 +3,8 @@
 
 mod activity;
 mod approval;
+#[cfg(unix)]
+mod background;
 mod backends;
 mod commands;
 mod diff;
@@ -57,6 +59,9 @@ pub enum AppEvent {
     LoginRemoved(Result<String, String>),
     /// A `/diff` load finished (tagged with the viewer's load generation).
     Diff(u64, Result<Vec<crate::diff::FileDiff>, String>),
+    /// A session stopped from `/sessions` has gone (its id), or why it hasn't.
+    #[cfg(unix)]
+    SessionStopped(u32, Result<(), String>),
 }
 
 /// What `/browser` and `/web` ask the event loop to do.
@@ -175,6 +180,11 @@ pub struct App {
     effort_picker: Option<usize>,
     backend_picker: Option<backends::Picker>,
     resume_picker: Option<ResumePicker>,
+    #[cfg(unix)]
+    sessions_picker: Option<background::SessionsPicker>,
+    /// The session the terminal should go to.
+    #[cfg(unix)]
+    switch_request: Option<u32>,
     rewind_picker: Option<rewind::Picker>,
     /// The `/diff` viewer, while it is open.
     diff: Option<diff::Viewer>,
@@ -239,6 +249,9 @@ pub struct App {
     /// block: its entry and its length before the continuation.
     joining: Option<(usize, usize)>,
     pub should_quit: bool,
+    /// Running as a server: a client can leave while the session goes on.
+    detachable: bool,
+    detach_requested: bool,
 }
 
 impl App {
@@ -279,6 +292,10 @@ impl App {
             effort_picker: None,
             backend_picker: None,
             resume_picker: None,
+            #[cfg(unix)]
+            sessions_picker: None,
+            #[cfg(unix)]
+            switch_request: None,
             rewind_picker: None,
             diff: None,
             diff_open: false,
@@ -321,6 +338,8 @@ impl App {
             hub_viewers: None,
             joining: None,
             should_quit: false,
+            detachable: false,
+            detach_requested: false,
         }
     }
 
@@ -337,8 +356,54 @@ impl App {
         self.task.is_some()
     }
 
+    #[cfg(unix)]
+    pub fn set_detachable(&mut self) {
+        self.detachable = true;
+    }
+
+    /// Whether the terminal should be let go of, since the last time this was asked.
+    #[cfg(unix)]
+    pub fn take_detach_request(&mut self) -> bool {
+        std::mem::take(&mut self.detach_requested)
+    }
+
+    /// What Ctrl+C does when it isn't clearing anything: leaves a turn running if it can,
+    /// and otherwise ends the session.
+    pub fn quit_or_detach(&mut self) {
+        if self.detachable && self.is_running() {
+            self.detach_requested = true;
+        } else {
+            self.should_quit = true;
+        }
+    }
+
+    /// What `tamale ls` shows about this session: its directory, id, title and state.
+    #[cfg(unix)]
+    pub fn background_status(
+        &self,
+    ) -> (std::path::PathBuf, String, String, crate::background::State) {
+        use crate::background::State;
+        let state = if self.approval.is_some() {
+            State::NeedsApproval
+        } else if self.is_running() {
+            State::Running
+        } else {
+            State::Idle
+        };
+        (
+            self.workspace.cwd.clone(),
+            self.session_id.clone(),
+            self.session_title(),
+            state,
+        )
+    }
+
     /// Whether something on screen is animating (spinners).
     pub fn is_busy(&self) -> bool {
+        #[cfg(unix)]
+        if self.sessions_picker.is_some() {
+            return true;
+        }
         self.is_running()
             || (self.picker.is_some() && self.models.is_none())
             || self.backend_picker.as_ref().is_some_and(|p| p.loading)
@@ -347,6 +412,8 @@ impl App {
 
     pub fn on_tick(&mut self) {
         self.tick = self.tick.wrapping_add(1);
+        #[cfg(unix)]
+        self.refresh_sessions_picker();
     }
 
     fn submit(&mut self) {
@@ -532,6 +599,8 @@ impl App {
             AppEvent::LoginRemoved(result) => self.on_login_removed(result),
             AppEvent::Diff(generation, result) => self.on_diff(generation, result),
             AppEvent::SessionSaved(id, result) => self.on_session_saved(&id, result),
+            #[cfg(unix)]
+            AppEvent::SessionStopped(id, result) => self.on_session_stopped(id, result),
             AppEvent::ClipboardPasted(Ok(text)) => self.on_paste(&text),
             AppEvent::ClipboardCopied(Ok(())) => self
                 .entries

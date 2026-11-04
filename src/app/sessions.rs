@@ -10,14 +10,7 @@ impl App {
         if self.history.is_empty() {
             return;
         }
-        let title = self
-            .entries
-            .iter()
-            .find_map(|e| match e {
-                Entry::User(t) => Some(truncate_chars(t.lines().next().unwrap_or(""), 80)),
-                _ => None,
-            })
-            .unwrap_or_default();
+        let title = self.session_title();
         let saved = session::Session {
             id: self.session_id.clone(),
             cwd: self.workspace.cwd.clone(),
@@ -34,6 +27,17 @@ impl App {
         self.session_writer
             .get_or_insert_with(|| session::Writer::start(self.tx.clone()))
             .save(saved);
+    }
+
+    /// The session's label: its first message.
+    pub(super) fn session_title(&self) -> String {
+        self.entries
+            .iter()
+            .find_map(|e| match e {
+                Entry::User(t) => Some(truncate_chars(t.lines().next().unwrap_or(""), 80)),
+                _ => None,
+            })
+            .unwrap_or_default()
     }
 
     pub(super) fn on_session_saved(&mut self, id: &str, result: Result<(), String>) {
@@ -145,6 +149,14 @@ impl App {
     /// Replaces the conversation with a saved session; later saves go to that session.
     pub fn resume(&mut self, id: &str) {
         if self.is_running() {
+            return;
+        }
+        #[cfg(unix)]
+        if let Some(server) = crate::background::running_session(id) {
+            self.entries.push(Entry::Error(format!(
+                "That session is still running in the background: tamale attach {}",
+                server.id
+            )));
             return;
         }
         let pending = self

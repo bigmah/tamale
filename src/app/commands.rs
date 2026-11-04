@@ -390,6 +390,10 @@ impl App {
     pub(super) fn command(&mut self, cmd: &str) {
         match cmd.split_whitespace().next().unwrap_or("") {
             "/quit" | "/exit" => self.should_quit = true,
+            "/detach" if self.detachable => self.detach_requested = true,
+            "/detach" => self.entries.push(Entry::Error(
+                "This session runs in this terminal (--foreground), so it can't detach.".into(),
+            )),
             "/clear" if self.is_running() => self.entries.push(Entry::Error(
                 "Can't clear while the agent is running (Esc to interrupt first).".into(),
             )),
@@ -408,6 +412,8 @@ impl App {
                 self.entries
                     .push(Entry::Info("Conversation cleared.".into()));
             }
+            #[cfg(unix)]
+            "/sessions" => self.open_sessions_picker(),
             "/resume" | "/continue" => self.resume_command(cmd.split_whitespace().nth(1)),
             "/add-dir" => self.add_dir(cmd["/add-dir".len()..].trim()),
             "/goal" => self.goal_command(cmd["/goal".len()..].trim()),

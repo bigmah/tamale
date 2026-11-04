@@ -1,6 +1,8 @@
 mod agent;
 mod app;
 mod backend;
+#[cfg(unix)]
+mod background;
 mod browser;
 mod checkpoint;
 mod cli;
@@ -8,6 +10,7 @@ mod clipboard;
 mod config;
 mod diff;
 mod permissions;
+mod screen;
 mod session;
 mod tools;
 mod web;
@@ -16,16 +19,15 @@ mod workspace;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
-use crossterm::event::{
-    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
-    EventStream, KeyCode, KeyEventKind, KeyModifiers,
-};
-use crossterm::execute;
-use futures::StreamExt;
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use tokio::sync::mpsc;
 
 use crate::app::{App, BrowserRequest, WebRequest};
 use crate::backend::Backend;
+use crate::screen::{Screen, ScreenEvent};
+
+/// How often to check whether a server has sat unused for too long.
+const EXPIRY_CHECK: Duration = Duration::from_secs(60);
 
 /// Shortest time between syncs of the web UI.
 const WEB_FRAME: Duration = Duration::from_millis(40);
@@ -36,6 +38,10 @@ fn main() -> Result<()> {
         println!("{}", cli::HELP);
         return Ok(());
     }
+    #[cfg(unix)]
+    if cli.server {
+        background::redirect_stderr()?;
+    }
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
@@ -43,6 +49,22 @@ fn main() -> Result<()> {
 }
 
 async fn start(cli: cli::Cli) -> Result<()> {
+    #[cfg(unix)]
+    let host = {
+        if let Some(command) = &cli.command {
+            return background::client::run_command(command).await;
+        }
+        let in_background = !cli.server && !cli.foreground && cli.print_prompt.is_none();
+        if in_background && let Some(id) = background::client::session_to_rejoin(&cli)? {
+            return background::client::attach(id).await;
+        }
+        // Listening before anything slow, so the client has something to connect to.
+        cli.server.then(background::Host::bind).transpose()?
+    };
+    #[cfg(not(unix))]
+    if cli.command.is_some() {
+        bail!("Background sessions aren't available on this platform.");
+    }
     let mut workspace = workspace::Workspace::current()?;
     for dir in &cli.additional_dirs {
         workspace.add_dir(dir)?;
@@ -69,6 +91,11 @@ async fn start(cli: cli::Cli) -> Result<()> {
         if cli.print_prompt.is_some() {
             bail!("{name} isn't signed in. Run `{login}` (or start tamale without -p to sign in).");
         }
+        // The client signs in before starting a server, which has no terminal to do it in.
+        #[cfg(unix)]
+        if cli.server {
+            bail!("{name} isn't signed in. Run `{login}`.");
+        }
         eprintln!("{name} isn't signed in; starting `{login}`…");
         backend.login().await?;
     }
@@ -91,21 +118,17 @@ async fn start(cli: cli::Cli) -> Result<()> {
         return print_mode(backend, turn, ctx, cli.yes).await;
     }
 
-    // Restore terminal input modes even if we panic.
-    let hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        let _ = execute!(
-            std::io::stdout(),
-            DisableBracketedPaste,
-            DisableMouseCapture
-        );
-        hook(info);
-    }));
-    let mut terminal = ratatui::init();
-    execute!(std::io::stdout(), EnableBracketedPaste)?;
-    if settings.ui.mouse {
-        execute!(std::io::stdout(), EnableMouseCapture)?;
+    #[cfg(unix)]
+    if !cli.server && !cli.foreground {
+        return background::client::start_and_attach().await;
     }
+    #[cfg(unix)]
+    let screen = match host {
+        Some(host) => Screen::Hosted(host),
+        None => Screen::local(settings.ui.mouse)?,
+    };
+    #[cfg(not(unix))]
+    let screen = Screen::local(settings.ui.mouse)?;
     let (mut app, rx) = App::new_with_channel(backend, settings, workspace);
     app.load_prompt_history();
     app.preload_diff();
@@ -120,13 +143,15 @@ async fn start(cli: cli::Cli) -> Result<()> {
     if choose_backend {
         app.ask_for_backend();
     }
-    let result = run(&mut terminal, (app, rx)).await;
-    let _ = execute!(
-        std::io::stdout(),
-        DisableBracketedPaste,
-        DisableMouseCapture
-    );
-    ratatui::restore();
+    #[cfg(unix)]
+    if matches!(screen, Screen::Hosted(_)) {
+        app.set_detachable();
+    }
+    let mut screen = screen;
+    let result = run(&mut screen, (app, rx)).await;
+    screen
+        .close(result.as_ref().err().map(|e| format!("{e:#}")))
+        .await;
     result
 }
 
@@ -197,24 +222,6 @@ async fn print_mode(
         std::process::exit(1);
     }
     Ok(())
-}
-
-fn suspend_terminal() {
-    let _ = execute!(
-        std::io::stdout(),
-        DisableBracketedPaste,
-        DisableMouseCapture
-    );
-    ratatui::restore();
-}
-
-fn resume_terminal(mouse: bool) -> Result<ratatui::DefaultTerminal> {
-    let terminal = ratatui::init();
-    execute!(std::io::stdout(), EnableBracketedPaste)?;
-    if mouse {
-        execute!(std::io::stdout(), EnableMouseCapture)?;
-    }
-    Ok(terminal)
 }
 
 /// Where the TUI is in use; the other screen shows a notice.
@@ -365,7 +372,7 @@ async fn web_session_key(app: &mut App, web: &mut Option<web::Server>, event: &E
     let Some(server) = web else { return };
     match key.code {
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.should_quit = true;
+            app.quit_or_detach();
         }
         KeyCode::Char('o') => browser::open(&server.url),
         KeyCode::Char('c') => {
@@ -380,10 +387,10 @@ async fn web_session_key(app: &mut App, web: &mut Option<web::Server>, event: &E
 }
 
 async fn run(
-    terminal: &mut ratatui::DefaultTerminal,
+    screen: &mut Screen,
     (mut app, mut rx): (App, mpsc::UnboundedReceiver<app::AppEvent>),
 ) -> Result<()> {
-    let mut events = EventStream::new();
+    let mut expiry = tokio::time::interval(EXPIRY_CHECK);
     let mut tick = tokio::time::interval(Duration::from_millis(50));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut dirty = true;
@@ -398,6 +405,10 @@ async fn run(
 
     let result = async {
         while !app.should_quit {
+            screen.sync(&mut app);
+            if app.should_quit {
+                break;
+            }
             if let Some(mut request) = app.take_login_request() {
                 // The sign-in prompt needs the real terminal (and its keyboard input).
                 if let Some(Browser {
@@ -410,12 +421,9 @@ async fn run(
                     })?;
                     server.flush(web);
                 }
-                drop(events);
-                let mouse = app.mouse_enabled();
-                suspend_terminal();
-                let result = request.login.login().await;
-                *terminal = resume_terminal(mouse)?;
-                events = EventStream::new();
+                let result = screen
+                    .login(&mut request.login, app.mouse_enabled())
+                    .await?;
                 app.on_login(request, result);
                 dirty = true;
             }
@@ -460,16 +468,29 @@ async fn run(
             }
             web_dirty |= dirty;
             tokio::select! {
-                Some(ev) = events.next() => {
-                    let ev = ev?;
-                    if web.is_some() && app.is_web_session() {
-                        web_session_key(&mut app, &mut web, &ev).await;
-                    } else if surface == Surface::Terminal {
-                        app.on_event(ev);
-                    } else if browser::takes_over(&ev) {
-                        surface = Surface::Terminal;
+                ev = screen.next() => {
+                    match ev? {
+                        ScreenEvent::Input(ev) => {
+                            if web.is_some() && app.is_web_session() {
+                                web_session_key(&mut app, &mut web, &ev).await;
+                            } else if surface == Surface::Terminal {
+                                app.on_event(ev);
+                            } else if browser::takes_over(&ev) {
+                                surface = Surface::Terminal;
+                            }
+                        }
+                        ScreenEvent::Attached => surface = Surface::Terminal,
+                        ScreenEvent::Changed => {}
+                        ScreenEvent::Quit => app.should_quit = true,
                     }
                     dirty = true;
+                }
+                _ = expiry.tick() => {
+                    let watched = web.as_ref().is_some_and(|w| w.tabs() > 0)
+                        || browser.as_ref().is_some_and(|b| b.terminal.is_some());
+                    if screen.expired(app.is_running() || watched) {
+                        app.should_quit = true;
+                    }
                 }
                 Some(ev) = browser_event(&mut browser) => {
                     let Some(browser) = &mut browser else { continue };
@@ -544,7 +565,7 @@ async fn run(
                         .as_ref()
                         .filter(|_| app.is_web_session())
                         .map(|w| (w.url.as_str(), w.hub_state(), w.tabs()));
-                    draw(terminal, &mut browser, surface, session, &mut app)?;
+                    draw(screen, &mut browser, surface, session, &mut app)?;
                     dirty = false;
                     next_frame = tokio::time::Instant::now() + Duration::from_millis(16);
                 }
@@ -561,14 +582,14 @@ async fn run(
 /// Draws the TUI on the screen in use and a notice on the other. During a web session
 /// (its address and open tabs in `session`) the terminal shows only that.
 fn draw(
-    terminal: &mut ratatui::DefaultTerminal,
+    screen: &mut Screen,
     browser: &mut Option<Browser>,
     surface: Surface,
     session: Option<(&str, Option<web::HubState<'_>>, usize)>,
     app: &mut App,
 ) -> Result<()> {
     if let Some((url, remote, tabs)) = session {
-        terminal.draw(|f| app.draw_web_session(f, url, remote, tabs))?;
+        screen.draw(|f| app.draw_web_session(f, url, remote, tabs))?;
         if let Some(Browser {
             server,
             terminal: Some(web),
@@ -584,19 +605,19 @@ fn draw(
         terminal: Some(web),
     }) = browser
     else {
-        terminal.draw(|f| app.draw(f))?;
+        screen.draw(|f| app.draw(f))?;
         return Ok(());
     };
     if surface == Surface::Browser {
         web.draw(|f| app.draw(f))?;
-        terminal.draw(|f| {
+        screen.draw(|f| {
             browser::draw_notice(
                 f,
                 "tamale is in use in a browser tab. Press any key to use it here.",
             )
         })?;
     } else {
-        terminal.draw(|f| app.draw(f))?;
+        screen.draw(|f| app.draw(f))?;
         web.draw(|f| {
             browser::draw_notice(
                 f,

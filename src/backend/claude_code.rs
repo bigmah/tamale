@@ -141,8 +141,7 @@ backend.claude_path if it isn't on PATH",
     /// sign-in state.
     pub async fn login(&mut self) -> Result<()> {
         let mut child = self
-            .command()
-            .args(["auth", "login"])
+            .login_command()
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
@@ -155,8 +154,19 @@ backend.claude_path if it isn't on PATH",
                 _ = tokio::signal::ctrl_c() => {}
             }
         };
+        self.finish_login(status.success(), &status.to_string())
+            .await
+    }
+
+    pub fn login_command(&self) -> Command {
+        let mut command = self.command();
+        command.args(["auth", "login"]);
+        command
+    }
+
+    pub async fn finish_login(&mut self, success: bool, status: &str) -> Result<()> {
         self.refresh().await?;
-        if !status.success() {
+        if !success {
             let still = if self.account.logged_in {
                 "; still signed in to the previous account"
             } else {

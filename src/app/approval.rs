@@ -86,9 +86,13 @@ impl App {
         let Some(prompt) = &mut self.approval else {
             return;
         };
-        if key.code == KeyCode::Esc && prompt.reason.is_none()
-            || ctrl && key.code == KeyCode::Char('c')
-        {
+        let ctrl_c = ctrl && key.code == KeyCode::Char('c');
+        if ctrl_c && self.detachable {
+            // The prompt waits for whoever comes back.
+            self.detach_requested = true;
+            return;
+        }
+        if key.code == KeyCode::Esc && prompt.reason.is_none() || ctrl_c {
             self.interrupt();
             return;
         }

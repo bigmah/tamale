@@ -111,6 +111,12 @@ impl App {
             return;
         }
 
+        #[cfg(unix)]
+        if self.sessions_picker.is_some() {
+            self.on_sessions_picker_key(key, ctrl);
+            return;
+        }
+
         if self.picker.is_some() {
             self.on_picker_key(key, ctrl);
             return;
@@ -182,7 +188,11 @@ impl App {
         match key.code {
             KeyCode::Char('c') if ctrl => {
                 if self.is_running() {
-                    self.interrupt();
+                    if self.detachable {
+                        self.detach_requested = true;
+                    } else {
+                        self.interrupt();
+                    }
                 } else if !self.input.is_empty() {
                     self.input.clear();
                     self.cursor = 0;

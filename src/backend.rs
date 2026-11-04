@@ -211,6 +211,29 @@ the claude-code backend)"
         }
     }
 
+    /// The interactive sign-in `login` runs, for running it in another process's terminal.
+    #[cfg(unix)]
+    pub fn login_command(&self) -> Result<tokio::process::Command> {
+        match self {
+            Self::Api(_) => {
+                bail!("the API backend uses ANTHROPIC_API_KEY; there's nothing to sign in to")
+            }
+            Self::Unset => bail!("no backend is selected; pick one with /backend"),
+            Self::ClaudeCode(cc) => Ok(cc.login_command()),
+            Self::Codex(codex) => codex.login_command(),
+        }
+    }
+
+    /// Takes in the outcome of a `login_command`, and how it exited.
+    #[cfg(unix)]
+    pub async fn finish_login(&mut self, success: bool, status: &str) -> Result<()> {
+        match self {
+            Self::Api(_) | Self::Unset => Ok(()),
+            Self::ClaudeCode(cc) => cc.finish_login(success, status).await,
+            Self::Codex(codex) => codex.finish_login(success, status).await,
+        }
+    }
+
     /// The model a turn will use, for the status bar.
     pub fn model_label(&self, name: &str) -> String {
         match self {

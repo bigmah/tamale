@@ -26,7 +26,10 @@
 - `/mouse [on|off]` toggles mouse capture for wheel scrolling. `/mouse off` allows
   selection without a modifier; `/mouse on` restores wheel scrolling. Clipboard
   commands and bracketed paste work in either mode.
-- `Ctrl+C` clear input / interrupt / quit
+- `Ctrl+C` during a turn detaches and leaves it running (see
+  [Background sessions](sessions.md#background-sessions)); otherwise clears the input, then quits.
+  With `--foreground` it interrupts a turn instead
+- `/detach` leaves the session running in the background, whether a turn is running or not
 - `/verbose [on|off]` toggles verbose output. Off by default: each step shows as one line
   (its description) with no output, and only the last 5 steps of a run are shown. Verbose shows
   every step with the full call and an output preview.

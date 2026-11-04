@@ -96,6 +96,14 @@ const COMMANDS: &[(&str, &str)] = &[
         "List this session's saved HTML artifacts (in /web: browse every session's)",
     ),
     ("/clear", "Clear the conversation and start fresh"),
+    (
+        "/sessions",
+        "See the other sessions running in the background, and join or stop them",
+    ),
+    (
+        "/detach",
+        "Leave this session running in the background (tamale attach comes back)",
+    ),
     ("/quit, /exit", "Quit tamale"),
 ];
 
@@ -140,7 +148,10 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
                 "Shift+Tab",
                 "Cycle permission mode: ask → accept-edits → auto",
             ),
-            ("Ctrl+C", "Clear input / interrupt agent / quit"),
+            (
+                "Ctrl+C",
+                "Detach, leaving the agent running / clear input / quit",
+            ),
             ("Ctrl+D", "Quit (when input is empty)"),
             (
                 "Select + terminal copy (Cmd+C)",
@@ -156,6 +167,15 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
             ("↑/↓, Ctrl+P/Ctrl+N", "Move selection"),
             ("Enter", "Switch to selected model"),
             ("Esc", "Cancel"),
+        ],
+    ),
+    (
+        "Sessions picker",
+        &[
+            ("↑/↓, j/k", "Move selection"),
+            ("Enter", "Join the session; this one keeps running"),
+            ("x", "Stop the session (twice if it's mid-turn); it stays saved"),
+            ("Esc", "Close"),
         ],
     ),
     (
@@ -275,7 +295,11 @@ pub(super) fn help_lines() -> Vec<Line<'static>> {
             ),
             (
                 "-c, --continue",
-                "Resume the most recent session in this directory",
+                "Go back to the most recent session in this directory, running or saved",
+            ),
+            (
+                "--foreground",
+                "Run the session in this terminal's process, so it can't detach",
             ),
             ("-r, --resume", "Pick a saved session to resume on startup"),
             ("-p <prompt>", "Run one prompt non-interactively and exit"),

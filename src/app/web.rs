@@ -223,7 +223,14 @@ impl App {
                 key("esc"),
                 Span::styled(" stop serving, back to the terminal   ", dim),
                 key("ctrl+c"),
-                Span::styled(" quit", dim),
+                Span::styled(
+                    if self.detachable && self.is_running() {
+                        " detach"
+                    } else {
+                        " quit"
+                    },
+                    dim,
+                ),
             ]),
         ]);
         let area = frame.area();

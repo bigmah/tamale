@@ -71,7 +71,9 @@ You need a server with a public IP, a domain whose DNS has an API, and Caddy for
 tamale                           # interactive TUI
 tamale -p "summarize src/"       # one-shot, non-interactive
 tamale -p "fix the tests" --yes  # one-shot, approve calls that would prompt
-tamale --continue                # resume the latest session in this directory
+tamale ls                        # list sessions running in the background
+tamale attach                    # go back to one
+tamale --continue                # go back to the latest session in this directory
 tamale --resume                  # pick a saved session to resume
 tamale --model claude-opus-5-5
 tamale --effort low              # less thorough, faster, cheaper
@@ -79,7 +81,9 @@ tamale --config dev.toml         # add settings from a TOML file
 tamale --add-dir ../shared       # add another directory to the agent's scope
 ```
 
-In the TUI, `/help` lists every command and key. `Esc` interrupts the agent, `/undo` reverts
+Sessions keep running when you leave: `Ctrl+C` during a turn detaches and the agent carries on
+([more](docs/sessions.md#background-sessions)). In the TUI, `/help` lists every command and key.
+`Esc` interrupts the agent, `/undo` reverts
 the last turn, `/diff` reviews your changes and `/web` opens a web UI.
 
 ## Docs

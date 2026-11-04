@@ -179,14 +179,8 @@ backend.codex_path if it isn't on PATH",
     /// Runs the interactive `codex login` in this terminal, then re-reads the sign-in
     /// state.
     pub async fn login(&mut self) -> Result<()> {
-        if let Some(home) = &self.home {
-            // Codex refuses a CODEX_HOME that doesn't exist.
-            std::fs::create_dir_all(home)
-                .with_context(|| format!("creating {}", home.display()))?;
-        }
         let mut child = self
-            .command()
-            .arg("login")
+            .login_command()?
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
@@ -199,8 +193,24 @@ backend.codex_path if it isn't on PATH",
                 _ = tokio::signal::ctrl_c() => {}
             }
         };
+        self.finish_login(status.success(), &status.to_string())
+            .await
+    }
+
+    pub fn login_command(&self) -> Result<Command> {
+        if let Some(home) = &self.home {
+            // Codex refuses a CODEX_HOME that doesn't exist.
+            std::fs::create_dir_all(home)
+                .with_context(|| format!("creating {}", home.display()))?;
+        }
+        let mut command = self.command();
+        command.arg("login");
+        Ok(command)
+    }
+
+    pub async fn finish_login(&mut self, success: bool, status: &str) -> Result<()> {
         self.refresh().await?;
-        if !status.success() {
+        if !success {
             let still = if self.account.logged_in {
                 "; still signed in to the previous account"
             } else {

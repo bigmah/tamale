@@ -109,3 +109,32 @@ fn backend_flag_selects_where_inference_comes_from() {
     assert!(parse(&["--backend"]).is_err());
     assert!(parse(&["--backend", "gpt"]).is_err());
 }
+
+#[test]
+fn parses_background_subcommands() {
+    assert_eq!(parse(&["ls"]).unwrap().command, Some(Command::List));
+    assert_eq!(
+        parse(&["attach"]).unwrap().command,
+        Some(Command::Attach(None))
+    );
+    assert_eq!(
+        parse(&["attach", "42"]).unwrap().command,
+        Some(Command::Attach(Some(42)))
+    );
+    assert_eq!(
+        parse(&["kill", "42"]).unwrap().command,
+        Some(Command::Kill(42))
+    );
+    assert!(parse(&["kill"]).is_err());
+    assert!(parse(&["attach", "nope"]).is_err());
+    assert!(parse(&["ls", "extra"]).is_err());
+    assert!(parse(&["--foreground", "ls"]).is_err());
+}
+
+#[test]
+fn only_no_arguments_at_all_counts_as_plain() {
+    assert!(parse(&[]).unwrap().plain);
+    assert!(!parse(&["-m", "x"]).unwrap().plain);
+    assert!(parse(&["--foreground"]).unwrap().foreground);
+    assert!(parse(&["--server"]).unwrap().server);
+}
