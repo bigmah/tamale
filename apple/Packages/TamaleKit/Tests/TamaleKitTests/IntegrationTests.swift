@@ -44,6 +44,19 @@ final class IntegrationTests: XCTestCase {
         }
     }
 
+    /// Ends the stand-in session, so it runs last: XCTest goes in alphabetical order.
+    @MainActor
+    func testZClosingASessionEndsItAndTheHubForgetsIt() async throws {
+        let setup = try setup()
+        let client = HubClient(origin: setup.hub, key: setup.key)
+        let model = SessionModel(channel: SessionChannel(hub: client, sid: setup.sid))
+        try await model.close()
+        model.stop()
+        // The session ended and told the hub, which dropped it rather than listing it offline.
+        let listed = try await client.sessions().sessions.contains { $0.sid == setup.sid }
+        XCTAssertFalse(listed)
+    }
+
     @MainActor
     func drive(_ setup: Setup, cookies: Bool) async throws {
         let client = HubClient(origin: setup.hub, key: setup.key)

@@ -449,6 +449,9 @@ One WebSocket per tamale session, text frames, JSON. Shared types in a small cra
 {"t":"got","r":3,"status":200,"headers":[["content-type","text/html; charset=utf-8"],["content-security-policy","sandbox …"]],"body":"…"}
 // tamale → hub, whenever it changes: shown in the session list
 {"t":"status","busy":true,"approval":false,"title":"Fix flaky test"}
+// tamale → hub, last: the session is over (quit or closed), so drop it from the list
+// and close its browsers with 4000 instead of listing it offline
+{"t":"end"}
 ```
 
 - **Headers in `got`**: the hub forwards only `content-type`, `cache-control`,

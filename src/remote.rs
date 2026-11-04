@@ -262,6 +262,40 @@ impl Drop for Connection {
     }
 }
 
+/// Ends session `sid` on whichever machine it runs, as `tamale kill` would there: it stays
+/// saved. Waits until it has gone.
+pub async fn close(hub: &HubSettings, sid: &str) -> Result<(), String> {
+    let (tx, events) = mpsc::unbounded_channel();
+    let connection = Connection::open(hub, sid, move |event| {
+        let _ = tx.send(event);
+    })?;
+    close_over(connection, events).await
+}
+
+async fn close_over(
+    connection: Connection,
+    mut events: mpsc::UnboundedReceiver<Event>,
+) -> Result<(), String> {
+    // Goes as soon as the channel is up.
+    connection.send(json!({ "t": "close" }));
+    let gone = async {
+        let mut live = false;
+        while let Some(event) = events.recv().await {
+            match event {
+                Event::Live => live = true,
+                // Once it has had the message, the connection ending is the session ending.
+                Event::Connecting(_) | Event::Stopped(_) if live => return Ok(()),
+                Event::Stopped(why) => return Err(why),
+                Event::Connecting(_) | Event::Message(_) => {}
+            }
+        }
+        Err("The connection to it ended.".to_string())
+    };
+    tokio::time::timeout(TIMEOUT, gone)
+        .await
+        .unwrap_or_else(|_| Err("It didn't answer in time.".into()))
+}
+
 /// `wss://<sid>.<hub>/ws`, from the hub's agent socket base.
 fn socket_url(hub: &str, sid: &str) -> String {
     let base = hub.trim_end_matches('/');
@@ -567,6 +601,53 @@ mod tests {
         let received = session.await.unwrap();
         assert!(received[0].contains("terminal"), "says what it is first: {received:?}");
         assert!(received[1].contains("hello"), "{received:?}");
+    }
+
+    #[tokio::test]
+    async fn closing_asks_the_session_to_end_and_waits_for_it_to_go() {
+        use base64::Engine;
+        let (url, listener) = listen().await;
+        let session = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = accept_async(stream).await.unwrap();
+            let nonce = [3u8; 16];
+            let n = base64::engine::general_purpose::STANDARD.encode(nonce);
+            ws.send(Message::text(json!({ "t": "hs0", "n": n }).to_string())).await.unwrap();
+            let Some(Ok(Message::Text(hs1))) = ws.next().await else { panic!() };
+            let hs1: Value = serde_json::from_str(&hs1).unwrap();
+            let (mut channel, hs2) = keys().respond("ab", &nonce, hs1["m"].as_str().unwrap()).unwrap();
+            ws.send(Message::text(json!({ "t": "hs2", "m": hs2 }).to_string())).await.unwrap();
+            let mut received = Vec::new();
+            for _ in 0..2 {
+                let Some(Ok(Message::Text(frame))) = ws.next().await else { panic!() };
+                let frame: Value = serde_json::from_str(&frame).unwrap();
+                received.push(channel.open(frame["m"].as_str().unwrap(), 1 << 20).unwrap().unwrap());
+            }
+            // What the hub does when tamale says it has ended.
+            ws.close(Some(tungstenite::protocol::CloseFrame {
+                code: 4000.into(),
+                reason: "This session ended.".into(),
+            })).await.unwrap();
+            received
+        });
+        let (tx, events) = mpsc::unbounded_channel();
+        let connection = Connection::to(url, "Bearer x".into(), keys(), "ab".into(), move |event| {
+            let _ = tx.send(event);
+        });
+        assert_eq!(close_over(connection, events).await, Ok(()));
+        let received = session.await.unwrap();
+        assert_eq!(received[1], r#"{"t":"close"}"#);
+    }
+
+    #[tokio::test]
+    async fn closing_a_session_that_isnt_there_says_why() {
+        let (tx, events) = mpsc::unbounded_channel();
+        tx.send(Event::Connecting(None)).unwrap();
+        tx.send(Event::Stopped("This key doesn't have that session, or it has ended.".into())).unwrap();
+        let (url, _listener) = listen().await;
+        let connection = Connection::to(url, "Bearer x".into(), keys(), "ab".into(), |_| {});
+        let result = close_over(connection, events).await;
+        assert!(result.is_err_and(|why| why.contains("ended")));
     }
 
     #[tokio::test]

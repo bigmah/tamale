@@ -190,6 +190,8 @@ pub enum WebEvent {
     TerminalSend(String),
     Interrupt,
     Approve(Choice, Option<String>),
+    /// End the session, as `tamale kill` does: it stays saved.
+    Close,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -503,6 +505,13 @@ impl Server {
 
     pub fn disconnect_hub(&mut self) -> bool {
         self.relay.take().is_some()
+    }
+
+    /// The session is over: tells the hub, if connected to one, so it stops listing it.
+    pub async fn end(&mut self) {
+        if let Some(relay) = self.relay.take() {
+            relay.end().await;
+        }
     }
 
     /// The link that opens this session through the hub, while connected to one.
@@ -912,6 +921,9 @@ fn handle(shared: &Arc<Shared>, id: u64, request: Value) {
         }
         "interrupt" => {
             let _ = shared.events.send(WebEvent::Interrupt);
+        }
+        "close" => {
+            let _ = shared.events.send(WebEvent::Close);
         }
         "approve" => {
             let choice = match str_field("choice").as_str() {
@@ -1411,6 +1423,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_tab_can_close_the_session_and_the_hub_hears_it_ended() {
+        use std::time::Duration;
+        use tamale_hub_protocol::ToAgent;
+        let (hub, to_agent, mut frames) = stand_in_hub().await;
+        let mut server = Server::start(false).await.unwrap();
+        server.connect_hub(&hub, "f00d", Label::default(), None);
+        let mut next_event = async || {
+            tokio::time::timeout(Duration::from_secs(5), server.events.recv()).await.unwrap().unwrap()
+        };
+        loop {
+            if let WebEvent::Hub(Ok(_)) = next_event().await { break }
+        }
+        to_agent.send(ToAgent::Open { c: 1 }).unwrap();
+        let close = r#"{"t":"close"}"#.to_string();
+        to_agent.send(ToAgent::Msg { c: 1, data: close }).unwrap();
+        loop {
+            if let WebEvent::Close = next_event().await { break }
+        }
+
+        tokio::time::timeout(Duration::from_secs(5), server.end()).await.unwrap();
+        loop {
+            let frame = tokio::time::timeout(Duration::from_secs(5), frames.recv()).await.unwrap().unwrap();
+            if frame == r#"{"t":"end"}"# { break }
+        }
+        assert!(server.hub_url().is_none());
+    }
+
+    #[tokio::test]
     async fn an_encrypted_relay_shows_the_hub_nothing_and_takes_nothing_from_it() {
         use super::e2e::testing::Initiator;
         use std::time::Duration;
@@ -1745,6 +1785,10 @@ document.getElementById('m').innerHTML = html;
                 }
                 WebEvent::Interrupt => entries.push(Entry::Info("interrupted".into())),
                 WebEvent::Hub(Err(e)) => eprintln!("hub: {e}"),
+                WebEvent::Close => {
+                    server.end().await;
+                    return;
+                }
                 _ => {}
             }
             sync(&mut server, &entries, &approval);

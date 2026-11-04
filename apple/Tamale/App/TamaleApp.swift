@@ -69,6 +69,13 @@ struct RootView: View {
         } message: {
             Text(app.linkProblem ?? "")
         }
+        .alert("Couldn't close the session", isPresented: Binding(
+            get: { app.closeProblem != nil }, set: { if !$0 { app.closeProblem = nil } })
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(app.closeProblem ?? "")
+        }
     }
 
     /// `https://<hub>/open/<sid>` (a universal link or the terminal's QR code), or

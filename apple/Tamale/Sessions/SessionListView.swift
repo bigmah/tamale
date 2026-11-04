@@ -7,6 +7,7 @@ import TamaleKit
 struct SessionListView: View {
     @Environment(AppModel.self) private var app
     @State private var adding = false
+    @State private var confirmingClose: SessionRow?
 
     var body: some View {
         Group {
@@ -68,19 +69,65 @@ struct SessionListView: View {
             }
             ForEach(app.rows) { row in
                 NavigationLink(value: Route.session(row.id)) {
-                    SessionRowView(row: row, showKey: app.accounts.count > 1)
+                    SessionRowView(row: row, showKey: app.accounts.count > 1,
+                                   closing: app.closing.contains(row.id))
                 }
                 .listRowBackground(Theme.surface)
+                .swipeActions(edge: .trailing) {
+                    if row.session.online && row.session.e2e {
+                        Button("Close", systemImage: "xmark.circle") { confirmingClose = row }
+                            .tint(Theme.error)
+                    }
+                }
+                .contextMenu {
+                    if row.session.online && row.session.e2e {
+                        Button("Close Session", systemImage: "xmark.circle", role: .destructive) {
+                            confirmingClose = row
+                        }
+                    }
+                }
             }
         }
         .scrollContentBackground(.hidden)
         .refreshable { await app.refresh() }
+        .closeSessionDialog(row: $confirmingClose)
+    }
+}
+
+extension View {
+    /// Asks before closing `row`'s session, then closes it.
+    func closeSessionDialog(row: Binding<SessionRow?>) -> some View {
+        modifier(CloseSessionDialog(row: row))
+    }
+}
+
+struct CloseSessionDialog: ViewModifier {
+    @Binding var row: SessionRow?
+    @Environment(AppModel.self) private var app
+
+    func body(content: Content) -> some View {
+        content
+            .confirmationDialog(
+                "Close this session?",
+                isPresented: Binding(get: { row != nil }, set: { if !$0 { row = nil } }),
+                titleVisibility: .visible,
+                presenting: row
+            ) { row in
+                Button(row.session.busy ? "Stop and Close" : "Close Session", role: .destructive) {
+                    Task { await app.close(row) }
+                }
+            } message: { row in
+                Text(row.session.busy
+                     ? "It's working, and stops mid-turn. tamale ends it on \(row.label.host.isEmpty ? "its machine" : row.label.host), where it stays saved: tamale --continue picks it back up."
+                     : "tamale ends it on \(row.label.host.isEmpty ? "its machine" : row.label.host), where it stays saved: tamale --continue picks it back up.")
+            }
     }
 }
 
 struct SessionRowView: View {
     var row: SessionRow
     var showKey: Bool
+    var closing = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -97,7 +144,9 @@ struct SessionRowView: View {
                     .lineLimit(1)
                     .truncationMode(.head)
                 HStack(spacing: 6) {
-                    if row.session.approval {
+                    if closing {
+                        Badge(text: "Closing…", color: Theme.faint)
+                    } else if row.session.approval {
                         Badge(text: "Needs approval", color: Theme.warning)
                     } else if row.session.busy {
                         Badge(text: "Working", color: Theme.accent)

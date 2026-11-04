@@ -581,6 +581,7 @@ async fn run(
                         web::WebEvent::TerminalSend(text) => app.terminal_send(text),
                         web::WebEvent::Interrupt => app.web_interrupt(),
                         web::WebEvent::Approve(choice, reason) => app.web_approve(choice, reason),
+                        web::WebEvent::Close => app.should_quit = true,
                     }
                     dirty = true;
                 }
@@ -626,6 +627,9 @@ async fn run(
     }
     .await;
     app.save_session();
+    if let Some(web) = &mut web {
+        web.end().await;
+    }
     app.finish_saves().await;
     result
 }

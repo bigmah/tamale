@@ -140,7 +140,9 @@ uses the public hosts: `https://<hub>/api/...` and `wss://<sid>.<hub>/ws`.
 ### The /web messages
 
 The app reads `entries`, `status`, `approval`, `artifacts` and `artifact`, and sends `send`,
-`interrupt`, `approve`, `artifact` and `artifacts` (plus `tree`/`open`/`grep` later).
+`interrupt`, `approve`, `artifact`, `artifacts` and `close` (plus `tree`/`open`/`grep` later).
+`close` ends the session as `tamale kill` would; tamale then tells the hub (`end`), which drops
+it from the list and closes its sockets with 4000.
 `entries {from, items}` replaces everything from `from` onward, so the model is just an array
 that gets spliced.
 

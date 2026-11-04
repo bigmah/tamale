@@ -67,6 +67,9 @@ pub enum AppEvent {
     /// The hub's list of sessions, for an open `/sessions`.
     #[cfg(unix)]
     HubSessions(Result<Vec<crate::remote::HubSession>, String>),
+    /// A session stopped through the hub from `/sessions` has gone, or why it hasn't.
+    #[cfg(unix)]
+    HubSessionClosed(crate::remote::HubSession, Result<(), String>),
     /// News of the session being driven, tagged with which time it was opened.
     #[cfg(unix)]
     Remote(u64, crate::remote::Event),
@@ -630,6 +633,10 @@ impl App {
             AppEvent::SessionStopped(id, result) => self.on_session_stopped(id, result),
             #[cfg(unix)]
             AppEvent::HubSessions(result) => self.on_hub_sessions(result),
+            #[cfg(unix)]
+            AppEvent::HubSessionClosed(session, result) => {
+                self.on_hub_session_closed(session, result)
+            }
             #[cfg(unix)]
             AppEvent::Remote(generation, event) => self.on_remote_event(generation, event),
             AppEvent::ClipboardPasted(Ok(text)) => self.on_paste(&text),

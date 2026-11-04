@@ -19,6 +19,9 @@ phone (below).
    web page uses. Send prompts (they queue while tamale is working), stop a run with the stop
    button, and answer approvals with **Yes**, **Always** or **No** (with a reason). A session with
    `[hub] e2e = false` only opens in a browser: the app takes nothing unsealed.
+5. **Close** a session by swiping it left in the list, long-pressing it, or from the session's
+   menu. It ends on its machine as `tamale kill` would there, mid-turn if need be, and stays saved
+   for `tamale --continue`.
 
 **Artifacts** show inline at their own height; tap the title for full screen, where the page gets
 the whole display. The bar at the bottom hides as you scroll down and comes back when you scroll up

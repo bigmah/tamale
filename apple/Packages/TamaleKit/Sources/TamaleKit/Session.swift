@@ -86,6 +86,27 @@ public final class SessionModel {
         channel?.send(.approve(choice, reason: reason)) ?? false
     }
 
+    /// Ends the session on its machine, as `tamale kill` would there (it stays saved), and
+    /// waits for it to go. Connects first if need be. Throws if it can't be reached.
+    public func close(timeout: Duration = .seconds(20)) async throws {
+        guard let channel else { return }
+        let deadline = ContinuousClock.now + timeout
+        func waitFor(_ done: () -> Bool) async throws {
+            while !done() {
+                if case .stopped(let why) = connection { throw CloseError.unreachable(why) }
+                guard ContinuousClock.now < deadline else { throw CloseError.timedOut }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+        }
+        channel.start()
+        try await waitFor { connection.isLive }
+        guard channel.send(.close) else { throw CloseError.timedOut }
+        // Once it has the message, the channel ending is the session ending.
+        do {
+            try await waitFor { !connection.isLive }
+        } catch CloseError.unreachable {}
+    }
+
     /// Asks tamale for an artifact's page, once.
     public func requestArtifact(_ id: String) {
         guard pages[id] == nil, !due.contains(id) else { return }
@@ -106,5 +127,18 @@ public final class SessionModel {
     /// The first prompt's first line, as the hub's list titles a session.
     public var title: String {
         entries.first { $0.kind == .user }?.text?.split(separator: "\n").first.map(String.init) ?? ""
+    }
+}
+
+public enum CloseError: LocalizedError, Equatable {
+    /// Couldn't reach the session, and why.
+    case unreachable(String)
+    case timedOut
+
+    public var errorDescription: String? {
+        switch self {
+        case .unreachable(let why): why
+        case .timedOut: "The session didn't answer in time."
+        }
     }
 }

@@ -49,6 +49,8 @@ const STYLE: &str = include_str!("../static/hub.css");
 /// How long a disconnected session stays listed (and its page keeps retrying), and how
 /// long after a restart unknown sessions are assumed to be on their way back.
 const GRACE: Duration = Duration::from_secs(600);
+/// What a session's pages are told when it ends on purpose (see [`ToHub::End`]).
+const SESSION_ENDED: &str = "This session ended.";
 const TICKET_LIFE: Duration = Duration::from_secs(60);
 const SESSION_COOKIE_LIFE: u64 = 30 * 24 * 3600;
 const VIEW_COOKIE_LIFE: u64 = 34_560_000;
@@ -1811,6 +1813,21 @@ async fn agent_socket(hub: Arc<Hub>, key: state::Key, ip: IpAddr, ws: WebSocket)
             hub.touch(&key.name);
         }
         let mut sessions = hub.sessions.lock().unwrap();
+        if frame == ToHub::End {
+            // Over for good: nothing to keep listing or for pages to wait for.
+            if sessions.get(&sid).is_some_and(|s| s.generation == generation)
+                && let Some(mut session) = sessions.remove(&sid)
+            {
+                session.agent = None;
+                for (_, client) in session.clients.drain() {
+                    let _ = client
+                        .tx
+                        .send(Out::Close(4000, SESSION_ENDED.into()));
+                }
+                eprintln!("agent ended: key {} session {}", key.name, short(&sid));
+            }
+            break;
+        }
         let Some(session) = sessions
             .get_mut(&sid)
             .filter(|s| s.generation == generation)
@@ -1862,7 +1879,7 @@ async fn agent_socket(hub: Arc<Hub>, key: state::Key, ip: IpAddr, ws: WebSocket)
                 }
                 session.last_activity = state::now();
             }
-            ToHub::Hello { .. } => {}
+            ToHub::Hello { .. } | ToHub::End => {}
         }
     }
     writer.abort();
@@ -3172,6 +3189,29 @@ mod tests {
             })
             .await;
             drop(agent);
+            let _ = std::fs::remove_dir_all(&setup.store.dir);
+        }
+
+        #[tokio::test]
+        async fn an_ended_session_leaves_the_list_and_its_tabs_stop_for_good() {
+            let setup = start().await;
+            let sid = "3".repeat(32);
+            let mut agent = agent_hello(setup.port, &setup.auth, &sid).await;
+            assert!(next_text(&mut agent).await.contains("\"welcome\""));
+            let mut browser = tab(setup.port, &sid, &setup.auth).await;
+            assert!(next_text(&mut agent).await.contains("\"open\""));
+
+            let end = serde_json::to_string(&ToHub::End).unwrap();
+            agent
+                .send(tungstenite::Message::Text(end.into()))
+                .await
+                .unwrap();
+            assert_eq!(close_code(&mut browser).await, 4000, "not one to retry");
+            let hub = setup.hub.clone();
+            until("the session being dropped", || {
+                !hub.sessions.lock().unwrap().contains_key(&sid)
+            })
+            .await;
             let _ = std::fs::remove_dir_all(&setup.store.dir);
         }
 

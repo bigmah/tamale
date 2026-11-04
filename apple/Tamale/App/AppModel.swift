@@ -72,6 +72,12 @@ final class AppModel {
     /// A session link scanned in the Add sheet, opened once the sheet has gone: SwiftUI drops
     /// navigation and alerts started while a sheet is still dismissing.
     var pendingLink: SessionLink?
+    /// Sessions being closed, by sid.
+    private(set) var closing: Set<String> = []
+    /// Why a session couldn't be closed, to explain.
+    var closeProblem: String?
+    /// Sessions closed from here, which a hub from before `end` still lists offline for a while.
+    @ObservationIgnored private var closed: Set<String> = []
     @ObservationIgnored private var models: [String: SessionModel] = [:]
     @ObservationIgnored private var context: ModelContext?
 
@@ -148,7 +154,9 @@ final class AppModel {
                 switch result {
                 case .success(let list):
                     problems[account.id] = nil
-                    all += list.sessions.map { SessionRow(account: account, session: $0) }
+                    all += list.sessions
+                        .filter { $0.online || !closed.contains($0.sid) }
+                        .map { SessionRow(account: account, session: $0) }
                 case .failure(let error):
                     problems[account.id] = error.localizedDescription
                     // Keep showing what was there.
@@ -164,6 +172,28 @@ final class AppModel {
     }
 
     func row(_ sid: String) -> SessionRow? { rows.first { $0.id == sid } }
+
+    /// Ends a session on its machine, as `tamale kill` would there; it stays saved, so
+    /// `tamale --continue` picks it back up. Leaves it if it's open here.
+    func close(_ row: SessionRow) async {
+        guard !closing.contains(row.id) else { return }
+        closing.insert(row.id)
+        defer { closing.remove(row.id) }
+        let model = model(for: row)
+        do {
+            try await model.close()
+        } catch {
+            // Only connected for this: nothing to keep it going for.
+            if !path.contains(.session(row.id)) { models.removeValue(forKey: row.id)?.stop() }
+            closeProblem = error.localizedDescription
+            return
+        }
+        closed.insert(row.id)
+        path.removeAll { $0 == .session(row.id) }
+        models.removeValue(forKey: row.id)?.stop()
+        rows.removeAll { $0.id == row.id }
+        await refresh()
+    }
 
     /// The session's model, made on first use and kept so coming back is instant.
     func model(for row: SessionRow) -> SessionModel {

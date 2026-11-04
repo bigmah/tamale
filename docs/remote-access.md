@@ -51,7 +51,13 @@ deleted after 7 days, and keys unused for 90 days are deleted too.
 With `TAMALE_HUB_KEY` set, `/sessions` or the footer's **Sessions** tab also lists your sessions on
 other machines. `Enter` opens one in place of this session, which goes on behind it: its transcript,
 its approvals, and a prompt that sends there, slash commands included. `esc` interrupts it if it's
-working, and otherwise comes back; `ctrl+c` always comes back, leaving it running.
+working, and otherwise comes back; `ctrl+c` always comes back, leaving it running. `x` on one in the
+list stops it, as `tamale kill` would on its machine (twice if it's mid-turn): it stays saved there,
+for `tamale --continue`.
+
+A session that ends (closed from a terminal or the iPhone app, `/quit`, `tamale kill`) tells the
+hub, which drops it from the list straight away. One that just loses its connection is listed as
+offline for ten minutes, in case it comes back.
 
 It uses the same encrypted channel as a browser, and refuses anything unsealed, so a session with
 `[hub] e2e = false` only opens in a browser. Replies to prompts sent from a terminal are ordinary

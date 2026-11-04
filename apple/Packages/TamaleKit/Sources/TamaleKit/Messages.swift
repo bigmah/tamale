@@ -250,6 +250,8 @@ public enum Outgoing: Equatable, Sendable {
     case approve(ApprovalChoice, reason: String?)
     case artifact(id: String)
     case artifacts(seq: Int)
+    /// Ends the session, as `tamale kill` would on its machine; it stays saved there.
+    case close
 
     public var json: String {
         var object: [String: Any]
@@ -261,6 +263,7 @@ public enum Outgoing: Equatable, Sendable {
             if let reason, !reason.trimmingCharacters(in: .whitespaces).isEmpty { object["reason"] = reason }
         case .artifact(let id): object = ["t": "artifact", "id": id]
         case .artifacts(let seq): object = ["t": "artifacts", "seq": seq]
+        case .close: object = ["t": "close"]
         }
         let data = try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
         return String(decoding: data, as: UTF8.self)

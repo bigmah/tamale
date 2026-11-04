@@ -161,6 +161,8 @@ pub struct Relay {
     live: Arc<AtomicBool>,
     /// What's wrong with the connection right now, for the terminal's screen.
     problem: Arc<Mutex<Option<String>>>,
+    /// Set when the session is over, to tell the hub so (see [`Relay::end`]).
+    end: watch::Sender<bool>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -176,6 +178,7 @@ impl Relay {
         let live = Arc::new(AtomicBool::new(false));
         let problem = Arc::new(Mutex::new(None));
         let open_url = open_url(url, sid());
+        let (end, end_rx) = watch::channel(false);
         let task = tokio::spawn(run(
             shared.clone(),
             Target {
@@ -185,6 +188,7 @@ impl Relay {
                 open_url: open_url.clone(),
                 site: site_url(url),
                 keys,
+                end: end_rx,
             },
             status_rx,
             live.clone(),
@@ -196,8 +200,17 @@ impl Relay {
             status,
             live,
             problem,
+            end,
             task,
         }
+    }
+
+    /// Tells the hub the session is over, so it drops it from the list and its pages stop
+    /// waiting for it, rather than showing it offline for a while. Waits a moment for that to
+    /// go out; a hub that's out of reach just has it go offline.
+    pub async fn end(mut self) {
+        let _ = self.end.send(true);
+        let _ = tokio::time::timeout(Duration::from_secs(2), &mut self.task).await;
     }
 
     /// Sends the hub `status` if it changed.
@@ -249,6 +262,8 @@ struct Target {
     /// The hub's site, for when a key needs replacing.
     site: String,
     keys: Option<e2e::Keys>,
+    /// Becomes true when the session is over.
+    end: watch::Receiver<bool>,
 }
 
 /// How a connection ended.
@@ -257,6 +272,8 @@ enum Ended {
     Retry(String),
     /// The hub refused this session; retrying wouldn't help.
     Rejected(String),
+    /// The session is over, and the hub has been told.
+    Finished,
 }
 
 async fn run(
@@ -266,6 +283,7 @@ async fn run(
     live: Arc<AtomicBool>,
     problem: Arc<Mutex<Option<String>>>,
 ) {
+    let mut end = target.end.clone();
     let report = |result: Result<String, String>| {
         *problem.lock().unwrap() = result.as_ref().err().cloned();
         let _ = shared.events.send(WebEvent::Hub(result));
@@ -275,6 +293,9 @@ async fn run(
     let mut reported: Option<String> = None;
     let mut throttle = Throttle::default();
     loop {
+        if *end.borrow() {
+            return;
+        }
         let started = tokio::time::Instant::now();
         let ended = connection(
             &shared,
@@ -289,6 +310,7 @@ async fn run(
         live.store(false, Ordering::Relaxed);
         drop_remote_clients(&shared);
         match ended {
+            Ended::Finished => return,
             Ended::Rejected(why) => {
                 report(Err(format!("The hub refused this session: {why}")));
                 return;
@@ -303,8 +325,20 @@ async fn run(
         if started.elapsed() > Duration::from_secs(60) {
             delay = Duration::from_secs(1);
         }
-        tokio::time::sleep(jitter(delay)).await;
+        tokio::select! {
+            _ = tokio::time::sleep(jitter(delay)) => {}
+            () = session_over(&mut end) => return,
+        }
         delay = (delay * 2).min(Duration::from_secs(30));
+    }
+}
+
+/// Once the session is over (see [`Relay::end`]).
+async fn session_over(end: &mut watch::Receiver<bool>) {
+    let over = end.wait_for(|end| *end).await.is_ok();
+    if !over {
+        // The relay's gone, and this task with it.
+        std::future::pending::<()>().await;
     }
 }
 
@@ -326,6 +360,7 @@ async fn connection(
     throttle: &mut Throttle,
     problem: &Mutex<Option<String>>,
 ) -> Ended {
+    let mut end = target.end.clone();
     let mut request = match target.url.as_str().into_client_request() {
         Ok(request) => request,
         Err(e) => return Ended::Rejected(format!("bad hub URL {}: {e}", target.url)),
@@ -419,6 +454,11 @@ TAMALE_HUB_KEY, or make a new key at {}",
                 if ws.send(text(&frame)).await.is_err() {
                     break Ended::Retry("connection lost".into());
                 }
+            }
+            () = session_over(&mut end) => {
+                let _ = ws.send(text(&ToHub::End)).await;
+                let _ = ws.close(None).await;
+                break Ended::Finished;
             }
             _ = ping.tick() => {
                 if heard.elapsed() > Duration::from_secs(75) {

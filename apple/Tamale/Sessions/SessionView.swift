@@ -26,6 +26,7 @@ struct SessionView: View {
     @State private var viewing: ArtifactSource?
     @State private var showingGallery = false
     @State private var showingStatus = false
+    @State private var confirmingClose: SessionRow?
     /// Revise asked for the composer, which can't take focus until the cover over it has gone.
     @State private var focusAfterCover = false
     @FocusState private var composing: Bool
@@ -71,6 +72,13 @@ struct SessionView: View {
                     if model.busy {
                         Button("Interrupt", systemImage: "stop.circle", role: .destructive) { model.interrupt() }
                     }
+                    Divider()
+                    Button("Close Session", systemImage: "xmark.circle", role: .destructive) {
+                        var current = row
+                        current.session.busy = model.busy
+                        confirmingClose = current
+                    }
+                    .disabled(app.closing.contains(row.id))
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
@@ -90,6 +98,7 @@ struct SessionView: View {
         .sheet(isPresented: $showingGallery, onDismiss: focusIfAsked) {
             GalleryView(model: model, revise: revise)
         }
+        .closeSessionDialog(row: $confirmingClose)
         .sheet(isPresented: $showingStatus) {
             StatusSheet(row: row, model: model)
                 .presentationDetents([.medium, .large])

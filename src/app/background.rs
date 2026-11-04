@@ -1,5 +1,5 @@
 //! `/sessions`: the other sessions on this machine, to join or stop from here, and those on
-//! other machines through the hub, to drive from here (see `remote.rs`).
+//! other machines through the hub, to drive or stop from here (see `remote.rs`).
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
@@ -32,8 +32,8 @@ pub(super) enum HubList {
 }
 
 /// A row that can be picked.
-#[derive(Clone, PartialEq)]
-enum Row {
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum Row {
     Local(u32),
     Hub(String),
 }
@@ -43,9 +43,11 @@ pub(super) struct SessionsPicker {
     pub(super) sessions: Vec<Status>,
     pub(super) selected: usize,
     /// A session whose turn would be cut short, waiting for a second `x`.
-    pub(super) confirming: Option<u32>,
+    pub(super) confirming: Option<Row>,
     /// Sessions told to stop that haven't gone yet.
     pub(super) stopping: Vec<u32>,
+    /// The same through the hub, by sid.
+    pub(super) closing: Vec<String>,
     pub(super) hub: HubList,
     /// Whether a look at the hub is under way.
     pub(super) hub_loading: bool,
@@ -63,7 +65,7 @@ impl SessionsPicker {
             .collect()
     }
 
-    fn rows(&self) -> Vec<Row> {
+    pub(super) fn rows(&self) -> Vec<Row> {
         self.sessions
             .iter()
             .map(|s| Row::Local(s.id))
@@ -86,7 +88,9 @@ impl SessionsPicker {
     pub(super) fn update(&mut self, sessions: Vec<Status>) {
         self.keeping_place(|picker| picker.sessions = sessions);
         let alive = |id: u32, sessions: &[Status]| sessions.iter().any(|s| s.id == id);
-        if self.confirming.is_some_and(|id| !alive(id, &self.sessions)) {
+        if let Some(Row::Local(id)) = self.confirming
+            && !alive(id, &self.sessions)
+        {
             self.confirming = None;
         }
         let sessions = &self.sessions;
@@ -171,6 +175,10 @@ impl App {
         let list = match result {
             Ok(mut sessions) => {
                 sessions.retain(|s| s.sid != crate::web::sid());
+                // Gone, or offline once closed: a hub from before `end` lists it a while.
+                picker
+                    .closing
+                    .retain(|sid| sessions.iter().any(|s| s.sid == *sid && s.online));
                 HubList::Loaded(sessions)
             }
             Err(message) => HubList::Failed(message),
@@ -223,27 +231,65 @@ impl App {
                     None => {}
                 }
             }
-            KeyCode::Char('x') | KeyCode::Delete => {
-                let Some(session) = picker.sessions.get(picker.selected) else {
-                    return;
-                };
-                let id = session.id;
-                if picker.stopping.contains(&id) {
-                    return;
+            KeyCode::Char('x') | KeyCode::Delete => match rows.get(picker.selected).cloned() {
+                Some(row @ Row::Local(id)) => {
+                    let Some(session) = picker.sessions.iter().find(|s| s.id == id) else {
+                        return;
+                    };
+                    if picker.stopping.contains(&id) {
+                        return;
+                    }
+                    if session.state != State::Idle && confirming.as_ref() != Some(&row) {
+                        picker.confirming = Some(row);
+                        return;
+                    }
+                    picker.stopping.push(id);
+                    let tx = self.tx.clone();
+                    tokio::spawn(async move {
+                        let result = background::client::stop(id)
+                            .await
+                            .map_err(|e| format!("{e:#}"));
+                        let _ = tx.send(AppEvent::SessionStopped(id, result));
+                    });
                 }
-                if session.state != State::Idle && confirming != Some(id) {
-                    picker.confirming = Some(id);
-                    return;
+                Some(row @ Row::Hub(_)) => {
+                    let Row::Hub(sid) = &row else { return };
+                    let Some(session) = picker.hub_sessions().into_iter().find(|h| h.sid == *sid).cloned()
+                    else {
+                        return;
+                    };
+                    if picker.closing.contains(&session.sid) {
+                        return;
+                    }
+                    if !session.online {
+                        self.entries.push(Entry::Error(format!(
+                            "{} is offline, so it can't be stopped from here.",
+                            session_name(&session)
+                        )));
+                        return;
+                    }
+                    if !session.e2e {
+                        self.entries.push(Entry::Error(format!(
+                            "{} isn't encrypted ([hub] e2e = false there), so only a browser can \
+                             stop it.",
+                            session.host
+                        )));
+                        return;
+                    }
+                    if (session.busy || session.approval) && confirming.as_ref() != Some(&row) {
+                        picker.confirming = Some(row);
+                        return;
+                    }
+                    picker.closing.push(session.sid.clone());
+                    let hub = self.settings.hub.clone();
+                    let tx = self.tx.clone();
+                    tokio::spawn(async move {
+                        let result = remote::close(&hub, &session.sid).await;
+                        let _ = tx.send(AppEvent::HubSessionClosed(session, result));
+                    });
                 }
-                picker.stopping.push(id);
-                let tx = self.tx.clone();
-                tokio::spawn(async move {
-                    let result = background::client::stop(id)
-                        .await
-                        .map_err(|e| format!("{e:#}"));
-                    let _ = tx.send(AppEvent::SessionStopped(id, result));
-                });
-            }
+                None => {}
+            },
             _ => {}
         }
     }
@@ -271,6 +317,37 @@ impl App {
             picker.stopping.retain(|stopping| *stopping != id);
             picker.update(sessions);
         }
+    }
+
+    pub(super) fn on_hub_session_closed(&mut self, session: HubSession, result: Result<(), String>) {
+        let stopped = result.is_ok();
+        match result {
+            Ok(()) => {
+                let title = match session.title.as_str() {
+                    "" => String::new(),
+                    title => format!(" (“{title}”)"),
+                };
+                self.entries.push(Entry::Info(format!(
+                    "Stopped {}{title}; it stays saved there.",
+                    session_name(&session),
+                )));
+            }
+            Err(e) => self.entries.push(Entry::Error(format!(
+                "Couldn't stop {}: {e}",
+                session_name(&session)
+            ))),
+        }
+        if let Some(picker) = &mut self.sessions_picker {
+            picker.closing.retain(|sid| *sid != session.sid);
+            if stopped {
+                picker.keeping_place(|picker| {
+                    if let HubList::Loaded(sessions) = &mut picker.hub {
+                        sessions.retain(|h| h.sid != session.sid);
+                    }
+                });
+            }
+        }
+        self.refresh_hub_sessions();
     }
 
     /// Where the terminal should go next, since the last time this was asked.
@@ -327,7 +404,9 @@ impl App {
             HubList::Loaded(_) => {}
         }
         for h in &hub_sessions {
-            let (label, color) = if !h.online {
+            let (label, color) = if picker.closing.contains(&h.sid) {
+                ("stopping…", dim)
+            } else if !h.online {
                 ("offline", dim)
             } else if h.approval {
                 ("needs approval", Color::Yellow)
@@ -351,7 +430,7 @@ impl App {
         let hint = if picker.confirming.is_some() {
             Line::from(" x again to stop it mid-turn · any other key cancels ").fg(Color::Yellow)
         } else if on_hub && !rows.is_empty() {
-            Line::from(" ↑/↓ move · enter drive it from here · esc close ")
+            Line::from(" ↑/↓ move · enter drive it from here · x stop · esc close ")
         } else {
             Line::from(" ↑/↓ move · enter join · x stop · esc close ")
         };

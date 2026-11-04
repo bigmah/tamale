@@ -2059,7 +2059,7 @@ async fn sessions_picker_joins_stops_and_keeps_its_place() {
     open(&mut app);
     app.on_event(key(KeyCode::Char('x')));
     let picker = app.sessions_picker.as_ref().unwrap();
-    assert_eq!(picker.confirming, Some(1));
+    assert_eq!(picker.confirming, Some(background::Row::Local(1)));
     assert!(picker.stopping.is_empty());
     app.on_event(key(KeyCode::Down));
     app.on_event(key(KeyCode::Up));
@@ -2240,4 +2240,34 @@ async fn sessions_tab_lists_both_kinds_and_drives_a_remote_one() {
     });
     assert!(app.remote_view.is_none());
     assert!(matches!(app.entries.last(), Some(Entry::Error(e)) if e.contains("old-box")));
+
+    // `x` stops one through the hub: a second `x` if it's working, never an offline one.
+    app.open_sessions_picker();
+    app.sessions_picker.as_mut().unwrap().sessions.clear();
+    let busy = HubSession {
+        busy: true,
+        ..hub_session("dd", "busy-box", "working")
+    };
+    let offline = HubSession {
+        online: false,
+        ..hub_session("ee", "gone-box", "")
+    };
+    app.on_app_event(AppEvent::HubSessions(Ok(vec![busy.clone(), offline])));
+    app.on_event(key(KeyCode::Char('x')));
+    let picker = app.sessions_picker.as_ref().unwrap();
+    assert_eq!(picker.confirming, Some(background::Row::Hub("dd".into())));
+    assert!(picker.closing.is_empty());
+    app.on_event(key(KeyCode::Char('x')));
+    assert_eq!(app.sessions_picker.as_ref().unwrap().closing, ["dd"]);
+    assert!(screen(&mut app).contains("stopping…"));
+    app.on_event(key(KeyCode::Down));
+    app.on_event(key(KeyCode::Char('x')));
+    assert!(matches!(app.entries.last(), Some(Entry::Error(e)) if e.contains("offline")));
+
+    // Once it's gone it leaves the list, and the selection stays in it.
+    app.on_app_event(AppEvent::HubSessionClosed(busy, Ok(())));
+    let picker = app.sessions_picker.as_ref().unwrap();
+    assert!(picker.closing.is_empty());
+    assert_eq!((picker.rows().len(), picker.selected), (1, 0));
+    assert!(matches!(app.entries.last(), Some(Entry::Info(e)) if e.contains("“working”")));
 }

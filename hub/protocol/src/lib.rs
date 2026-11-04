@@ -199,6 +199,10 @@ pub enum ToHub {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sealed: Option<String>,
     },
+    /// The session is over (it was closed or quit), so it isn't coming back: the hub drops it
+    /// from the list and ends its browsers' channels for good. The last frame. Hubs from
+    /// before it ignore it, and list the session as offline for a while instead.
+    End,
 }
 
 /// hub → tamale.
@@ -319,6 +323,10 @@ mod tests {
         };
         let text = serde_json::to_string(&got).unwrap();
         assert_eq!(serde_json::from_str::<ToHub>(&text).unwrap(), got);
+
+        let end = serde_json::to_string(&ToHub::End).unwrap();
+        assert_eq!(end, r#"{"t":"end"}"#);
+        assert_eq!(serde_json::from_str::<ToHub>(&end).unwrap(), ToHub::End);
 
         for frame in [
             ToAgent::Welcome { proto: 1 },

@@ -88,6 +88,7 @@ final class MessageTests: XCTestCase {
         XCTAssertEqual(Outgoing.approve(.yes, reason: " ").json, #"{"choice":"yes","t":"approve"}"#)
         XCTAssertEqual(Outgoing.artifact(id: "ab").json, #"{"id":"ab","t":"artifact"}"#)
         XCTAssertEqual(Outgoing.artifacts(seq: 3).json, #"{"seq":3,"t":"artifacts"}"#)
+        XCTAssertEqual(Outgoing.close.json, #"{"t":"close"}"#)
         XCTAssertEqual(Prompts.revise(title: "Plan"), "Revise the \"Plan\" artifact: ")
     }
 
