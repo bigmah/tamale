@@ -487,9 +487,9 @@ impl App {
         // The highlighted tab is filled; the others stay quiet, Chat marked as current.
         let focus = self.tab_focus;
         let picked = |tab| focus == Some(tab);
-        let style = |tab, color| {
+        let style = |tab| {
             if picked(tab) {
-                Style::new().fg(Color::Black).bg(color).bold()
+                Style::new().fg(Color::Black).bg(Color::Cyan).bold()
             } else if tab == FooterTab::Chat {
                 Style::new().fg(Color::Cyan).bold()
             } else {
@@ -500,10 +500,10 @@ impl App {
             .tab_spans()
             .unwrap_or_else(|| vec![Span::from(" Chat ")]);
         let has_diff = chat.len() > 1;
-        chat[0] = Span::styled(" Chat ", style(FooterTab::Chat, Color::Cyan));
+        chat[0] = Span::styled(" Chat ", style(FooterTab::Chat));
         if has_diff {
             // A whole " Diff " fills evenly; the counts after it lose their leading gap.
-            chat[1] = Span::styled(" Diff ", style(FooterTab::Diff, Color::Cyan));
+            chat[1] = Span::styled(" Diff ", style(FooterTab::Diff));
             if let Some(next) = chat.get_mut(2) {
                 next.content = next.content.trim_start().to_string().into();
             }
@@ -513,18 +513,18 @@ impl App {
             |s: &'static str, shown: bool| Span::from(if shown { s } else { " " }).fg(Color::Cyan);
         let remote_on = self.remote_on();
         let remote_tab = if remote_on { REMOTE_ON_TAB } else { REMOTE_OFF_TAB };
-        let mut remote_style = style(FooterTab::Remote, Color::Blue);
+        let mut remote_style = style(FooterTab::Remote);
         if remote_on && !picked(FooterTab::Remote) {
             remote_style = remote_style.fg(Color::Green);
         }
         let mut tabs = vec![
             arrow("←", focus.is_some_and(|t| t != FooterTab::Remote)),
             Span::styled(remote_tab, remote_style),
-            Span::styled(WEB_TAB, style(FooterTab::Web, Color::Blue)),
+            Span::styled(WEB_TAB, style(FooterTab::Web)),
         ];
         let remote_offset = tabs[0].content.width() as u16;
         tabs.extend(chat);
-        tabs.push(Span::styled(SESSIONS_TAB, style(FooterTab::Sessions, Color::Blue)));
+        tabs.push(Span::styled(SESSIONS_TAB, style(FooterTab::Sessions)));
         tabs.push(arrow("→", focus.is_some_and(|t| t != FooterTab::Sessions)));
         tabs.push(Span::from(" "));
         let tabs_width: usize = tabs.iter().map(|s| s.content.width()).sum();
