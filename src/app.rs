@@ -78,14 +78,13 @@ pub enum BrowserRequest {
     Close,
 }
 
-/// The footer's tabs, left to right.
+/// The footer's tabs: what's reached most often comes first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FooterTab {
+    Sessions,
     Remote,
     Web,
-    Chat,
     Diff,
-    Sessions,
 }
 
 /// What `/web` and `/remote` asked of the event loop.
@@ -173,14 +172,10 @@ pub struct App {
     browser_request: Option<BrowserRequest>,
     /// Set by `/web`; the event loop starts or stops serving the web UI.
     web_request: Option<WebRequest>,
-    /// Where the footer's Web tab was last drawn, so a click on it opens the web UI.
-    web_tab: Option<ratatui::layout::Rect>,
-    /// Where the footer's Remote tab was last drawn, so a click on it connects to the hub.
-    remote_tab: Option<ratatui::layout::Rect>,
-    /// The same for the Sessions tab.
-    sessions_tab: Option<ratatui::layout::Rect>,
+    /// Where the footer's tabs were last drawn, so a click on one opens it.
+    tab_areas: Vec<(FooterTab, ratatui::layout::Rect)>,
     /// The footer tab picked with ←/→ after ↓ past the prompt's last line moved the
-    /// keyboard there; Enter or ↓ opens it. `None` while the keyboard is in the prompt.
+    /// keyboard there; Enter opens it. `None` while the keyboard is in the prompt.
     tab_focus: Option<FooterTab>,
     settings: Settings,
     tx: mpsc::UnboundedSender<AppEvent>,
@@ -306,9 +301,7 @@ impl App {
             login_request: None,
             browser_request: None,
             web_request: None,
-            web_tab: None,
-            remote_tab: None,
-            sessions_tab: None,
+            tab_areas: Vec::new(),
             tab_focus: None,
             settings,
             tx,

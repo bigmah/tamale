@@ -1,9 +1,9 @@
 # Diff viewer
 
-The chat and the diff viewer are two tabs. The right end of the footer shows
-`Chat  Diff 3 +40 −12 →` (changed files and lines, kept up to date in the background);
-press `→` with an empty prompt to switch to the Diff tab, and `Esc`, `q` or `←` to come
-back. The viewer keeps its place between visits. `/diff` also opens it.
+The chat and the diff viewer are two tabs. The footer's Diff tab shows
+`± Diff 3 +40 −12` (changed files and lines, kept up to date in the background);
+click it, or press `↓` past the end of the prompt, `→` to reach it and `Enter`, and
+`Esc`, `q` or `←` to come back. The viewer keeps its place between visits. `/diff` also opens it.
 
 The Diff tab is a full-screen view of your uncommitted changes: a file tree of changed
 files on the left (status letter and `+added −removed` per file, directories folded

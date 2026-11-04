@@ -887,35 +887,30 @@ impl App {
         self.scroll_back = 0;
     }
 
-    /// The Chat/Diff tab bar; `None` outside a git repository.
+    /// The diff viewer's Chat/Diff tab bar; `None` until there's something to show.
     pub(super) fn tab_spans(&self) -> Option<Vec<Span<'static>>> {
-        let viewer = self.diff.as_ref()?;
-        let files = viewer.files.as_ref()?;
-        let active = Style::new().fg(Color::Black).bg(Color::Cyan).bold();
-        let inactive = Style::new().fg(Color::Gray);
+        self.diff.as_ref()?.files.as_ref()?;
+        Some(vec![
+            Span::from(" ← ").fg(Color::DarkGray),
+            Span::styled(" Chat ", Style::new().fg(Color::Gray)),
+            Span::styled(" Diff ", Style::new().fg(Color::Black).bg(Color::Cyan).bold()),
+        ])
+    }
+
+    /// What the footer's Diff tab says about the changes; `None` outside a git repository.
+    pub(super) fn diff_stats(&self) -> Option<Vec<Span<'static>>> {
+        let files = self.diff.as_ref()?.files.as_ref()?;
+        if files.is_empty() {
+            return Some(vec![Span::from("clean ").fg(Color::DarkGray)]);
+        }
         let (added, removed) = files
             .iter()
             .fold((0, 0), |(a, r), f| (a + f.added, r + f.removed));
-        let stats = if files.is_empty() {
-            vec![Span::from(" clean ").fg(Color::DarkGray)]
-        } else {
-            vec![
-                Span::from(format!(" {} ", files.len())).fg(Color::Yellow),
-                Span::from(format!("+{added} ")).fg(Color::Green),
-                Span::from(format!("−{removed} ")).fg(Color::Red),
-            ]
-        };
-        let mut spans = Vec::new();
-        if self.diff_open {
-            spans.push(Span::from(" ← ").fg(Color::DarkGray));
-            spans.push(Span::styled(" Chat ", inactive));
-            spans.push(Span::styled(" Diff ", active));
-        } else {
-            spans.push(Span::styled(" Chat ", active));
-            spans.push(Span::styled(" Diff", inactive));
-            spans.extend(stats);
-        }
-        Some(spans)
+        Some(vec![
+            Span::from(format!("{} ", files.len())).fg(Color::Yellow),
+            Span::from(format!("+{added} ")).fg(Color::Green),
+            Span::from(format!("−{removed} ")).fg(Color::Red),
+        ])
     }
 
     pub(super) fn on_diff_key(&mut self, key: KeyEvent, ctrl: bool) {

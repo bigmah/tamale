@@ -138,7 +138,7 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
             ),
             (
                 "↓ (below the prompt)",
-                "Focus the tabs: ←/→ pick Remote (like /remote), Web (like /web), Diff or Sessions (like /sessions), Enter/↓ opens it; ↑ or Esc back",
+                "Focus the tabs: ←/→ pick Sessions (like /sessions), Remote (like /remote), Web (like /web) or Diff, Enter opens it; ↑ or Esc back",
             ),
             ("Ctrl+O / click Web", "Open the web UI on your Wi-Fi, like /web"),
             ("Click Remote", "Connect to the hub or show its QR code, like /remote"),

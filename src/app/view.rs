@@ -476,98 +476,9 @@ impl App {
     }
 
     fn draw_status(&mut self, frame: &mut Frame, area: Rect) {
-        // Where inference comes from stays visible; a long cwd loses its start instead.
-        let backend = self.backend_label();
-        let dirs = match self.workspace.additional_dirs.len() {
-            0 => String::new(),
-            n => format!(" +{n} dirs"),
-        };
-        // Remote and Web sit left of Chat, Diff right of it, as ← and → reach them once ↓
-        // has focused the tabs; a click on Remote or Web works too.
-        // The highlighted tab is filled; the others stay quiet, Chat marked as current.
-        let focus = self.tab_focus;
-        let picked = |tab| focus == Some(tab);
-        let style = |tab| {
-            if picked(tab) {
-                Style::new().fg(Color::Black).bg(Color::Cyan).bold()
-            } else if tab == FooterTab::Chat {
-                Style::new().fg(Color::Cyan).bold()
-            } else {
-                Style::new().fg(Color::Gray)
-            }
-        };
-        let mut chat = self
-            .tab_spans()
-            .unwrap_or_else(|| vec![Span::from(" Chat ")]);
-        let has_diff = chat.len() > 1;
-        chat[0] = Span::styled(" Chat ", style(FooterTab::Chat));
-        if has_diff {
-            // A whole " Diff " fills evenly; the counts after it lose their leading gap.
-            chat[1] = Span::styled(" Diff ", style(FooterTab::Diff));
-            if let Some(next) = chat.get_mut(2) {
-                next.content = next.content.trim_start().to_string().into();
-            }
-        }
-        // Arrows show where ← and → can still go.
-        let arrow =
-            |s: &'static str, shown: bool| Span::from(if shown { s } else { " " }).fg(Color::Cyan);
-        let remote_on = self.remote_on();
-        let remote_tab = if remote_on { REMOTE_ON_TAB } else { REMOTE_OFF_TAB };
-        let mut remote_style = style(FooterTab::Remote);
-        if remote_on && !picked(FooterTab::Remote) {
-            remote_style = remote_style.fg(Color::Green);
-        }
-        let mut tabs = vec![
-            arrow("←", focus.is_some_and(|t| t != FooterTab::Remote)),
-            Span::styled(remote_tab, remote_style),
-            Span::styled(WEB_TAB, style(FooterTab::Web)),
-        ];
-        let remote_offset = tabs[0].content.width() as u16;
-        tabs.extend(chat);
-        tabs.push(Span::styled(SESSIONS_TAB, style(FooterTab::Sessions)));
-        tabs.push(arrow("→", focus.is_some_and(|t| t != FooterTab::Sessions)));
-        tabs.push(Span::from(" "));
-        let tabs_width: usize = tabs.iter().map(|s| s.content.width()).sum();
-        let fixed = " cwd: ".len()
-            + dirs.width()
-            + " · via ".len()
-            + backend.width()
-            + tabs_width
-            + 1
-            + if self.hub_viewers.is_some() { 18 } else { 0 };
-        let cwd = truncate_start(
-            &self.workspace.cwd.display().to_string(),
-            (area.width as usize).saturating_sub(fixed).max(10),
-        );
-        let cwd_spans = vec![
-            Span::from(" cwd: ").fg(Color::DarkGray),
-            Span::from(cwd).fg(Color::Cyan),
-            Span::from(dirs).fg(Color::DarkGray),
-            Span::from(" · via ").fg(Color::DarkGray),
-            Span::from(backend)
-                .fg(if self.backend.signed_in() {
-                    Color::Blue
-                } else {
-                    Color::Red
-                })
-                .bold(),
-        ];
-        let mut cwd_spans = cwd_spans;
-        if let Some(viewers) = self.hub_viewers {
-            cwd_spans.push(Span::from(" · hub").fg(Color::DarkGray));
-            cwd_spans.push(
-                Span::from(match viewers {
-                    0 => " ●".to_string(),
-                    n => format!(" ● {n} viewing"),
-                })
-                .fg(if viewers > 0 {
-                    Color::Green
-                } else {
-                    Color::DarkGray
-                }),
-            );
-        }
-        let cwd_line = Line::from(cwd_spans);
+        let [tabs_row, stats_row] =
+            Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
+        self.draw_tabs(frame, tabs_row);
         let hint = if self.approval.is_some() {
             "approve the tool call · esc to interrupt"
         } else if self.rewind_picker.is_some() {
@@ -582,21 +493,20 @@ impl App {
             "↑/↓ j/k scroll · pgup/pgdn page · esc close"
         } else if let Some(tab) = self.tab_focus {
             match tab {
+                FooterTab::Sessions => "enter open · ←/→ choose · ↑ back",
                 FooterTab::Remote if self.hub_viewers.is_some() => {
-                    "enter/↓ show the QR code · ←/→ choose · ↑ back"
+                    "enter show QR code · ←/→ choose · ↑ back"
                 }
-                FooterTab::Remote => "enter/↓ connect to the hub · ←/→ choose · ↑ back",
-                FooterTab::Web => "enter/↓ open the web UI · ←/→ choose · ↑ back",
-                FooterTab::Diff => "enter/↓ open the diff · ←/→ choose · ↑ back",
-                FooterTab::Sessions => "enter/↓ see other sessions · ←/→ choose · ↑ back",
-                FooterTab::Chat => "←/→ choose a tab · enter/↑ back to the prompt",
+                FooterTab::Remote => "enter connect · ←/→ choose · ↑ back",
+                FooterTab::Web => "enter open in browser · ←/→ choose · ↑ back",
+                FooterTab::Diff => "enter open · ←/→ choose · ↑ back",
             }
         } else if self.is_running() && self.detachable {
             "esc to interrupt · ctrl+c to detach"
         } else if self.is_running() {
             "esc to interrupt"
         } else {
-            "enter send · shift+tab mode · ↓ tabs · /help"
+            "shift+tab mode · ↓ tabs · /help"
         };
         let mode = self.permissions.lock().unwrap().mode;
         let mode_color = match mode {
@@ -619,7 +529,7 @@ impl App {
         } else {
             String::new()
         };
-        let line = Line::from(vec![
+        let mut stats = vec![
             Span::from(format!(" {} ", mode.as_str()))
                 .fg(mode_color)
                 .bold(),
@@ -662,29 +572,116 @@ impl App {
                 if self.cost_partial { "+" } else { "" }
             ))
             .fg(Color::Green),
-            Span::from(format!("· {hint}")).fg(Color::DarkGray),
-        ]);
-        frame.render_widget(Paragraph::new(vec![cwd_line, line]), area);
-        frame.render_widget(Line::from(tabs).right_aligned(), area);
-        // Clickable where it was drawn, right-aligned with the rest of the tabs.
-        let start = (area.x + area.width).saturating_sub(tabs_width as u16) + remote_offset;
-        let remote_width = remote_tab.width() as u16;
-        self.remote_tab = Some(Rect::new(start, area.y, remote_width, 1).intersection(area));
-        self.web_tab = Some(
-            Rect::new(start + remote_width, area.y, WEB_TAB.width() as u16, 1).intersection(area),
+        ];
+        // The hint says what the keys do right now, so whole stats give way to it, the
+        // ones that matter least first: usage, verbose, thinking, effort, cost, ctx, model.
+        let hint_width = (hint.width() as u16 + 1).min(stats_row.width);
+        let [stats_area, hint_area] =
+            Layout::horizontal([Constraint::Min(0), Constraint::Length(hint_width)]).areas(stats_row);
+        for drop in [6, 2, 3, 4, 7, 5, 1] {
+            let width: usize = stats.iter().map(|s| s.content.width()).sum();
+            if width < stats_area.width as usize {
+                break;
+            }
+            stats[drop] = Span::from("");
+        }
+        frame.render_widget(Line::from(stats), stats_area);
+        frame.render_widget(
+            Line::from(Span::from(format!("{hint} ")).fg(Color::DarkGray)).right_aligned(),
+            hint_area,
         );
-        // At the right end, before its arrow and the margin.
-        let sessions_width = SESSIONS_TAB.width() as u16;
-        let sessions_start = (area.x + area.width).saturating_sub(sessions_width + 2);
-        self.sessions_tab =
-            Some(Rect::new(sessions_start, area.y, sessions_width, 1).intersection(area));
+    }
+
+    /// The tabs at the left, brightest first, then where this session runs at the right.
+    fn draw_tabs(&mut self, frame: &mut Frame, area: Rect) {
+        let focus = self.tab_focus;
+        let style = |tab, color| {
+            if focus == Some(tab) {
+                Style::new().fg(Color::Black).bg(Color::Cyan).bold()
+            } else {
+                Style::new().fg(color)
+            }
+        };
+        let primary = Color::White;
+        let secondary = Color::DarkGray;
+        let remote_color = if self.remote_on() { Color::Green } else { primary };
+
+        let mut spans = Vec::new();
+        let mut areas = Vec::new();
+        let mut add = |spans: &mut Vec<Span<'static>>, tab, label: String, style: Style| {
+            let x = area.x + spans.iter().map(|s| s.content.width() as u16).sum::<u16>();
+            let tab_area = Rect::new(x, area.y, label.width() as u16, 1);
+            areas.push((tab, tab_area.intersection(area)));
+            spans.push(Span::styled(label, style));
+        };
+        add(
+            &mut spans,
+            FooterTab::Sessions,
+            " ≡ Sessions ".into(),
+            style(FooterTab::Sessions, primary).bold(),
+        );
+        add(
+            &mut spans,
+            FooterTab::Remote,
+            format!(" ⇄ Remote {} ", self.remote_label()),
+            style(FooterTab::Remote, remote_color).bold(),
+        );
+        spans.push(Span::from(SEPARATOR).fg(Color::DarkGray));
+        add(&mut spans, FooterTab::Web, " ◉ Web ".into(), style(FooterTab::Web, secondary));
+        if let Some(stats) = self.diff_stats() {
+            add(&mut spans, FooterTab::Diff, " ± Diff ".into(), style(FooterTab::Diff, secondary));
+            spans.extend(stats);
+        }
+        self.tab_areas = areas;
+        let tabs_width: usize = spans.iter().map(|s| s.content.width()).sum();
+        frame.render_widget(Line::from(spans), area);
+
+        // Where inference comes from outlasts the cwd, and a long cwd loses its start;
+        // the tabs win when there isn't room for either.
+        let backend = self.backend_label();
+        let dirs = match self.workspace.additional_dirs.len() {
+            0 => String::new(),
+            n => format!(" +{n} dirs"),
+        };
+        let room = (area.width as usize).saturating_sub(tabs_width + 2);
+        let fixed = VIA.width() + backend.width() + 1;
+        let mut place = Vec::new();
+        if room > fixed + dirs.width() + MIN_CWD {
+            let cwd = truncate_start(
+                &self.workspace.cwd.display().to_string(),
+                room - fixed - dirs.width(),
+            );
+            place.push(Span::from(cwd).fg(Color::Cyan));
+            place.push(Span::from(dirs).fg(Color::DarkGray));
+            place.push(Span::from(VIA).fg(Color::DarkGray));
+        } else if room < fixed {
+            return;
+        }
+        let signed_in = self.backend.signed_in();
+        place.push(
+            Span::from(backend)
+                .fg(if signed_in { Color::Blue } else { Color::Red })
+                .bold(),
+        );
+        place.push(Span::from(" "));
+        frame.render_widget(Line::from(place).right_aligned(), area);
+    }
+
+    /// The hub connection as the Remote tab words it.
+    fn remote_label(&self) -> String {
+        match self.hub_viewers {
+            None => "off".into(),
+            Some(_) if !self.hub_live => "connecting".into(),
+            Some(0) => "on".into(),
+            Some(n) => format!("on · {n} viewing"),
+        }
     }
 }
 
-const REMOTE_ON_TAB: &str = " ⇄ Remote on ";
-const REMOTE_OFF_TAB: &str = " ⇄ Remote off ";
-const WEB_TAB: &str = " ◉ Web ";
-const SESSIONS_TAB: &str = " ≡ Sessions ";
+const SEPARATOR: &str = "│";
+const VIA: &str = " · via ";
+/// Below this a cwd says too little to be worth showing.
+const MIN_CWD: usize = 10;
 
 /// Compact token count, e.g. 950, 12.3k, 1.2M.
 pub(super) fn fmt_tokens(n: u64) -> String {

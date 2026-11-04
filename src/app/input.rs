@@ -27,33 +27,37 @@ impl App {
             Event::Mouse(mouse) => match mouse.kind {
                 MouseEventKind::ScrollUp => self.on_wheel(true),
                 MouseEventKind::ScrollDown => self.on_wheel(false),
-                MouseEventKind::Down(MouseButton::Left)
-                    if self.approval.is_none()
-                        && self.web_tab.is_some_and(|tab| {
-                            tab.contains(Position::new(mouse.column, mouse.row))
-                        }) =>
-                {
-                    self.open_web()
-                }
-                MouseEventKind::Down(MouseButton::Left)
-                    if self.approval.is_none()
-                        && self.remote_tab.is_some_and(|tab| {
-                            tab.contains(Position::new(mouse.column, mouse.row))
-                        }) =>
-                {
-                    self.open_remote()
-                }
-                MouseEventKind::Down(MouseButton::Left)
-                    if self.approval.is_none()
-                        && self.sessions_tab.is_some_and(|tab| {
-                            tab.contains(Position::new(mouse.column, mouse.row))
-                        }) =>
-                {
-                    self.command("/sessions")
+                MouseEventKind::Down(MouseButton::Left) if self.approval.is_none() => {
+                    let at = Position::new(mouse.column, mouse.row);
+                    let tab = self.tab_areas.iter().find(|(_, area)| area.contains(at));
+                    if let Some(&(tab, _)) = tab {
+                        self.open_tab(tab);
+                    }
                 }
                 _ => {}
             },
             _ => {}
+        }
+    }
+
+    /// The footer's tabs as they're drawn; Diff only exists inside a git repository.
+    pub(super) fn footer_tabs(&self) -> Vec<FooterTab> {
+        let mut tabs = vec![FooterTab::Sessions, FooterTab::Remote, FooterTab::Web];
+        if self.diff_stats().is_some() {
+            tabs.push(FooterTab::Diff);
+        }
+        tabs
+    }
+
+    fn open_tab(&mut self, tab: FooterTab) {
+        match tab {
+            FooterTab::Sessions => {
+                self.tab_focus = None;
+                self.command("/sessions");
+            }
+            FooterTab::Remote => self.open_remote(),
+            FooterTab::Web => self.open_web(),
+            FooterTab::Diff => self.show_diff(),
         }
     }
 
@@ -173,33 +177,16 @@ impl App {
         }
 
         if let Some(tab) = self.tab_focus {
-            // ←/→ only highlight a tab; Enter or ↓ opens it, so nothing opens by surprise.
-            let has_diff = self.tab_spans().is_some();
-            match (key.code, tab) {
-                (KeyCode::Left, FooterTab::Web) => self.tab_focus = Some(FooterTab::Remote),
-                (KeyCode::Left, FooterTab::Chat) => self.tab_focus = Some(FooterTab::Web),
-                (KeyCode::Left, FooterTab::Diff) => self.tab_focus = Some(FooterTab::Chat),
-                (KeyCode::Right, FooterTab::Remote) => self.tab_focus = Some(FooterTab::Web),
-                (KeyCode::Right, FooterTab::Web) => self.tab_focus = Some(FooterTab::Chat),
-                (KeyCode::Right, FooterTab::Chat) if has_diff => {
-                    self.tab_focus = Some(FooterTab::Diff)
-                }
-                (KeyCode::Right, FooterTab::Chat | FooterTab::Diff) => {
-                    self.tab_focus = Some(FooterTab::Sessions)
-                }
-                (KeyCode::Left, FooterTab::Sessions) if has_diff => {
-                    self.tab_focus = Some(FooterTab::Diff)
-                }
-                (KeyCode::Left, FooterTab::Sessions) => self.tab_focus = Some(FooterTab::Chat),
-                (KeyCode::Enter | KeyCode::Down, FooterTab::Sessions) => {
-                    self.tab_focus = None;
-                    self.command("/sessions");
-                }
-                (KeyCode::Enter | KeyCode::Down, FooterTab::Remote) => self.open_remote(),
-                (KeyCode::Enter | KeyCode::Down, FooterTab::Web) => self.open_web(),
-                (KeyCode::Enter | KeyCode::Down, FooterTab::Diff) => self.show_diff(),
-                (KeyCode::Enter | KeyCode::Up | KeyCode::Esc, _) => self.tab_focus = None,
-                (KeyCode::Left | KeyCode::Right | KeyCode::Down, _) => {}
+            // ←/→ only highlight a tab and only Enter opens it, so nothing opens by surprise,
+            // not even when ↓ is held down to get through the prompt history.
+            let tabs = self.footer_tabs();
+            let at = tabs.iter().position(|&t| t == tab).unwrap_or(0);
+            match key.code {
+                KeyCode::Left => self.tab_focus = Some(tabs[at.saturating_sub(1)]),
+                KeyCode::Right => self.tab_focus = Some(tabs[(at + 1).min(tabs.len() - 1)]),
+                KeyCode::Enter => self.open_tab(tab),
+                KeyCode::Up | KeyCode::Esc => self.tab_focus = None,
+                KeyCode::Down => {}
                 // Anything else goes back to the prompt and acts there.
                 _ => {
                     self.tab_focus = None;
@@ -300,7 +287,7 @@ impl App {
             self.cursor = self.input.len();
         } else {
             // Past the last line (and the newest prompt): down to the footer's tabs.
-            self.tab_focus = Some(FooterTab::Chat);
+            self.tab_focus = Some(FooterTab::Sessions);
         }
     }
 

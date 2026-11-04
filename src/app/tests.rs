@@ -242,7 +242,7 @@ async fn sessions_are_saved_and_resumed() {
 }
 
 #[test]
-fn web_tab_click_ctrl_o_or_down_left_enter_open_the_web_ui() {
+fn footer_tabs_open_by_click_or_by_down_arrows_enter() {
     use super::{FooterTab, WebRequest};
     use crossterm::event::{MouseButton, MouseEvent};
     let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
@@ -253,7 +253,7 @@ fn web_tab_click_ctrl_o_or_down_left_enter_open_the_web_ui() {
     );
     let lines = screen_lines(&mut app, 100, 30);
     let footer = &lines[28];
-    assert!(footer.ends_with(" ⇄ Remote off  ◉ Web  Chat  ≡ Sessions   "), "{footer}");
+    assert!(footer.starts_with(" ≡ Sessions  ⇄ Remote off │ ◉ Web "), "{footer}");
 
     let click = |column, row| {
         Event::Mouse(MouseEvent {
@@ -263,69 +263,64 @@ fn web_tab_click_ctrl_o_or_down_left_enter_open_the_web_ui() {
             modifiers: KeyModifiers::NONE,
         })
     };
-    app.on_event(click(10, 28));
+    app.on_event(click(26, 28));
     assert!(
         app.take_web_request().is_none(),
         "a click elsewhere does nothing"
     );
-    app.on_event(click(76, 28));
+    app.on_event(click(30, 28));
     assert!(matches!(
         app.take_web_request(),
         Some(WebRequest::Open { lan: true })
     ));
-    app.on_event(click(66, 28));
+    app.on_event(click(15, 28));
     assert!(matches!(
         app.take_web_request(),
         Some(WebRequest::Remote { on: true })
     ));
 
-    // In the prompt ← and → move the cursor; ↓ past its last line focuses the tabs.
+    // In the prompt ← and → move the cursor; ↓ past its last line focuses the first tab.
     type_text(&mut app, "hi");
     app.on_event(key(KeyCode::Left));
     assert!(app.take_web_request().is_none());
     assert_eq!(app.cursor, 1);
     app.on_event(key(KeyCode::Down));
-    assert_eq!(app.tab_focus, Some(FooterTab::Chat));
-    let footer = screen_lines(&mut app, 100, 30)[28].clone();
-    assert!(footer.ends_with("← ⇄ Remote off  ◉ Web  Chat  ≡ Sessions → "), "{footer}");
-    // ← only highlights Web; Enter or ↓ opens it.
-    app.on_event(key(KeyCode::Left));
-    assert_eq!(app.tab_focus, Some(FooterTab::Web));
-    assert!(app.take_web_request().is_none());
-    for open in [KeyCode::Enter, KeyCode::Down] {
-        app.on_event(key(open));
-        assert!(matches!(
-            app.take_web_request(),
-            Some(WebRequest::Open { lan: true })
-        ));
-    }
-    // Remote is the last one left, and works the same way.
-    app.on_event(key(KeyCode::Left));
+    assert_eq!(app.tab_focus, Some(FooterTab::Sessions));
+    // Holding ↓ through the history doesn't open anything.
+    app.on_event(key(KeyCode::Down));
+    assert_eq!(app.tab_focus, Some(FooterTab::Sessions));
+    assert!(app.sessions_picker.is_none());
+    // → only highlights Remote; Enter opens it.
+    app.on_event(key(KeyCode::Right));
     assert_eq!(app.tab_focus, Some(FooterTab::Remote));
     assert!(app.take_web_request().is_none());
-    app.on_event(key(KeyCode::Left));
-    assert_eq!(app.tab_focus, Some(FooterTab::Remote), "nothing further left");
-    for open in [KeyCode::Enter, KeyCode::Down] {
-        app.on_event(key(open));
-        assert!(matches!(
-            app.take_web_request(),
-            Some(WebRequest::Remote { on: true })
-        ));
-    }
-    // Without a repository there is no Diff between Chat and Sessions, the last one.
-    app.on_event(key(KeyCode::Right));
-    app.on_event(key(KeyCode::Right));
-    app.on_event(key(KeyCode::Right));
-    app.on_event(key(KeyCode::Right));
-    assert_eq!(app.tab_focus, Some(FooterTab::Sessions));
-    app.on_event(key(KeyCode::Left));
-    assert_eq!(app.tab_focus, Some(FooterTab::Chat));
-    // Enter on Chat, ↑ and typing all go back to the prompt; typing still types.
-    app.on_event(key(KeyCode::Enter));
-    assert_eq!(app.tab_focus, None);
-    assert!(app.history.is_empty(), "Enter on a tab sends nothing");
     app.on_event(key(KeyCode::Down));
+    assert!(app.take_web_request().is_none());
+    app.on_event(key(KeyCode::Enter));
+    assert!(matches!(
+        app.take_web_request(),
+        Some(WebRequest::Remote { on: true })
+    ));
+    // Web works the same way, and without a repository it's the last one.
+    app.on_event(key(KeyCode::Right));
+    assert_eq!(app.tab_focus, Some(FooterTab::Web));
+    assert!(app.take_web_request().is_none());
+    app.on_event(key(KeyCode::Enter));
+    assert!(matches!(
+        app.take_web_request(),
+        Some(WebRequest::Open { lan: true })
+    ));
+    app.on_event(key(KeyCode::Right));
+    assert_eq!(app.tab_focus, Some(FooterTab::Web), "nothing further right");
+    for _ in 0..3 {
+        app.on_event(key(KeyCode::Left));
+    }
+    assert_eq!(app.tab_focus, Some(FooterTab::Sessions), "nothing further left");
+    // ↑, Esc and typing all go back to the prompt; typing still types.
     app.on_event(key(KeyCode::Up));
+    assert_eq!(app.tab_focus, None);
+    app.on_event(key(KeyCode::Down));
+    app.on_event(key(KeyCode::Esc));
     assert_eq!(app.tab_focus, None);
     app.on_event(key(KeyCode::Down));
     type_text(&mut app, "!");
@@ -385,10 +380,10 @@ fn the_remote_tab_says_whether_the_hub_is_connected_and_stays_clickable() {
     assert!(footer(&mut app).contains("⇄ Remote off"));
     // Still being tried isn't reachable yet.
     app.set_hub_viewers(Some(0));
-    assert!(footer(&mut app).contains("⇄ Remote off"));
+    assert!(footer(&mut app).contains("⇄ Remote connecting"));
     app.set_hub_live(true);
     let on = footer(&mut app);
-    assert!(on.ends_with(" ⇄ Remote on  ◉ Web  Chat  ≡ Sessions   "), "{on}");
+    assert!(on.starts_with(" ≡ Sessions  ⇄ Remote on │ ◉ Web "), "{on}");
     // The narrower tab is still where a click lands, on it and on Web beside it.
     let click = |column| {
         Event::Mouse(MouseEvent {
@@ -398,16 +393,18 @@ fn the_remote_tab_says_whether_the_hub_is_connected_and_stays_clickable() {
             modifiers: KeyModifiers::NONE,
         })
     };
-    app.on_event(click(61));
+    app.on_event(click(15));
     assert!(matches!(
         app.take_web_request(),
         Some(WebRequest::Remote { on: true })
     ));
-    app.on_event(click(74));
+    app.on_event(click(28));
     assert!(matches!(
         app.take_web_request(),
         Some(WebRequest::Open { .. })
     ));
+    app.set_hub_viewers(Some(2));
+    assert!(footer(&mut app).contains("⇄ Remote on · 2 viewing"));
     app.set_hub_viewers(None);
     assert!(footer(&mut app).contains("⇄ Remote off"), "a stale live doesn't count");
 }
@@ -1003,12 +1000,27 @@ fn status_shows_where_inference_comes_from_even_with_a_long_cwd() {
     let row: String = (0..80)
         .map(|x| buffer[(x, 10)].symbol().to_string())
         .collect();
-    assert!(row.contains(" cwd: …"), "{row}");
-    assert!(row.contains("· via Anthropic API "), "{row}");
-    assert!(
-        row.ends_with(" ◉ Web  Chat  ≡ Sessions   "),
-        "the tabs stay visible: {row}"
-    );
+    assert!(row.starts_with(" ≡ Sessions  ⇄ Remote off │ ◉ Web "), "the tabs stay: {row}");
+    assert!(row.contains("…"), "{row}");
+    assert!(row.ends_with(" · via Anthropic API "), "{row}");
+
+    // Too narrow for all of it: the most used tabs and the keys' hint are what's left.
+    let backend = ratatui::backend::TestBackend::new(34, 12);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    terminal.draw(|f| app.draw(f)).unwrap();
+    let buffer = terminal.backend().buffer();
+    let row = |y| (0..34).map(|x| buffer[(x, y)].symbol().to_string()).collect::<String>();
+    assert!(row(10).starts_with(" ≡ Sessions  ⇄ Remote off"), "{}", row(10));
+    assert!(row(11).ends_with("shift+tab mode · ↓ tabs · /help "), "{}", row(11));
+
+    // Stats give way whole, not cut off by the hint, and the cost outlasts the usage.
+    let backend = ratatui::backend::TestBackend::new(100, 12);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    terminal.draw(|f| app.draw(f)).unwrap();
+    let buffer = terminal.backend().buffer();
+    let row = (0..100).map(|x| buffer[(x, 11)].symbol().to_string()).collect::<String>();
+    assert!(row.contains("· $0.00 "), "{row}");
+    assert!(!row.contains("↑0"), "{row}");
 }
 
 fn login(email: &str, dir: Option<&str>) -> Backend {
@@ -1625,9 +1637,9 @@ async fn arrow_keys_switch_between_chat_and_diff_tabs() {
     app.on_app_event(event);
     assert!(!app.diff_open, "preloading stays on the chat");
     let footer = screen_lines(&mut app, 100, 30)[28].clone();
-    assert!(footer.contains(" ◉ Web  Chat  Diff 2 +2 −0  ≡ Sessions   "), "{footer}");
+    assert!(footer.contains(" ◉ Web  ± Diff 2 +2 −0 "), "{footer}");
 
-    // In the prompt → only moves the cursor, even when empty; from the tabs it opens Diff.
+    // In the prompt → only moves the cursor, even when empty; from the tabs it reaches Diff.
     type_text(&mut app, "hi");
     app.on_event(key(KeyCode::Left));
     app.on_event(key(KeyCode::Right));
@@ -1638,14 +1650,13 @@ async fn arrow_keys_switch_between_chat_and_diff_tabs() {
     app.on_event(key(KeyCode::Right));
     assert!(!app.diff_open);
     app.on_event(key(KeyCode::Down));
-    let footer = screen_lines(&mut app, 100, 30)[28].clone();
-    assert!(footer.contains("← ⇄ Remote off  ◉ Web  Chat  Diff 2 +2 −0  ≡ Sessions → "), "{footer}");
-    // → highlights Diff without opening it; ↓ (or Enter) opens it.
-    app.on_event(key(KeyCode::Right));
+    // → highlights Diff, last of the tabs, without opening it; Enter opens it.
+    for _ in 0..4 {
+        app.on_event(key(KeyCode::Right));
+    }
+    assert_eq!(app.tab_focus, Some(super::FooterTab::Diff));
     assert!(!app.diff_open);
-    let footer = screen_lines(&mut app, 100, 30)[28].clone();
-    assert!(footer.contains("← ⇄ Remote off  ◉ Web  Chat  Diff 2 +2 −0  ≡ Sessions → "), "{footer}");
-    app.on_event(key(KeyCode::Down));
+    app.on_event(key(KeyCode::Enter));
     assert!(app.diff_open);
     let event = rx.recv().await.unwrap();
     app.on_app_event(event);
@@ -2113,7 +2124,7 @@ async fn sessions_tab_lists_both_kinds_and_drives_a_remote_one() {
     settings.hub.url = "ws://127.0.0.1:1".into();
     let (mut app, _rx) = App::new_with_channel(client, settings, Workspace::current().unwrap());
 
-    // The tab is at the far right, by click or by arrows.
+    // The tab comes first, by click or by arrows.
     let footer = screen_lines(&mut app, 100, 30)[28].clone();
     assert!(footer.contains("≡ Sessions"), "{footer}");
     let column = footer.chars().position(|c| c == '≡').unwrap() as u16;
@@ -2126,11 +2137,7 @@ async fn sessions_tab_lists_both_kinds_and_drives_a_remote_one() {
     assert!(app.sessions_picker.is_some());
     app.sessions_picker = None;
     app.on_event(key(KeyCode::Down));
-    app.on_event(key(KeyCode::Right));
     assert_eq!(app.tab_focus, Some(super::FooterTab::Sessions));
-    app.on_event(key(KeyCode::Left));
-    assert_eq!(app.tab_focus, Some(super::FooterTab::Chat));
-    app.on_event(key(KeyCode::Right));
     app.on_event(key(KeyCode::Enter));
     assert_eq!(app.tab_focus, None);
 
