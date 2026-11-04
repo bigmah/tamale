@@ -65,10 +65,12 @@ const MAX_TOOL_OUTPUT: usize = 24_000;
 /// Added to every prompt during a web session: a reminder of the reply's shape. The design
 /// guide itself is in the system prompt (see [`artifact_guide`]).
 pub const ARTIFACT_PROMPT: &str = "\n\n<web-ui>Reply for tamale's web UI: do the work with \
-tools as usual, then write at most three sentences of plain prose followed by exactly one \
-complete, self-contained HTML document in a fenced block whose info string is exactly \
-`html artifact`, following the artifact design guide in your instructions. To revise an \
-earlier artifact, send the whole updated document.</web-ui>";
+tools as usual, then keep the reply brief: a few sentences, or a short list of at most 10 \
+items. If the full answer is longer than that (more than 10 findings, steps, files, changes \
+or options, or tables, diagrams or long code), write a summary of at most three sentences \
+and put the full answer in one complete, self-contained HTML document in a fenced block \
+whose info string is exactly `html artifact`, following the artifact design guide in your \
+instructions. To revise an earlier artifact, send the whole updated document.</web-ui>";
 
 /// The built-in artifact design guide; `~/.config/tamale/artifacts.md` replaces it.
 const ARTIFACT_GUIDE: &str = include_str!("web/artifact.md");

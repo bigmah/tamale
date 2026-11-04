@@ -63,9 +63,11 @@ back to the terminal, and `Ctrl+C` quits. Any number of tabs can be open.
   and the tree reload as the agent changes files. The browser reads only files inside
   the workspace (the working directory and `/add-dir` directories), and skips
   ignored files and `.git`.
-- **Artifacts.** During a web session every reply is a sentence or three followed by an
-  HTML artifact that carries the full answer: a designed page, interactive when that
-  helps (diagrams, step-throughs, tabs, diffs, charts). The model writes it as a fenced
+- **Artifacts.** During a web session replies are brief: a few sentences, or a list of at
+  most 10 items. A longer answer (more than 10 items, or tables, diagrams or long code) comes
+  as a sentence or three of summary followed by an HTML artifact that carries all of it: a
+  designed page, interactive when that helps (diagrams, step-throughs, tabs, diffs, charts).
+  The model writes it as a fenced
   ```` ```html artifact ```` block. While the block streams in, the page shows a
   placeholder, and when it is done the page loads it in a frame sized to fit. The bar
   above it can **revise** it (puts `Revise the "<title>" artifact: ` in the prompt; the
