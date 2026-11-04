@@ -1,90 +1,68 @@
-# tamale
+# tamale 🫔
 
-A small Claude Code–style coding agent for the terminal, written in pure Rust with
-[rig](https://rig.rs) and [ratatui](https://ratatui.rs). Inference comes from the Anthropic
-API or from your Claude Code or Codex sign-in.
+**A remote view wrapper for your agent harness.**
 
-## Setup
+tamale is a front end (TUI + iOS + WASM) for your coding agent backend
+([Claude Code](https://docs.claude.com/en/docs/claude-code) or
+[Codex](https://github.com/openai/codex)), built for a holistic understanding of agent output
+instead of a stream of diffs.
 
-Install tamale (macOS and Linux):
+tamale lets you view the results of your agent's turns remotely, from a web front end or the
+iOS app. This works even on Claude Code subscriptions that have remote control disabled
+(Team/Enterprise).
+
+Turn results show up as HTML artifacts on web and iOS, and as markdown in the TUI. The TUI
+isn't second class by any means: it has a file tree and a diff viewer too.
+
+Written entirely in Rust with [rig](https://rig.rs) and [ratatui](https://ratatui.rs) (outside
+of the iOS app, of course).
+
+![tamale's web UI showing an artifact](docs/images/web-artifact.png)
+
+## Install
+
+macOS and Linux:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/bigmah/tamale/releases/latest/download/install.sh | sh
 ```
 
-Or build it from source with [Rust](https://rustup.rs):
+Or build from source with [Rust](https://rustup.rs):
 
 ```sh
 git clone https://github.com/bigmah/tamale.git && cd tamale
 cargo install --path . --locked
 ```
 
-Then run `tamale` and pick where inference comes from, or choose up front:
+Then just run it. It's a single CLI with no arguments needed:
 
 ```sh
-export ANTHROPIC_API_KEY=sk-ant-...  # then run: tamale
-tamale --backend claude-code         # or use your Claude Code sign-in
-tamale --backend codex               # or your Codex (ChatGPT) sign-in
+tamale
 ```
 
-The directory you launch tamale in becomes its workspace. The sign-in backends need the
-[Claude Code](https://docs.claude.com/en/docs/claude-code) or
-[Codex](https://github.com/openai/codex) CLI installed.
+![Running tamale for the first time](docs/images/cli-install.png)
 
-**tamale's default permission mode is `auto`, which runs tools without asking.** Press
-`Shift+Tab` or set [`mode = "ask"`](docs/permissions.md) if you want to approve them.
+## Remote usage
 
-### Use it from your phone
+[tamale-hub](docs/remote-access.md) is a small relay that makes your sessions reachable from a
+phone or another computer, with no port forwarding or VPN. Sessions are end-to-end encrypted;
+the hub only moves opaque bytes.
 
-[tamale-hub](docs/remote-access.md) makes a session reachable from a phone or another computer,
-with no port forwarding or VPN:
-
-1. Make a key at [tamale-hub.com](https://tamale-hub.com). It's made in your browser.
-2. Run `export TAMALE_HUB_KEY=thk_…` on the machine, then `/remote` in tamale.
-3. Scan the key's QR code on your phone, and tap a session to drive it.
-
-**Anyone with the key can run commands on your machines**, so treat it like an SSH key.
-
-### Host your own hub
-
-You need a server with a public IP, a domain whose DNS has an API, and Caddy for TLS. The
-[self-hosting guide](docs/self-hosting.md) has every step; in short:
-
-1. Point `hub.example` and `*.hub.example` at the server.
-2. Run Caddy with a DNS plugin, for the wildcard certificate, proxying to `127.0.0.1:8787`.
-3. Build the hub and run it under systemd:
+1. **Get a key** at [tamale-hub.com](https://tamale-hub.com). It's made in your browser, and the
+   hub never sees it.
+2. **Set it** on each machine that runs tamale, then run `/remote` in tamale:
 
    ```sh
-   cargo build -p tamale-hub --release --locked
-   tamale-hub serve --public-url https://hub.example --data-dir /var/lib/tamale-hub
+   export TAMALE_HUB_KEY=thk_…
    ```
 
-4. Make a key, and point tamale at your hub with `export TAMALE_HUB_URL=wss://hub.example`:
+3. **Scan** the key's QR code on your phone (web or the [iOS app](docs/ios.md)) and tap a
+   session to view or drive it.
 
-   ```sh
-   tamale-hub key new mine --public-url https://hub.example --data-dir /var/lib/tamale-hub
-   ```
+> [!WARNING]
+> Anyone with the key can run commands on your machines. Treat it like an SSH key.
 
-## Usage
-
-```sh
-tamale                           # interactive TUI
-tamale -p "summarize src/"       # one-shot, non-interactive
-tamale -p "fix the tests" --yes  # one-shot, approve calls that would prompt
-tamale ls                        # list sessions running in the background
-tamale attach                    # go back to one
-tamale --continue                # go back to the latest session in this directory
-tamale --resume                  # pick a saved session to resume
-tamale --model claude-opus-5-5
-tamale --effort low              # less thorough, faster, cheaper
-tamale --config dev.toml         # add settings from a TOML file
-tamale --add-dir ../shared       # add another directory to the agent's scope
-```
-
-Sessions keep running when you leave: `Ctrl+C` during a turn detaches and the agent carries on
-([more](docs/sessions.md#background-sessions)). In the TUI, `/help` lists every command and key.
-`Esc` interrupts the agent, `/undo` reverts
-the last turn, `/diff` reviews your changes and `/web` opens a web UI.
+Want your own hub? See the [self-hosting guide](docs/self-hosting.md).
 
 ## Docs
 
@@ -100,4 +78,5 @@ the last turn, `/diff` reviews your changes and `/web` opens a web UI.
 | [Browser and web UI](docs/web.md) | `/browser`, `/web` and artifacts |
 | [Remote access](docs/remote-access.md) | Using tamale-hub, and what its encryption covers |
 | [Self-hosting](docs/self-hosting.md) | Running your own tamale-hub |
+| [iOS app](docs/ios.md) | The iPhone app |
 | [Development](docs/development.md) | Building, testing, benchmarks and the code layout |
