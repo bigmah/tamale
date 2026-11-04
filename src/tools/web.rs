@@ -1,8 +1,11 @@
 use std::collections::HashSet;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::OnceLock;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use reqwest::dns::{Addrs, Name, Resolve, Resolving};
+use reqwest::redirect::{Attempt, Policy};
 use reqwest::{Client, Response, Url, header};
 use rig_core::completion::ToolDefinition;
 use scraper::{Html, Selector};
@@ -47,6 +50,125 @@ pub(super) fn definitions() -> Vec<ToolDefinition> {
     ]
 }
 
+/// Whether nothing should fetch from `ip`: no web page lives at a link-local address, but clouds
+/// keep a machine's credentials there, and `web_fetch` runs without asking. Local servers
+/// stay reachable, since asking about `localhost:3000` is a fair thing to do.
+fn off_limits(ip: IpAddr) -> bool {
+    match ip.to_canonical() {
+        // Alibaba Cloud's metadata service isn't link-local.
+        IpAddr::V4(ip) => ip.is_link_local() || ip == Ipv4Addr::new(100, 100, 100, 200),
+        // AWS's over IPv6 isn't either.
+        IpAddr::V6(ip) => {
+            ip.is_unicast_link_local() || ip == Ipv6Addr::new(0xfd00, 0xec2, 0, 0, 0, 0, 0, 0x254)
+        }
+    }
+}
+
+/// The address `url` names, if it names one rather than a host to look up. The URL parser has
+/// already turned other spellings (`http://2852039166/`) into this one.
+fn literal_ip(url: &Url) -> Option<IpAddr> {
+    url.host_str()?
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .parse()
+        .ok()
+}
+
+/// Whether `url` says it's on this machine or its network. The address a name resolves to
+/// isn't considered: plenty of local names resolve to public addresses, and the other way round.
+fn is_local(url: &Url) -> bool {
+    match literal_ip(url).map(|ip| ip.to_canonical()) {
+        Some(IpAddr::V4(ip)) => {
+            let [a, b, ..] = ip.octets();
+            ip.is_loopback()
+                || ip.is_private()
+                || ip.is_link_local()
+                || ip.is_unspecified()
+                // Carrier-grade NAT, which is also where Tailscale puts machines.
+                || (a == 100 && (64..128).contains(&b))
+        }
+        Some(IpAddr::V6(ip)) => {
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_unique_local()
+                || ip.is_unicast_link_local()
+        }
+        None => {
+            let host = url.host_str().unwrap_or("").trim_end_matches('.');
+            let host = host.to_ascii_lowercase();
+            host == "localhost"
+                || [".localhost", ".local", ".internal", ".lan", ".home.arpa"]
+                    .iter()
+                    .any(|suffix| host.ends_with(suffix))
+        }
+    }
+}
+
+/// Why a fetch shouldn't go to `url`, if it shouldn't.
+fn refusal(url: &Url) -> Option<String> {
+    let ip = literal_ip(url).filter(|ip| off_limits(*ip))?;
+    Some(format!(
+        "web_fetch doesn't read link-local addresses like {ip}, where cloud providers keep \
+machines' credentials"
+    ))
+}
+
+/// Whether a page at `from` may send a fetch on to `to`. A page on the web doesn't get to
+/// choose something on this machine or its network, which the model would then read out.
+fn redirect_refusal(from: &Url, to: &Url) -> Option<String> {
+    refusal(to).or_else(|| {
+        (is_local(to) && !is_local(from)).then(|| {
+            format!(
+                "{from} redirected to {to}, on this machine or its network; fetch that \
+directly if it's what you want"
+            )
+        })
+    })
+}
+
+fn follow_redirect(attempt: Attempt, max: usize) -> reqwest::redirect::Action {
+    if attempt.previous().len() >= max {
+        return attempt.error("too many redirects");
+    }
+    let refused = match http_url(attempt.url().as_str()) {
+        Err(e) => Some(format!("redirected to {}: {e}", attempt.url())),
+        Ok(to) => attempt
+            .previous()
+            .last()
+            .and_then(|from| redirect_refusal(from, &to)),
+    };
+    match refused {
+        Some(why) => attempt.error(why),
+        None => attempt.follow(),
+    }
+}
+
+/// What can be connected to of the addresses a name resolved to.
+fn usable(addrs: impl Iterator<Item = SocketAddr>) -> Vec<SocketAddr> {
+    addrs.filter(|addr| !off_limits(addr.ip())).collect()
+}
+
+/// The system's resolver, without the addresses [`off_limits`] rules out, so a name can't lead
+/// where the address itself couldn't.
+struct Resolver;
+
+impl Resolve for Resolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        Box::pin(async move {
+            let found = tokio::net::lookup_host((name.as_str(), 0)).await?;
+            let addrs = usable(found);
+            if addrs.is_empty() {
+                return Err(format!(
+                    "{} only resolves to link-local addresses, which web_fetch doesn't read",
+                    name.as_str()
+                )
+                .into());
+            }
+            Ok(Box::new(addrs.into_iter()) as Addrs)
+        })
+    }
+}
+
 fn client(max_redirects: usize) -> Result<Client> {
     static SEARCH: OnceLock<Client> = OnceLock::new();
     static FETCH: OnceLock<Client> = OnceLock::new();
@@ -58,7 +180,12 @@ fn client(max_redirects: usize) -> Result<Client> {
         .user_agent(concat!("tamale/", env!("CARGO_PKG_VERSION")))
         .timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(10))
-        .redirect(reqwest::redirect::Policy::limited(max_redirects))
+        .redirect(if max_redirects == 0 {
+            Policy::limited(0)
+        } else {
+            Policy::custom(move |attempt| follow_redirect(attempt, max_redirects))
+        })
+        .dns_resolver(Resolver)
         .build()
         .context("building web client")?;
     let _ = cache.set(client.clone());
@@ -268,6 +395,9 @@ struct FetchArgs {
 pub(super) async fn fetch(args: Value) -> Result<String> {
     let a = serde_json::from_value::<FetchArgs>(args)?;
     let url = http_url(&a.url)?;
+    if let Some(why) = refusal(&url) {
+        bail!(why);
+    }
     let response = client(5)?.get(url).send().await.context("fetching URL")?;
     response.error_for_status_ref().context("fetch failed")?;
     let final_url = response.url().clone();

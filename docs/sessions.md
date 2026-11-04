@@ -5,7 +5,8 @@
 Every interactive conversation is saved as JSON in `~/.local/share/tamale/sessions/`
 (`$XDG_DATA_HOME/tamale/sessions`, or `TAMALE_SESSIONS_DIR`) after each prompt, tool step
 and on exit. It includes the full model history (so the agent picks up with all context) and
-the visible transcript.
+the visible transcript. Only you can read that directory, since whatever secrets went through
+a conversation are in it.
 
 - `/resume` opens a picker of sessions started in the current directory (most recent first,
   type to filter). `/resume <n>` resumes the nth most recent, `/resume <id>` a session by id

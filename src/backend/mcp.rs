@@ -2,8 +2,9 @@
 //! Claude Code or Codex run. Each call goes through the turn's permission checks and
 //! checkpoints, exactly like a call made by the API backend.
 //!
-//! The server listens on 127.0.0.1 for the length of one run. Its URL contains a random
-//! token, so other local processes can't call the tools.
+//! The server listens on 127.0.0.1 for the length of one run, and every request has to carry
+//! a random token, so other local processes can't call the tools. The CLI gets the token in its
+//! environment ([`TOKEN_ENV`]): on its command line, any user on this machine could read it.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,6 +25,10 @@ pub const SERVER: &str = "tamale";
 pub const TOOL_PREFIX: &str = "mcp__tamale__";
 /// Claude Code permission rule allowing every tool of the server.
 pub const SERVER_RULE: &str = "mcp__tamale";
+/// Where the CLI finds the token, which it sends as a bearer token.
+pub const TOKEN_ENV: &str = "TAMALE_MCP_TOKEN";
+/// The one path the server answers on.
+const PATH: &str = "/mcp";
 /// Requests larger than this are refused (tool arguments are small).
 const MAX_BODY: usize = 16 << 20;
 /// SSE comments sent while a tool runs, so long commands don't hit client idle timeouts.
@@ -54,6 +59,7 @@ impl Tools {
 /// A running server; dropping it stops the server and any calls in progress.
 pub struct Bridge {
     pub url: String,
+    pub token: String,
     task: JoinHandle<()>,
 }
 
@@ -68,9 +74,10 @@ impl Bridge {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .context("starting the tool server for the CLI backend")?;
-        let path = format!("/mcp/{}", token());
-        let url = format!("http://{}{path}", listener.local_addr()?);
+        let token = token()?;
+        let url = format!("http://{}{PATH}", listener.local_addr()?);
         let tools = Arc::new(tools);
+        let expected = Arc::new(format!("Bearer {token}"));
         let task = tokio::spawn(async move {
             // Connections live in the set, so aborting the server aborts them too.
             let mut conns = JoinSet::new();
@@ -78,33 +85,40 @@ impl Bridge {
                 tokio::select! {
                     accepted = listener.accept() => {
                         let Ok((stream, _)) = accepted else { continue };
-                        conns.spawn(serve(stream, tools.clone(), path.clone()));
+                        conns.spawn(serve(stream, tools.clone(), expected.clone()));
                     }
                     Some(_) = conns.join_next() => {}
                 }
             }
         });
-        Ok(Self { url, task })
+        Ok(Self { url, token, task })
     }
 
-    /// The `--mcp-config` value pointing Claude Code at this server.
+    /// The `--mcp-config` value pointing Claude Code at this server. Claude Code fills in
+    /// [`TOKEN_ENV`] itself, so the value holds nothing secret.
     pub fn config(&self) -> String {
-        json!({ "mcpServers": { SERVER: { "type": "http", "url": self.url } } }).to_string()
+        let authorization = format!("Bearer ${{{TOKEN_ENV}}}");
+        json!({ "mcpServers": { SERVER: {
+            "type": "http",
+            "url": self.url,
+            "headers": { "Authorization": authorization },
+        } } })
+        .to_string()
     }
 }
 
-/// 128 unguessable bits from the standard library's randomly keyed hasher.
-fn token() -> String {
-    use std::hash::BuildHasher;
-    let now = std::time::SystemTime::now();
-    (0..2u8)
-        .map(|i| format!("{:016x}", std::hash::RandomState::new().hash_one((i, now))))
-        .collect()
+/// 128 unguessable bits.
+fn token() -> Result<String> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes)
+        .map_err(|e| anyhow::anyhow!("no randomness for the tool server's token: {e}"))?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 struct Request {
     method: String,
     path: String,
+    authorization: String,
     body: Vec<u8>,
 }
 
@@ -118,6 +132,7 @@ async fn read_request(reader: &mut BufReader<TcpStream>) -> Result<Option<Reques
     let method = parts.next().unwrap_or_default().to_string();
     let path = parts.next().unwrap_or_default().to_string();
     let mut length = 0;
+    let mut authorization = String::new();
     loop {
         line.clear();
         if reader.read_line(&mut line).await? == 0 {
@@ -127,22 +142,29 @@ async fn read_request(reader: &mut BufReader<TcpStream>) -> Result<Option<Reques
         if header.is_empty() {
             break;
         }
-        if let Some((name, value)) = header.split_once(':')
-            && name.eq_ignore_ascii_case("content-length")
-        {
-            length = value.trim().parse().context("invalid Content-Length")?;
+        if let Some((name, value)) = header.split_once(':') {
+            if name.eq_ignore_ascii_case("content-length") {
+                length = value.trim().parse().context("invalid Content-Length")?;
+            } else if name.eq_ignore_ascii_case("authorization") {
+                authorization = value.trim().to_string();
+            }
         }
     }
     anyhow::ensure!(length <= MAX_BODY, "request body too large");
     let mut body = vec![0; length];
     reader.read_exact(&mut body).await?;
-    Ok(Some(Request { method, path, body }))
+    Ok(Some(Request {
+        method,
+        path,
+        authorization,
+        body,
+    }))
 }
 
-async fn serve(stream: TcpStream, tools: Arc<Tools>, path: String) {
+async fn serve(stream: TcpStream, tools: Arc<Tools>, expected: Arc<String>) {
     let mut reader = BufReader::new(stream);
     while let Ok(Some(request)) = read_request(&mut reader).await {
-        let keep_open = handle(&mut reader, request, &tools, &path).await;
+        let keep_open = handle(&mut reader, request, &tools, &expected).await;
         if !matches!(keep_open, Ok(true)) {
             break;
         }
@@ -154,11 +176,15 @@ async fn handle(
     reader: &mut BufReader<TcpStream>,
     request: Request,
     tools: &Tools,
-    path: &str,
+    expected: &str,
 ) -> Result<bool> {
     let stream = reader.get_mut();
-    if request.path != path {
+    if request.path != PATH {
         write_response(stream, "404 Not Found", None).await?;
+        return Ok(true);
+    }
+    if !crate::secure::same_secret(&request.authorization, expected) {
+        write_response(stream, "401 Unauthorized", None).await?;
         return Ok(true);
     }
     if request.method != "POST" {

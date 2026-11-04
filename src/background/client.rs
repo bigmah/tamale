@@ -106,13 +106,14 @@ fn server_lines(servers: &[Status]) -> Vec<String> {
             } else {
                 &s.title
             };
-            format!(
+            let line = format!(
                 "  {:<7} {} ({}{attached})  {}\n          {title}",
                 s.id,
                 s.state.label(),
                 crate::session::ago(s.since),
                 s.cwd.display(),
-            )
+            );
+            crate::secure::printable(&line).into_owned()
         })
         .collect()
 }
@@ -399,5 +400,35 @@ async fn run_login(login: LoginCommand) -> (bool, String) {
             }
             _ = tokio::signal::ctrl_c() => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::background::State;
+
+    #[test]
+    fn the_session_list_shows_escape_sequences_as_text() {
+        let lines = server_lines(&[Status {
+            id: 7,
+            cwd: "/tmp/\u{1b}[2Jrepo".into(),
+            session_id: "s".into(),
+            title: "hi\u{1b}]52;c;aGk=\u{7}".into(),
+            state: State::Idle,
+            attached: false,
+            since: 0,
+            sid: String::new(),
+        }]);
+        assert!(
+            !lines[0].contains('\u{1b}') && !lines[0].contains('\u{7}'),
+            "{:?}",
+            lines[0]
+        );
+        assert!(
+            lines[0].contains("/tmp/[2Jrepo") && lines[0].contains("hi]52;c;aGk="),
+            "{:?}",
+            lines[0]
+        );
     }
 }

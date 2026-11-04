@@ -61,7 +61,7 @@ final class IntegrationTests: XCTestCase {
 
         let model = SessionModel(channel: SessionChannel(hub: client, sid: setup.sid))
         model.start()
-        try await until("live") { model.connection == .live(encrypted: true) }
+        try await until("live") { model.connection == .live }
         try await until("entries") { model.entries.count >= 3 }
 
         let prompt = "hello \(cookies ? "cookies" : "bearer") \(Int.random(in: 0..<10000))"

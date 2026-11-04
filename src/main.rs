@@ -13,6 +13,7 @@ mod permissions;
 #[cfg(unix)]
 mod remote;
 mod screen;
+mod secure;
 mod session;
 mod tools;
 mod web;
@@ -44,6 +45,7 @@ fn main() -> Result<()> {
     if cli.server {
         background::redirect_stderr()?;
     }
+    session::make_storage_private();
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
@@ -102,6 +104,9 @@ async fn start(cli: cli::Cli) -> Result<()> {
         backend.login().await?;
     }
     if let Some(prompt) = cli.print_prompt {
+        for note in &settings.ignored {
+            eprintln!("{}", secure::printable(note));
+        }
         let permissions = permissions::Policy::new(&settings.permissions, workspace.cwd.clone());
         let ctx =
             agent::TurnCtx::new(permissions.shared(), None).with_subagent(backend::Subagent {
@@ -131,6 +136,7 @@ async fn start(cli: cli::Cli) -> Result<()> {
     };
     #[cfg(not(unix))]
     let screen = Screen::local(settings.ui.mouse)?;
+    let ignored = settings.ignored.clone();
     let (mut app, rx) = App::new_with_channel(backend, settings, workspace);
     app.load_prompt_history();
     app.preload_diff();
@@ -141,6 +147,9 @@ async fn start(cli: cli::Cli) -> Result<()> {
         },
         Some(cli::Resume::Pick) => app.resume_command(None),
         None => {}
+    }
+    for note in ignored {
+        app.on_web(Err(note));
     }
     #[cfg(unix)]
     app.mention_open_sessions();
@@ -166,16 +175,23 @@ async fn print_mode(
     yes: bool,
 ) -> Result<()> {
     use agent::AgentEvent;
-    use std::io::Write;
+    use secure::printable;
+    use std::io::{IsTerminal, Write};
 
     let (tx, mut rx) = mpsc::unbounded_channel();
     tokio::spawn(backend.run(turn, ctx, tx));
+    // Piped, the reply stays exactly as written.
+    let terminal = std::io::stdout().is_terminal();
 
     let mut failed = false;
     while let Some(ev) = rx.recv().await {
         match ev {
             AgentEvent::TextDelta(t) => {
-                print!("{t}");
+                if terminal {
+                    print!("{}", printable(&t));
+                } else {
+                    print!("{t}");
+                }
                 std::io::stdout().flush()?;
             }
             AgentEvent::ToolCall {
@@ -183,15 +199,18 @@ async fn print_mode(
                 summary,
                 description,
             } => eprintln!(
-                "\n⏺ {description}  ({name}: {})",
-                summary.lines().next().unwrap_or("")
+                "\n⏺ {}  ({}: {})",
+                printable(&description),
+                printable(&name),
+                printable(summary.lines().next().unwrap_or(""))
             ),
             AgentEvent::Retry {
                 attempt,
                 delay,
                 error,
             } => eprintln!(
-                "\n⟳ {error}; retrying in {:.1}s (attempt {attempt})",
+                "\n⟳ {}; retrying in {:.1}s (attempt {attempt})",
+                printable(&error),
                 delay.as_secs_f64()
             ),
             AgentEvent::Approve { name, reply, .. } => {
@@ -199,7 +218,8 @@ async fn print_mode(
                     permissions::Approval::Allow
                 } else {
                     eprintln!(
-                        "  denied: {name} needs approval (allow it in [permissions] or pass --yes)"
+                        "  denied: {} needs approval (allow it in [permissions] or pass --yes)",
+                        printable(&name)
                     );
                     permissions::Approval::Deny {
                         reason: Some(
@@ -212,9 +232,9 @@ async fn print_mode(
                 let _ = reply.send(answer);
             }
             AgentEvent::Compacting => eprintln!("\n⏺ compacting conversation…"),
-            AgentEvent::Continuing(reason) => eprintln!("\n⟳ {reason}"),
+            AgentEvent::Continuing(reason) => eprintln!("\n⟳ {}", printable(&reason)),
             AgentEvent::Error(e) => {
-                eprintln!("\nerror: {e}");
+                eprintln!("\nerror: {}", printable(&e));
                 failed = true;
             }
             AgentEvent::Done => break,

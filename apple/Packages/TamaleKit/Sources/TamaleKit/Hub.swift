@@ -84,6 +84,17 @@ public struct SessionList: Decodable, Equatable, Sendable {
     public var sessions: [HubSession]
 }
 
+extension SessionList {
+    enum CodingKeys: String, CodingKey { case keys, sessions }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        keys = try c.decode([HubKeyInfo].self, forKey: .keys)
+        // A sid goes into a hostname that gets the key's auth value, so it must be one.
+        sessions = try c.decode([HubSession].self, forKey: .sessions).filter { isSid($0.sid) }
+    }
+}
+
 public enum HubError: Error, Equatable, LocalizedError {
     /// The hub doesn't know this key (it was deleted, rotated or never registered).
     case unknownKey

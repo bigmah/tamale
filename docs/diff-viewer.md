@@ -15,6 +15,10 @@ highlighted.
   untracked files; before the first commit it compares with an empty tree.
 - `/diff <args>` passes the arguments to `git diff` instead, e.g. `/diff --staged`,
   `/diff main` or `/diff main...feature` (untracked files aren't included).
+- The diff loads on its own, so it runs nothing a repository's own git config names, which an
+  unpacked archive could. Filters that config defines stay off, so files they'd change (with
+  git-crypt, say) show as they are; ones from your global config, as git-lfs's usually are, still
+  work. Uncommitted changes inside submodules aren't shown.
 - The view refreshes after each tool result and when a turn ends, so it can stay
   open while the agent works; `r` refreshes by hand.
 

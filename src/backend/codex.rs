@@ -91,6 +91,7 @@ impl Codex {
 
     fn command(&self) -> Command {
         let mut cmd = Command::new(&self.program);
+        crate::secure::withhold_secrets(&mut cmd);
         if let Some(home) = &self.home {
             cmd.env("CODEX_HOME", home);
         }
@@ -565,6 +566,10 @@ backend.codex_path if it isn't on PATH",
             ("sandbox_mode", toml_string("read-only")),
             ("approval_policy", toml_string("never")),
             ("mcp_servers.tamale.url", toml_string(&bridge.url)),
+            (
+                "mcp_servers.tamale.bearer_token_env_var",
+                toml_string(mcp::TOKEN_ENV),
+            ),
             // tamale asks for approval itself, so Codex never prompts.
             (
                 "mcp_servers.tamale.default_tools_approval_mode",
@@ -593,6 +598,7 @@ backend.codex_path if it isn't on PATH",
         }
         // Read the prompt from stdin.
         cmd.arg("-");
+        cmd.env(mcp::TOKEN_ENV, &bridge.token);
         cmd
     }
 }

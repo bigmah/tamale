@@ -76,7 +76,7 @@ impl Recorder {
                 std::fs::create_dir_all(&self.dir)
                     .with_context(|| format!("creating {}", self.dir.display()))?;
                 let name = format!("{}.bin", self.manifest.files.len());
-                std::fs::write(self.dir.join(&name), bytes)
+                crate::secure::write_private(&self.dir.join(&name), bytes)
                     .with_context(|| format!("saving a checkpoint of {}", path.display()))?;
                 Some(name)
             }
@@ -104,7 +104,7 @@ impl Recorder {
             .with_context(|| format!("creating {}", self.dir.display()))?;
         let path = self.dir.join(MANIFEST);
         let tmp = self.dir.join(format!("{MANIFEST}.tmp"));
-        std::fs::write(&tmp, serde_json::to_vec(&self.manifest)?)?;
+        crate::secure::write_private(&tmp, serde_json::to_vec(&self.manifest)?)?;
         std::fs::rename(&tmp, &path).with_context(|| format!("writing {}", path.display()))
     }
 }

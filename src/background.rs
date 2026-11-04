@@ -138,10 +138,7 @@ pub fn dir() -> Result<PathBuf> {
 }
 
 fn ensure_private(dir: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
-        .with_context(|| format!("securing {}", dir.display()))
+    crate::secure::private_dir(dir).with_context(|| format!("securing {}", dir.display()))
 }
 
 fn socket_path(dir: &Path, id: u32) -> PathBuf {

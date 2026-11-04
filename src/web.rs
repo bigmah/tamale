@@ -113,7 +113,7 @@ fn save_artifact(dir: &std::path::Path, html: &str) -> std::io::Result<PathBuf> 
     let path = dir.join(artifact_file_name(html));
     if !path.exists() {
         std::fs::create_dir_all(dir)?;
-        std::fs::write(&path, html)?;
+        crate::secure::write_private(&path, html)?;
     }
     Ok(path)
 }
@@ -299,7 +299,7 @@ impl Shared {
         self.own_host(headers)
             && uri
                 .query()
-                .is_some_and(|q| q.split('&').any(|pair| pair == token))
+                .is_some_and(|q| q.split('&').any(|pair| crate::secure::same_secret(pair, &token)))
     }
 
     fn send_to(&self, id: u64, message: String) {
@@ -355,7 +355,8 @@ impl IntoResponse for Asset {
 }
 
 const PAGE_CSP: &str = "default-src 'self'; connect-src 'self'; img-src 'self' data:; \
-     style-src 'self'; script-src 'self'; frame-ancestors 'none'";
+     style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; \
+     form-action 'none'; frame-ancestors 'none'";
 
 /// Scripts run, but in an opaque origin that can't read this server's pages or open its
 /// socket, even if opened in a tab of its own.
@@ -372,6 +373,7 @@ fn asset(shared: &Shared, path: &str) -> Asset {
         let mut headers = vec![
             (header::CONTENT_TYPE, content_type),
             (header::CACHE_CONTROL, "no-store"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         ];
         headers.extend_from_slice(extra);
         Asset {

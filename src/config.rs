@@ -9,7 +9,7 @@ use serde::{Deserialize, Deserializer};
 
 use crate::agent::{self, Effort, Reasoning, Thinking};
 use crate::backend::{self, BackendSettings};
-use crate::permissions::PermissionSettings;
+use crate::permissions::{Mode, PermissionSettings};
 
 #[cfg(test)]
 mod tests;
@@ -26,6 +26,9 @@ pub struct Settings {
     pub permissions: PermissionSettings,
     #[serde(default)]
     pub hub: HubSettings,
+    /// What project files asked for and aren't allowed to set, to tell the user.
+    #[serde(skip)]
+    pub ignored: Vec<String>,
 }
 
 /// `[hub]`: a tamale-hub to make the session reachable through (`/remote`).
@@ -150,16 +153,20 @@ impl Settings {
 
     fn load_from(cwd: &Path, user_dir: Option<&Path>, explicit: Option<&Path>) -> Result<Self> {
         let mut layers: toml::Value = toml::from_str(DEFAULT_TOML)?;
+        let mut ignored = Vec::new();
         if let Some(dir) = user_dir {
-            read_layer(&mut layers, &dir.join("config.toml"), false)?;
+            read_layer(&mut layers, &dir.join("config.toml"), false, None)?;
         }
         for dir in project_dirs(cwd) {
-            read_layer(&mut layers, &dir.join("tamale.toml"), false)?;
+            let path = dir.join("tamale.toml");
+            read_layer(&mut layers, &path, false, Some(&mut ignored))?;
         }
         if let Some(path) = explicit {
-            read_layer(&mut layers, path, true)?;
+            read_layer(&mut layers, path, true, None)?;
         }
-        layers.try_into().context("resolving settings")
+        let mut settings: Self = layers.try_into().context("resolving settings")?;
+        settings.ignored = ignored;
+        Ok(settings)
     }
 
     /// Inject the environment lookup so tests don't mutate process-wide variables.
@@ -258,13 +265,32 @@ pub fn project_dirs(cwd: &Path) -> Vec<&Path> {
     ancestors[..=root].iter().rev().copied().collect()
 }
 
-fn read_layer(base: &mut toml::Value, path: &Path, required: bool) -> Result<()> {
+/// Merges the file at `path` into `base`. With `ignored` it's a project's file, which isn't
+/// trusted with everything (see [`restrict_project_layer`]); what it can't set is noted there.
+fn read_layer(
+    base: &mut toml::Value,
+    path: &Path,
+    required: bool,
+    ignored: Option<&mut Vec<String>>,
+) -> Result<()> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) if !required && error.kind() == ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error).with_context(|| format!("reading {}", path.display())),
     };
-    let overlay = toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    let mut overlay =
+        toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    if let Some(ignored) = ignored {
+        let refused = restrict_project_layer(&mut overlay, base);
+        if !refused.is_empty() {
+            ignored.push(format!(
+                "Ignored {} in {}: a project's tamale.toml can't set that. Your own config.toml \
+or --config can.",
+                refused.join(", "),
+                path.display()
+            ));
+        }
+    }
     merge(base, overlay);
     // Validate each file's schema so typos and type errors identify their source.
     let settings: Settings = base
@@ -275,6 +301,63 @@ fn read_layer(base: &mut toml::Value, path: &Path, required: bool) -> Result<()>
         .validate()
         .with_context(|| format!("invalid settings in {}", path.display()))?;
     Ok(())
+}
+
+/// The `[backend]` settings that say what tamale runs: the CLIs, and the directories those CLIs
+/// load their own settings, hooks and MCP servers from.
+const BACKEND_PROGRAMS: [&str; 4] = [
+    "claude_path",
+    "claude_config_dirs",
+    "codex_path",
+    "codex_homes",
+];
+
+/// Takes out of a project's file what a repository doesn't get to decide, and returns what it
+/// took. A repository is someone else's code until you've read it, and starting tamale in one
+/// mustn't run a program it chose (`backend`), hand this session and the key's auth value to
+/// a hub it chose (`hub`), or skip the approvals you asked for (`permissions`). It can still
+/// ask for more caution: a stricter mode, and deny rules.
+fn restrict_project_layer(overlay: &mut toml::Value, base: &toml::Value) -> Vec<String> {
+    let mut refused = Vec::new();
+    let Some(file) = overlay.as_table_mut() else {
+        return refused;
+    };
+    if let Some(hub) = file.remove("hub") {
+        match hub.as_table() {
+            Some(table) => refused.extend(table.keys().map(|key| format!("hub.{key}"))),
+            None => refused.push("hub".to_string()),
+        }
+    }
+    if let Some(backend) = file.get_mut("backend").and_then(toml::Value::as_table_mut) {
+        for key in BACKEND_PROGRAMS {
+            if backend.remove(key).is_some() {
+                refused.push(format!("backend.{key}"));
+            }
+        }
+    }
+    if let Some(permissions) = file
+        .get_mut("permissions")
+        .and_then(toml::Value::as_table_mut)
+    {
+        if permissions.remove("allow").is_some() {
+            refused.push("permissions.allow".to_string());
+        }
+        let mode = |value: Option<&toml::Value>| value?.as_str().and_then(Mode::parse);
+        // An unknown mode is left for validation to report.
+        if let (Some(asked), Some(current)) = (
+            mode(permissions.get("mode")),
+            mode(base.get("permissions").and_then(|p| p.get("mode"))),
+        ) && asked.looser_than(current)
+        {
+            permissions.remove("mode");
+            refused.push(format!(
+                "permissions.mode = \"{}\" (you use {})",
+                asked.as_str(),
+                current.as_str()
+            ));
+        }
+    }
+    refused
 }
 
 fn merge(base: &mut toml::Value, overlay: toml::Value) {

@@ -19,8 +19,8 @@
 //! checks that guard the cookies, and the socket needs no ticket round trip.
 
 use std::collections::{HashMap, HashSet};
-use std::net::{IpAddr, SocketAddr};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -35,7 +35,7 @@ use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tamale_hub_protocol::{self as protocol, Label, ToAgent, ToHub, close};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot};
 use tower::Layer;
 
 use crate::state::{self, State as Tokens, Store};
@@ -54,6 +54,15 @@ const SESSION_COOKIE_LIFE: u64 = 30 * 24 * 3600;
 const VIEW_COOKIE_LIFE: u64 = 34_560_000;
 const MAX_CLIENTS: usize = 16;
 const MAX_SESSIONS_PER_KEY: usize = 64;
+/// Tickets a key may have waiting to be used; each session's page needs just one.
+const MAX_TICKETS_PER_KEY: usize = 64;
+/// Bytes that may wait to be written to one socket. A reader that stops reading is cut off,
+/// rather than growing the hub until the machine, which it may share with other sites, runs
+/// out of memory. Anyone can make a key, and with it both ends of a socket.
+const MAX_QUEUED: usize = 128 << 20;
+/// How many sockets' worth may wait in all.
+const QUEUED_SOCKETS: usize = 4;
+const _: () = assert!(MAX_QUEUED >= protocol::MAX_AGENT_FRAME);
 const GET_TIMEOUT: Duration = Duration::from_secs(30);
 /// Auth failures an IP may have per window before it gets 429s.
 const MAX_FAILURES: u32 = 30;
@@ -145,9 +154,54 @@ impl Public {
     }
 }
 
+/// The bytes waiting to be written to one socket, which also count towards the whole hub's.
+struct Backlog {
+    own: AtomicUsize,
+    total: Arc<AtomicUsize>,
+    limit: usize,
+    /// Told when the socket is too far behind, and should end.
+    over: Notify,
+}
+
+impl Backlog {
+    fn new(total: Arc<AtomicUsize>, limit: usize) -> Arc<Self> {
+        Arc::new(Self {
+            own: AtomicUsize::new(0),
+            total,
+            limit,
+            over: Notify::new(),
+        })
+    }
+
+    /// Makes room for `len` more bytes; false, and they shouldn't be queued, if there isn't any.
+    fn add(&self, len: usize) -> bool {
+        let own = self.own.fetch_add(len, Ordering::Relaxed) + len;
+        let total = self.total.fetch_add(len, Ordering::Relaxed) + len;
+        if own > self.limit || total > self.limit * QUEUED_SOCKETS {
+            self.sent(len);
+            self.over.notify_one();
+            return false;
+        }
+        true
+    }
+
+    fn sent(&self, len: usize) {
+        self.own.fetch_sub(len, Ordering::Relaxed);
+        self.total.fetch_sub(len, Ordering::Relaxed);
+    }
+}
+
+impl Drop for Backlog {
+    /// What was still waiting when the socket went.
+    fn drop(&mut self) {
+        self.total.fetch_sub(*self.own.get_mut(), Ordering::Relaxed);
+    }
+}
+
 /// A browser tab on a session.
 struct Client {
     tx: mpsc::UnboundedSender<Out>,
+    backlog: Arc<Backlog>,
 }
 
 enum Out {
@@ -173,7 +227,7 @@ struct Session {
     /// Unix seconds.
     last_activity: u64,
     /// The connected agent, `None` while offline.
-    agent: Option<mpsc::UnboundedSender<AgentOut>>,
+    agent: Option<AgentLink>,
     /// Which agent connection is current, so a replaced one doesn't clean up after the
     /// new one.
     generation: u64,
@@ -185,6 +239,36 @@ struct Session {
 enum AgentOut {
     Frame(ToAgent),
     Close(u16, String),
+}
+
+impl AgentOut {
+    /// What it counts for in a [`Backlog`]. The rest of a frame is small, but not nothing.
+    fn size(&self) -> usize {
+        match self {
+            Self::Frame(ToAgent::Msg { data, .. }) => data.len() + 64,
+            Self::Frame(ToAgent::Get { path, .. }) => path.len() + 64,
+            Self::Frame(_) => 64,
+            Self::Close(..) => 0,
+        }
+    }
+}
+
+/// The way to a connected agent.
+#[derive(Clone)]
+struct AgentLink {
+    tx: mpsc::UnboundedSender<AgentOut>,
+    backlog: Arc<Backlog>,
+}
+
+impl AgentLink {
+    /// An error if the agent has gone, or is too far behind and is about to.
+    fn send(&self, out: AgentOut) -> Result<(), ()> {
+        let size = out.size();
+        if !self.backlog.add(size) {
+            return Err(());
+        }
+        self.tx.send(out).map_err(|_| ())
+    }
 }
 
 struct Got {
@@ -214,6 +298,9 @@ pub struct Hub {
     apple_app_id: std::sync::OnceLock<String>,
     started: Instant,
     next: AtomicU64,
+    /// Bytes waiting to be written to any socket, and how many one may have ([`MAX_QUEUED`]).
+    queued: Arc<AtomicUsize>,
+    max_queued: usize,
 }
 
 impl Hub {
@@ -232,6 +319,8 @@ impl Hub {
             apple_app_id: std::sync::OnceLock::new(),
             started: Instant::now(),
             next: AtomicU64::new(1),
+            queued: Arc::new(AtomicUsize::new(0)),
+            max_queued: MAX_QUEUED,
         }))
     }
 
@@ -278,7 +367,7 @@ impl Hub {
     /// Notes an auth failure from `ip`.
     fn fail(&self, ip: IpAddr) {
         let mut failures = self.failures.lock().unwrap();
-        let entry = failures.entry(ip).or_insert((0, Instant::now()));
+        let entry = failures.entry(limit_bucket(ip)).or_insert((0, Instant::now()));
         if entry.1.elapsed() > FAILURE_WINDOW {
             *entry = (0, Instant::now());
         }
@@ -289,7 +378,7 @@ impl Hub {
         self.failures
             .lock()
             .unwrap()
-            .get(&ip)
+            .get(&limit_bucket(ip))
             .is_some_and(|(n, since)| *n >= MAX_FAILURES && since.elapsed() <= FAILURE_WINDOW)
     }
 
@@ -466,6 +555,18 @@ fn client_ip(peer: SocketAddr, headers: &HeaderMap) -> IpAddr {
     peer.ip()
 }
 
+/// Who a rate limit counts `ip` as. One IPv6 customer usually has a whole /64 to choose
+/// addresses from, so the limits go by that; an IPv4 address in IPv6 clothing is itself.
+fn limit_bucket(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V6(ip) => {
+            let network = u128::from(ip) & (u128::MAX << 64);
+            IpAddr::V6(Ipv6Addr::from(network))
+        }
+        ip => ip,
+    }
+}
+
 /// The value of an `Authorization: Bearer` header, if there is one.
 fn bearer_value(headers: &HeaderMap) -> Option<&str> {
     headers
@@ -506,9 +607,11 @@ fn rewrite(public: &Public, mut request: Request) -> Request {
         Some(q) => format!("{target}?{q}"),
         None => target,
     };
-    if let Ok(uri) = target.parse::<Uri>() {
-        *request.uri_mut() = uri;
-    }
+    // A request can be just short enough to parse with its own path and too long with the
+    // prefix. It mustn't then go on to be routed by the path it came with.
+    *request.uri_mut() = target
+        .parse::<Uri>()
+        .unwrap_or_else(|_| Uri::from_static("/x/none"));
     request
 }
 
@@ -605,13 +708,27 @@ pub async fn run(hub: Arc<Hub>, listener: tokio::net::TcpListener) -> Result<()>
         .fallback(|| async { (StatusCode::NOT_FOUND, "Not found.") })
         .with_state(hub.clone());
     let public = hub.public.clone();
+    let secure = hub.public.secure;
     let app = tower::util::MapRequestLayer::new(move |r| rewrite(&public, r)).layer(router);
+    let app = tower::util::MapResponseLayer::new(move |r| https_only(secure, r)).layer(app);
     axum::serve(
         listener,
         ServiceExt::<Request>::into_make_service_with_connect_info::<SocketAddr>(app),
     )
     .await?;
     Ok(())
+}
+
+/// Tells browsers that have seen the hub over https not to try it any other way. Each host says
+/// so for itself, so this says nothing about other sites under a self-hosted hub's domain.
+fn https_only(secure: bool, mut response: Response) -> Response {
+    if secure {
+        response.headers_mut().insert(
+            header::STRICT_TRANSPORT_SECURITY,
+            HeaderValue::from_static("max-age=31536000"),
+        );
+    }
+    response
 }
 
 fn asset(content_type: &'static str, body: &'static str) -> Response {
@@ -636,6 +753,15 @@ fn guard(mut response: Response) -> Response {
         (
             header::CONTENT_SECURITY_POLICY,
             "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+        ),
+        // A session's page is on the same site, so these keep it to its own origin too.
+        (
+            header::HeaderName::from_static("cross-origin-opener-policy"),
+            "same-origin",
+        ),
+        (
+            header::HeaderName::from_static("cross-origin-resource-policy"),
+            "same-origin",
         ),
     ] {
         headers.insert(name, HeaderValue::from_static(value));
@@ -885,7 +1011,7 @@ async fn api_key_new(
     }
     {
         let mut signups = hub.signups.lock().unwrap();
-        let times = signups.entry(ip).or_default();
+        let times = signups.entry(limit_bucket(ip)).or_default();
         times.retain(|t| t.elapsed() < SIGNUP_WINDOW);
         if times.len() >= SIGNUPS_PER_IP {
             return error(
@@ -1085,20 +1211,38 @@ async fn api_ticket(
         return error(StatusCode::INTERNAL_SERVER_ERROR, "No randomness.");
     };
     let ticket = state::hex(&bytes);
-    hub.tickets.lock().unwrap().insert(
-        state::hash(&ticket),
-        Ticket {
-            sid: request.sid.clone(),
-            auth_hash: key.auth_hash.clone(),
-            expires: Instant::now() + TICKET_LIFE,
-        },
-    );
+    {
+        let mut tickets = hub.tickets.lock().unwrap();
+        let now = Instant::now();
+        tickets.retain(|_, t| t.expires > now);
+        let waiting = tickets
+            .values()
+            .filter(|t| t.auth_hash == key.auth_hash)
+            .count();
+        if waiting >= MAX_TICKETS_PER_KEY {
+            return error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too many sessions opening at once; try again in a minute.",
+            );
+        }
+        tickets.insert(
+            state::hash(&ticket),
+            Ticket {
+                sid: request.sid.clone(),
+                auth_hash: key.auth_hash.clone(),
+                expires: now + TICKET_LIFE,
+            },
+        );
+    }
     hub.touch(&key.name);
     guard(
         Json(json!({
             "url": format!("{}/__hub/auth?ticket={ticket}", hub.public.session_origin(&request.sid)),
             "mid": mid,
             "e2e": e2e,
+            // Which key the session is under. Its `mid` is only what it says of itself, and
+            // the page mustn't hand one key's secret to a session under another.
+            "id": key_id(&key),
         }))
         .into_response(),
     )
@@ -1263,11 +1407,11 @@ async fn tunnel(
             return offline_page();
         }
     };
-    let mut response = (
-        StatusCode::from_u16(got.status).unwrap_or(StatusCode::BAD_GATEWAY),
-        got.body,
-    )
-        .into_response();
+    let status = StatusCode::from_u16(got.status)
+        .ok()
+        .filter(|status| !status.is_informational())
+        .unwrap_or(StatusCode::BAD_GATEWAY);
+    let mut response = (status, got.body).into_response();
     let out = response.headers_mut();
     for (name, value) in got.headers {
         let name = name.to_ascii_lowercase();
@@ -1379,6 +1523,7 @@ async fn session_socket(
 async fn browser(hub: Arc<Hub>, sid: String, ws: WebSocket) {
     let c = hub.next();
     let (tx, mut rx) = mpsc::unbounded_channel();
+    let backlog = Backlog::new(hub.queued.clone(), hub.max_queued);
     let agent = {
         let mut sessions = hub.sessions.lock().unwrap();
         let Some(session) = sessions.get_mut(&sid) else {
@@ -1387,16 +1532,26 @@ async fn browser(hub: Arc<Hub>, sid: String, ws: WebSocket) {
         let Some(agent) = session.agent.clone() else {
             return;
         };
-        session.clients.insert(c, Client { tx });
+        session.clients.insert(
+            c,
+            Client {
+                tx,
+                backlog: backlog.clone(),
+            },
+        );
         session.last_activity = state::now();
         agent
     };
     let _ = agent.send(AgentOut::Frame(ToAgent::Open { c }));
     let (mut sink, mut stream) = ws.split();
+    let writing = backlog.clone();
     let writer = tokio::spawn(async move {
         while let Some(out) = rx.recv().await {
-            let message = match out {
-                Out::Text(text) => Message::Text(text.into()),
+            let (message, size) = match out {
+                Out::Text(text) => {
+                    let size = text.len();
+                    (Message::Text(text.into()), size)
+                }
                 Out::Close(code, reason) => {
                     let _ = sink
                         .send(Message::Close(Some(CloseFrame {
@@ -1410,19 +1565,27 @@ async fn browser(hub: Arc<Hub>, sid: String, ws: WebSocket) {
             if sink.send(message).await.is_err() {
                 return;
             }
+            writing.sent(size);
         }
         let _ = sink.close().await;
     });
-    while let Some(Ok(message)) = stream.next().await {
+    loop {
+        let message = tokio::select! {
+            message = stream.next() => message,
+            () = backlog.over.notified() => break,
+        };
         match message {
-            Message::Text(text) => {
-                let _ = agent.send(AgentOut::Frame(ToAgent::Msg {
+            Some(Ok(Message::Text(text))) => {
+                let frame = AgentOut::Frame(ToAgent::Msg {
                     c,
                     data: text.to_string(),
-                }));
+                });
+                if agent.send(frame).is_err() {
+                    break;
+                }
             }
-            Message::Close(_) => break,
-            _ => {}
+            Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+            Some(Ok(_)) => {}
         }
     }
     let removed = hub
@@ -1510,8 +1673,17 @@ async fn agent_socket(hub: Arc<Hub>, key: state::Key, ip: IpAddr, ws: WebSocket)
             .await;
         return;
     }
+    // The hub keeps these for as long as the session lasts.
+    if [&label.host, &label.cwd, &label.model]
+        .iter()
+        .any(|text| text.len() > protocol::MAX_SEALED)
+    {
+        let _ = sink.send(reject(close::BAD_HELLO, "label too long")).await;
+        return;
+    }
     let generation = hub.next();
     let (tx, mut rx) = mpsc::unbounded_channel();
+    let backlog = Backlog::new(hub.queued.clone(), hub.max_queued);
     let refused = {
         let mut sessions = hub.sessions.lock().unwrap();
         let taken = sessions.get(&sid).is_some_and(|s| s.key != key.name);
@@ -1555,7 +1727,10 @@ async fn agent_socket(hub: Arc<Hub>, key: state::Key, ip: IpAddr, ws: WebSocket)
                     .send(Out::Close(1012, "tamale reconnected".into()));
             }
             session.pending.clear();
-            session.agent = Some(tx);
+            session.agent = Some(AgentLink {
+                tx,
+                backlog: backlog.clone(),
+            });
             session.generation = generation;
             session.offline_since = None;
             session.label = label;
@@ -1588,30 +1763,40 @@ async fn agent_socket(hub: Arc<Hub>, key: state::Key, ip: IpAddr, ws: WebSocket)
     if sink.send(Message::Text(welcome.into())).await.is_err() {
         return;
     }
+    let writing = backlog.clone();
     let writer = tokio::spawn(async move {
         let mut ping = tokio::time::interval(Duration::from_secs(30));
         ping.tick().await;
         loop {
-            let message = tokio::select! {
-                out = rx.recv() => match out {
-                    Some(AgentOut::Frame(frame)) => Message::Text(serde_json::to_string(&frame).unwrap_or_default().into()),
-                    Some(AgentOut::Close(code, reason)) => {
-                        let _ = sink.send(Message::Close(Some(CloseFrame { code, reason: reason.into() }))).await;
-                        return;
+            let (message, size) = tokio::select! {
+                out = rx.recv() => {
+                    let size = out.as_ref().map_or(0, AgentOut::size);
+                    match out {
+                        Some(AgentOut::Frame(frame)) => (Message::Text(serde_json::to_string(&frame).unwrap_or_default().into()), size),
+                        Some(AgentOut::Close(code, reason)) => {
+                            let _ = sink.send(Message::Close(Some(CloseFrame { code, reason: reason.into() }))).await;
+                            return;
+                        }
+                        None => return,
                     }
-                    None => return,
-                },
-                _ = ping.tick() => Message::Ping(Vec::new().into()),
+                }
+                _ = ping.tick() => (Message::Ping(Vec::new().into()), 0),
             };
             if sink.send(message).await.is_err() {
                 return;
             }
+            writing.sent(size);
         }
     });
-    // Anything at all (pongs included) within 75 s, or the agent counts as gone.
-    while let Ok(Some(Ok(message))) =
-        tokio::time::timeout(Duration::from_secs(75), stream.next()).await
-    {
+    loop {
+        let next = tokio::select! {
+            // Anything at all (pongs included) within 75 s, or the agent counts as gone.
+            next = tokio::time::timeout(Duration::from_secs(75), stream.next()) => next,
+            () = backlog.over.notified() => break,
+        };
+        let Ok(Some(Ok(message))) = next else {
+            break;
+        };
         let Message::Text(text) = message else {
             if matches!(message, Message::Close(_)) {
                 break;
@@ -1634,7 +1819,9 @@ async fn agent_socket(hub: Arc<Hub>, key: state::Key, ip: IpAddr, ws: WebSocket)
         };
         match frame {
             ToHub::Msg { c, data } => {
-                if let Some(client) = session.clients.get(&c) {
+                if let Some(client) = session.clients.get(&c)
+                    && client.backlog.add(data.len())
+                {
                     let _ = client.tx.send(Out::Text(data));
                 }
             }
@@ -1666,9 +1853,11 @@ async fn agent_socket(hub: Arc<Hub>, key: state::Key, ip: IpAddr, ws: WebSocket)
             } => {
                 session.busy = busy;
                 session.approval = approval;
-                session.title = title;
+                if title.len() <= protocol::MAX_SEALED {
+                    session.title = title;
+                }
                 session.sealed_status = sealed.filter(|s| s.len() <= protocol::MAX_SEALED);
-                if !model.is_empty() {
+                if !model.is_empty() && model.len() <= protocol::MAX_SEALED {
                     session.label.model = model;
                 }
                 session.last_activity = state::now();
@@ -1773,6 +1962,75 @@ mod tests {
         );
     }
 
+    #[test]
+    fn rate_limits_go_by_the_network_not_the_address() {
+        let ip = |text: &str| text.parse::<IpAddr>().unwrap();
+        // Anywhere in a /64 is one customer; the next /64 is another.
+        assert_eq!(limit_bucket(ip("2001:db8:1:2:aaaa::1")), ip("2001:db8:1:2::"));
+        assert_eq!(limit_bucket(ip("2001:db8:1:2:ffff:ffff:ffff:ffff")), ip("2001:db8:1:2::"));
+        assert_ne!(limit_bucket(ip("2001:db8:1:3::1")), ip("2001:db8:1:2::"));
+        // IPv4 is itself, however it arrives.
+        assert_eq!(limit_bucket(ip("192.0.2.7")), ip("192.0.2.7"));
+        assert_eq!(limit_bucket(ip("::ffff:192.0.2.7")), ip("192.0.2.7"));
+    }
+
+    #[test]
+    fn a_request_too_long_to_rewrite_isnt_routed_by_its_own_path() {
+        let public = Public::parse("https://hub.example", false).unwrap();
+        // The longest URI there is, whose rewritten form won't parse.
+        let query = "a".repeat(65534 - "/s/x/ws?".len());
+        let request = Request::builder()
+            .uri(format!("/s/x/ws?{query}"))
+            .header(header::HOST, "hub.example")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(rewrite(&public, request).uri().path(), "/x/none");
+
+        let request = Request::builder()
+            .uri("/s/x/ws?a=1")
+            .header(header::HOST, "hub.example")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let rewritten = rewrite(&public, request);
+        assert_eq!(rewritten.uri().path(), "/d/s/x/ws");
+        assert_eq!(rewritten.uri().query(), Some("a=1"));
+    }
+
+    #[test]
+    fn only_https_hubs_ask_browsers_to_stay_on_https() {
+        let header = |secure| {
+            https_only(secure, StatusCode::OK.into_response())
+                .headers()
+                .get(header::STRICT_TRANSPORT_SECURITY)
+                .cloned()
+        };
+        assert_eq!(header(false), None);
+        assert_eq!(header(true).unwrap(), "max-age=31536000");
+    }
+
+    #[test]
+    fn a_backlog_refuses_what_wont_fit_and_gives_it_all_back() {
+        let total = Arc::new(AtomicUsize::new(0));
+        let one = Backlog::new(total.clone(), 100);
+        let two = Backlog::new(total.clone(), 100);
+        assert!(one.add(100));
+        assert!(!one.add(1), "over this socket's limit");
+        assert_eq!(total.load(Ordering::Relaxed), 100, "what didn't fit isn't counted");
+        one.sent(50);
+        assert!(one.add(50));
+        assert!(two.add(100));
+
+        // The hub's limit applies however many sockets it's spread over.
+        let others: Vec<_> = (0..2).map(|_| Backlog::new(total.clone(), 100)).collect();
+        assert!(others[0].add(100) && others[1].add(100));
+        assert_eq!(total.load(Ordering::Relaxed), 100 * QUEUED_SOCKETS);
+        let last = Backlog::new(total.clone(), 100);
+        assert!(!last.add(1), "over the hub's limit");
+
+        drop((one, two, others, last));
+        assert_eq!(total.load(Ordering::Relaxed), 0, "what was waiting goes with its socket");
+    }
+
     mod end_to_end {
         use super::super::*;
         use crate::state::{Key, Store, new_key};
@@ -1793,6 +2051,11 @@ mod tests {
         }
 
         async fn start() -> Setup {
+            start_with(MAX_QUEUED).await
+        }
+
+        /// With `max_queued` bytes allowed to wait for each socket.
+        async fn start_with(max_queued: usize) -> Setup {
             let dir = std::env::temp_dir().join(format!(
                 "tamale-hub-e2e-{}",
                 state::hex(&state::random::<8>().unwrap())
@@ -1809,7 +2072,7 @@ mod tests {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let port = listener.local_addr().unwrap().port();
             let public = Public::parse(&format!("http://hub.localhost:{port}"), true).unwrap();
-            let hub = Hub::new(
+            let mut hub = Hub::new(
                 public,
                 Store {
                     dir: store.dir.clone(),
@@ -1820,6 +2083,7 @@ mod tests {
                 },
             )
             .unwrap();
+            Arc::get_mut(&mut hub).unwrap().max_queued = max_queued;
             tokio::spawn(run(hub.clone(), listener));
             Setup {
                 port,
@@ -2795,6 +3059,218 @@ mod tests {
             assert!(csp.contains("frame-ancestors 'self'"), "{csp}");
             assert!(csp.contains(&format!("frame-src 'self' http://*.hub.localhost:{}", setup.port)), "{csp}");
             assert!(r.text().await.unwrap().contains("tamale-hub"));
+            let _ = std::fs::remove_dir_all(&setup.store.dir);
+        }
+
+        /// Asks `check` every so often for a few seconds, until it's true.
+        async fn until(what: &str, check: impl Fn() -> bool) {
+            for _ in 0..200 {
+                if check() {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            panic!("never happened: {what}");
+        }
+
+        /// A browser's socket, by the native route, with a key.
+        async fn tab(port: u16, sid: &str, auth: &str) -> Ws {
+            ws(
+                port,
+                "/ws",
+                &[
+                    ("host", format!("{sid}.hub.localhost:{port}")),
+                    ("authorization", format!("Bearer {auth}")),
+                ],
+            )
+            .await
+            .unwrap()
+        }
+
+        #[tokio::test]
+        async fn a_tab_that_stops_reading_is_cut_off_rather_than_filling_the_hub() {
+            let setup = start_with(1 << 20).await;
+            let sid = "1".repeat(32);
+            let mut agent = agent_hello(setup.port, &setup.auth, &sid).await;
+            assert!(next_text(&mut agent).await.contains("\"welcome\""));
+            // Never read from again.
+            let _stuck = tab(setup.port, &sid, &setup.auth).await;
+            let opened = next_text(&mut agent).await;
+            let Ok(ToAgent::Open { c }) = serde_json::from_str(&opened) else {
+                panic!("{opened}");
+            };
+
+            // Far more than the limit, and than the socket's own buffers take.
+            let piece = "x".repeat(1 << 20);
+            let frame = serde_json::to_string(&ToHub::Msg { c, data: piece }).unwrap();
+            let pump = async {
+                for _ in 0..512 {
+                    if agent
+                        .send(tungstenite::Message::Text(frame.clone().into()))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            };
+            tokio::time::timeout(Duration::from_secs(60), pump)
+                .await
+                .expect("the agent kept being read");
+            let hub = setup.hub.clone();
+            until("the tab being dropped", || {
+                hub.sessions
+                    .lock()
+                    .unwrap()
+                    .get(&sid)
+                    .is_some_and(|s| s.clients.is_empty())
+            })
+            .await;
+            let closed = serde_json::to_string(&ToAgent::Close { c }).unwrap();
+            assert_eq!(next_text(&mut agent).await, closed, "tamale is told it's gone");
+            until("what was queued being let go", || {
+                hub.queued.load(Ordering::Relaxed) == 0
+            })
+            .await;
+            let _ = std::fs::remove_dir_all(&setup.store.dir);
+        }
+
+        #[tokio::test]
+        async fn an_agent_that_stops_reading_is_cut_off_rather_than_filling_the_hub() {
+            let setup = start_with(1 << 20).await;
+            let sid = "2".repeat(32);
+            let mut agent = agent_hello(setup.port, &setup.auth, &sid).await;
+            assert!(next_text(&mut agent).await.contains("\"welcome\""));
+            let mut browser = tab(setup.port, &sid, &setup.auth).await;
+            // The agent reads nothing from here on, but a tab keeps sending.
+            let piece = "x".repeat(1 << 20);
+            let pump = async {
+                for _ in 0..512 {
+                    if browser
+                        .send(tungstenite::Message::Text(piece.clone().into()))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            };
+            tokio::time::timeout(Duration::from_secs(60), pump)
+                .await
+                .expect("the tab kept being read");
+            let hub = setup.hub.clone();
+            until("the agent being dropped", || {
+                hub.sessions
+                    .lock()
+                    .unwrap()
+                    .get(&sid)
+                    .is_some_and(|s| s.agent.is_none())
+            })
+            .await;
+            until("what was queued being let go", || {
+                hub.queued.load(Ordering::Relaxed) == 0
+            })
+            .await;
+            drop(agent);
+            let _ = std::fs::remove_dir_all(&setup.store.dir);
+        }
+
+        #[tokio::test]
+        async fn labels_and_titles_the_hub_keeps_are_bounded() {
+            let setup = start().await;
+            let port = setup.port;
+            let auth = [
+                ("host", format!("hub.localhost:{port}")),
+                ("authorization", format!("Bearer {}", setup.auth)),
+            ];
+            let say = |frame: &ToHub| {
+                tungstenite::Message::Text(serde_json::to_string(frame).unwrap().into())
+            };
+            let long = "x".repeat(protocol::MAX_SEALED + 1);
+            let sid = "3".repeat(32);
+            let hello = |label| ToHub::Hello {
+                proto: protocol::PROTO,
+                sid: sid.clone(),
+                label,
+                mid: None,
+                e2e: false,
+                sealed: None,
+            };
+            for label in [
+                Label { host: long.clone(), ..Label::default() },
+                Label { cwd: long.clone(), ..Label::default() },
+                Label { model: long.clone(), ..Label::default() },
+            ] {
+                let mut agent = ws(port, "/agent", &auth).await.unwrap();
+                agent.send(say(&hello(label))).await.unwrap();
+                assert_eq!(close_code(&mut agent).await, close::BAD_HELLO);
+            }
+
+            let mut agent = ws(port, "/agent", &auth).await.unwrap();
+            agent.send(say(&hello(Label::default()))).await.unwrap();
+            assert!(next_text(&mut agent).await.contains("\"welcome\""));
+            let status = |title: &str, model: &str| ToHub::Status {
+                busy: false,
+                approval: false,
+                title: title.into(),
+                model: model.into(),
+                sealed: None,
+            };
+            agent.send(say(&status("short", "m"))).await.unwrap();
+            agent.send(say(&status(&long, &long))).await.unwrap();
+            agent.send(say(&status("t", "last"))).await.unwrap();
+            let hub = setup.hub.clone();
+            let shown = || {
+                let sessions = hub.sessions.lock().unwrap();
+                let session = sessions.get(&sid).unwrap();
+                (session.title.clone(), session.label.model.clone())
+            };
+            until("the last status", || shown().1 == "last").await;
+            assert_eq!(shown().0, "t");
+            let _ = std::fs::remove_dir_all(&setup.store.dir);
+        }
+
+        #[tokio::test]
+        async fn a_ticket_says_which_key_its_session_is_under_and_a_key_cant_hoard_them() {
+            let setup = start().await;
+            let port = setup.port;
+            let sid = "4".repeat(32);
+            let mut agent = agent_hello(port, &setup.auth, &sid).await;
+            assert!(next_text(&mut agent).await.contains("\"welcome\""));
+            let base = format!("http://127.0.0.1:{port}");
+            let http = reqwest::Client::new();
+            let ask = |auth: String| {
+                http.post(format!("{base}/api/ticket"))
+                    .header("host", format!("hub.localhost:{port}"))
+                    .bearer_auth(auth)
+                    .json(&json!({ "sid": sid }))
+                    .send()
+            };
+            let first = ask(setup.auth.clone()).await.unwrap();
+            assert_eq!(first.status(), 200);
+            let first: Value = first.json().await.unwrap();
+            assert_eq!(first["id"], state::hash(&setup.auth)[..16]);
+            for _ in 1..MAX_TICKETS_PER_KEY {
+                assert_eq!(ask(setup.auth.clone()).await.unwrap().status(), 200);
+            }
+            assert_eq!(ask(setup.auth.clone()).await.unwrap().status(), 429);
+            // Another key's tickets are its own business: this one just doesn't have the session.
+            assert_eq!(ask(setup.other_auth.clone()).await.unwrap().status(), 404);
+            let _ = std::fs::remove_dir_all(&setup.store.dir);
+        }
+
+        #[tokio::test]
+        async fn the_dashboard_keeps_to_its_own_origin() {
+            let setup = start().await;
+            let r = reqwest::Client::new()
+                .get(format!("http://127.0.0.1:{}", setup.port))
+                .header("host", format!("hub.localhost:{}", setup.port))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.headers()["cross-origin-opener-policy"], "same-origin");
+            assert_eq!(r.headers()["cross-origin-resource-policy"], "same-origin");
+            assert!(r.headers().get("strict-transport-security").is_none(), "this one's http");
             let _ = std::fs::remove_dir_all(&setup.store.dir);
         }
     }

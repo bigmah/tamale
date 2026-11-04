@@ -168,7 +168,7 @@ final class AppModel {
     /// The session's model, made on first use and kept so coming back is instant.
     func model(for row: SessionRow) -> SessionModel {
         if let model = models[row.id] { return model }
-        let channel = SessionChannel(hub: row.account.client, sid: row.id, expectEncrypted: row.session.e2e)
+        let channel = SessionChannel(hub: row.account.client, sid: row.id)
         let model = SessionModel(channel: channel)
         model.onArtifact = { [weak self] reply in
             self?.save(reply, from: row, model: model)

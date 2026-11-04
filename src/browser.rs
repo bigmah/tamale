@@ -92,9 +92,10 @@ impl Shared {
     fn authorized(&self, uri: &Uri, headers: &HeaderMap) -> bool {
         let token = format!("t={}", self.token);
         self.own_host(headers)
-            && uri
-                .query()
-                .is_some_and(|q| q.split('&').any(|pair| pair == token))
+            && uri.query().is_some_and(|q| {
+                q.split('&')
+                    .any(|pair| crate::secure::same_secret(pair, &token))
+            })
     }
 }
 
@@ -198,6 +199,7 @@ pub fn open(url: &str) {
     } else {
         tokio::process::Command::new("xdg-open")
     };
+    crate::secure::withhold_secrets(&mut command);
     command
         .arg(url)
         .stdin(std::process::Stdio::null())
@@ -218,6 +220,12 @@ async fn page(State(shared): State<Arc<Shared>>, uri: Uri, headers: HeaderMap) -
         // Keep the token in the URL from leaking to other sites.
         (header::REFERRER_POLICY, "no-referrer"),
         (header::X_FRAME_OPTIONS, "DENY"),
+        (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        // The page's script and styles are inline, and it has nothing else to restrict.
+        (
+            header::CONTENT_SECURITY_POLICY,
+            "object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        ),
     ];
     (headers, PAGE).into_response()
 }
@@ -227,14 +235,28 @@ async fn client_js(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Res
     if !shared.own_host(&headers) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    ([(header::CONTENT_TYPE, "text/javascript")], CLIENT_JS).into_response()
+    (
+        [
+            (header::CONTENT_TYPE, "text/javascript"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        CLIENT_JS,
+    )
+        .into_response()
 }
 
 async fn client_wasm(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Response {
     if !shared.own_host(&headers) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    ([(header::CONTENT_TYPE, "application/wasm")], CLIENT_WASM).into_response()
+    (
+        [
+            (header::CONTENT_TYPE, "application/wasm"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        CLIENT_WASM,
+    )
+        .into_response()
 }
 
 async fn socket(

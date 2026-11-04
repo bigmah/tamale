@@ -17,7 +17,8 @@ phone (below).
    the rest. Pull to refresh; the list also refreshes every few seconds while it's open.
 4. Tap one to open it. The conversation streams in over the same end-to-end encrypted channel the
    web page uses. Send prompts (they queue while tamale is working), stop a run with the stop
-   button, and answer approvals with **Yes**, **Always** or **No** (with a reason).
+   button, and answer approvals with **Yes**, **Always** or **No** (with a reason). A session with
+   `[hub] e2e = false` only opens in a browser: the app takes nothing unsealed.
 
 **Artifacts** show inline at their own height; tap the title for full screen, where the page gets
 the whole display. The bar at the bottom hides as you scroll down and comes back when you scroll up

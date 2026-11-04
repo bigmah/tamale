@@ -107,9 +107,12 @@ pub fn open(roots: &[PathBuf], root: usize, rel: &str) -> Value {
         reply
     };
     let read = resolve(roots, root, rel).and_then(|path| {
-        let size = std::fs::metadata(&path)
-            .map_err(|e| format!("Couldn't open it: {e}"))?
-            .len();
+        let metadata = std::fs::metadata(&path).map_err(|e| format!("Couldn't open it: {e}"))?;
+        // Reading a pipe that made it into a repository would never finish.
+        if !metadata.is_file() {
+            return Err("Not a regular file.".into());
+        }
+        let size = metadata.len();
         if size > MAX_FILE_BYTES {
             return Err(format!(
                 "Too large to show here ({:.1} MB).",
@@ -244,6 +247,7 @@ mod tests {
         assert_eq!(opened["lines"].as_array().unwrap().len(), 3);
         assert_eq!(opened["syntax"], "Rust");
         assert!(open(&roots, 0, "nope.rs")["error"].is_string());
+        assert_eq!(open(&roots, 0, "src")["error"], "Not a regular file.");
         std::fs::remove_dir_all(root).unwrap();
     }
 

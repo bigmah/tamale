@@ -1,8 +1,7 @@
 //! Earlier prompts for ↑/↓ recall in the input box. Prompts are kept per working directory
 //! in `<sessions>/.prompts.jsonl`, so recall works across sessions and restarts.
 
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -49,7 +48,7 @@ impl Prompts {
             let lines: Vec<&str> = content.lines().collect();
             let kept = lines[lines.len() / 2..].join("\n") + "\n";
             let tmp = path.with_extension(format!("jsonl.{}.tmp", session::new_id()));
-            if fs::write(&tmp, kept).is_ok() {
+            if crate::secure::write_private(&tmp, kept).is_ok() {
                 let _ = fs::rename(&tmp, &path);
             }
         }
@@ -84,11 +83,7 @@ impl Prompts {
             };
             if let Ok(line) = serde_json::to_string(&saved) {
                 let _ = path.parent().map(fs::create_dir_all);
-                let _ = OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(path)
-                    .and_then(|mut f| writeln!(f, "{line}"));
+                let _ = crate::secure::append_private(path, format!("{line}\n"));
             }
         }
     }

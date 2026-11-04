@@ -34,7 +34,8 @@ pub fn is_added(login: &Backend) -> bool {
 pub fn new_login(kind: Kind, settings: &BackendSettings) -> Result<Backend> {
     let root = added_dir(kind).context("HOME is not set")?;
     let dir = root.join(crate::session::new_id());
-    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    crate::secure::private_dir(&root).with_context(|| format!("creating {}", root.display()))?;
+    crate::secure::private_dir(&dir).with_context(|| format!("creating {}", dir.display()))?;
     Ok(match kind {
         Kind::ClaudeCode => Backend::ClaudeCode(ClaudeCode::signed_out(
             settings.claude_path.clone(),

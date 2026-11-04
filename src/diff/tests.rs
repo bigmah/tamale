@@ -152,3 +152,193 @@ fn loads_tracked_and_untracked_changes_from_a_repo() {
     assert!(load(&dir, &Target::parse("no-such-ref")).is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A scratch repository with a committed `f.txt`, since changed, and a script that notes it ran.
+struct Scratch {
+    root: std::path::PathBuf,
+    repo: std::path::PathBuf,
+    ran: std::path::PathBuf,
+    marker: std::path::PathBuf,
+}
+
+impl Scratch {
+    fn new() -> Self {
+        let root = std::env::temp_dir().join(format!("tamale-diff-{}", crate::session::new_id()));
+        let repo = root.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let (ran, marker) = (root.join("ran"), root.join("marker.sh"));
+        std::fs::write(
+            &marker,
+            format!("#!/bin/sh\necho \"$1\" >> {}\nexit 0\n", ran.display()),
+        )
+        .unwrap();
+        run_git(&root, &["init", "-q", "repo"]);
+        let scratch = Self {
+            root,
+            repo,
+            ran,
+            marker,
+        };
+        run_git(
+            &scratch.root,
+            &["-C", "repo", "config", "user.email", "a@b.c"],
+        );
+        run_git(&scratch.root, &["-C", "repo", "config", "user.name", "a"]);
+        scratch.commit_a_change(&scratch.repo);
+        scratch
+    }
+
+    fn commit_a_change(&self, repo: &Path) {
+        std::fs::write(repo.join("f.txt"), "one\n").unwrap();
+        run_git(repo, &["add", "-A"]);
+        run_git(repo, &["commit", "-qm", "first"]);
+        std::fs::write(repo.join("f.txt"), "two and more\n").unwrap();
+    }
+
+    /// `sh <marker> <what>`, as a repository's config would ask for it.
+    fn command(&self, what: &str) -> String {
+        format!("sh {} {what}", self.marker.display())
+    }
+
+    fn set(&self, repo: &Path, key: &str, value: &str) {
+        run_git(repo, &["config", key, value]);
+    }
+
+    fn what_ran(&self) -> String {
+        std::fs::read_to_string(&self.ran).unwrap_or_default()
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn run_git(dir: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// `git clone` doesn't copy a `.git/config`, but an unpacked archive brings one. tamale loads
+/// the diff on its own, at startup, so it mustn't run anything that config names.
+#[test]
+fn loading_a_diff_runs_nothing_a_repositorys_config_names() {
+    let s = Scratch::new();
+    std::fs::write(
+        s.repo.join(".gitattributes"),
+        "f.txt filter=plain\n*.txt diff=driver\n",
+    )
+    .unwrap();
+    s.set(&s.repo, "core.fsmonitor", &s.command("fsmonitor"));
+    s.set(&s.repo, "diff.external", &s.command("external"));
+    s.set(&s.repo, "diff.driver.command", &s.command("driver"));
+    s.set(&s.repo, "diff.driver.textconv", &s.command("textconv"));
+    s.set(&s.repo, "filter.plain.clean", &s.command("clean"));
+    s.set(&s.repo, "filter.plain.process", &s.command("process"));
+    // Forced on, so a filter that's gone would fail the whole diff rather than just not run.
+    s.set(&s.repo, "filter.plain.required", "true");
+    let found = load(&s.repo, &Target::parse("")).unwrap();
+    assert_eq!(s.what_ran(), "");
+    assert!(
+        found.iter().any(|f| f.path == "f.txt"),
+        "{:?}",
+        found.iter().map(|f| &f.path).collect::<Vec<_>>()
+    );
+    // The same for a diff someone asked for by name.
+    load(&s.repo, &Target::parse("HEAD")).unwrap();
+    assert_eq!(s.what_ran(), "");
+}
+
+#[test]
+fn a_filter_from_an_included_config_doesnt_run_either() {
+    let s = Scratch::new();
+    std::fs::write(s.repo.join(".gitattributes"), "f.txt filter=included\n").unwrap();
+    let extra = s.root.join("extra.cfg");
+    std::fs::write(
+        &extra,
+        format!(
+            "[filter \"included\"]\n\tclean = {}\n",
+            s.command("included")
+        ),
+    )
+    .unwrap();
+    s.set(&s.repo, "include.path", &extra.display().to_string());
+    load(&s.repo, &Target::parse("")).unwrap();
+    assert_eq!(s.what_ran(), "");
+}
+
+#[test]
+fn only_a_repositorys_own_filters_are_turned_off() {
+    let listing = "global\0filter.lfs.clean\0global\0filter.lfs.process\0local\0filter.evil.clean\0\
+                   local\0filter.evil.process\0worktree\0filter.a.b.smudge\0command\0filter.mine.clean\0\
+                   system\0filter.sys.clean\0local\0filter.nosubsection\0";
+    assert_eq!(repository_filters(listing), ["evil", "a.b"]);
+    assert!(repository_filters("").is_empty());
+}
+
+/// `-c` splits at the first `=`, so this name couldn't be turned off; it isn't run instead.
+#[test]
+fn a_filter_whose_name_cant_be_turned_off_stops_the_diff() {
+    let s = Scratch::new();
+    std::fs::write(s.repo.join(".gitattributes"), "f.txt filter=with=equals\n").unwrap();
+    s.set(&s.repo, "filter.with=equals.clean", &s.command("equals"));
+    assert!(load(&s.repo, &Target::parse("")).is_err());
+    assert_eq!(s.what_ran(), "");
+}
+
+/// A submodule's status is a `git status` of its own, under its own config.
+#[test]
+fn a_submodules_config_runs_nothing_either() {
+    let s = Scratch::new();
+    let sub = s.repo.join("sub");
+    std::fs::create_dir_all(&sub).unwrap();
+    run_git(&sub, &["init", "-q"]);
+    s.set(&sub, "user.email", "a@b.c");
+    s.set(&sub, "user.name", "a");
+    s.commit_a_change(&sub);
+    run_git(&s.repo, &["add", "sub"]);
+    run_git(&s.repo, &["commit", "-qm", "with a submodule"]);
+    std::fs::write(sub.join(".gitattributes"), "f.txt filter=inner\n").unwrap();
+    s.set(&sub, "core.fsmonitor", &s.command("sub-fsmonitor"));
+    s.set(&sub, "filter.inner.clean", &s.command("sub-clean"));
+    std::fs::write(sub.join("f.txt"), "changed again, and longer\n").unwrap();
+    load(&s.repo, &Target::parse("")).unwrap();
+    assert_eq!(s.what_ran(), "");
+}
+
+/// A partial clone fetches blobs it's missing, which would run its config's `core.sshCommand`.
+#[test]
+fn the_working_tree_diff_never_fetches() {
+    let s = Scratch::new();
+    let blob = Command::new("git")
+        .arg("-C")
+        .arg(&s.repo)
+        .args(["rev-parse", "HEAD:f.txt"])
+        .output()
+        .unwrap();
+    let blob = String::from_utf8(blob.stdout).unwrap();
+    let blob = blob.trim();
+    let object = s
+        .repo
+        .join(".git/objects")
+        .join(&blob[..2])
+        .join(&blob[2..]);
+    std::fs::remove_file(object).unwrap();
+    s.set(&s.repo, "core.repositoryformatversion", "1");
+    s.set(&s.repo, "extensions.partialClone", "origin");
+    s.set(&s.repo, "remote.origin.url", "ssh://example.invalid/x");
+    s.set(&s.repo, "remote.origin.promisor", "true");
+    s.set(&s.repo, "core.sshCommand", &s.command("ssh"));
+    let _ = load(&s.repo, &Target::parse(""));
+    assert_eq!(s.what_ran(), "");
+}

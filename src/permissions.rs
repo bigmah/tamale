@@ -64,6 +64,16 @@ impl Mode {
         }
     }
 
+    /// Whether this asks about less than `other`.
+    pub fn looser_than(self, other: Self) -> bool {
+        let leeway = |mode| match mode {
+            Self::Ask => 0,
+            Self::AcceptEdits => 1,
+            Self::Auto => 2,
+        };
+        leeway(self) > leeway(other)
+    }
+
     /// The Shift+Tab cycle.
     pub fn next(self) -> Self {
         match self {

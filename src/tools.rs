@@ -212,10 +212,19 @@ struct ReadArgs {
     limit: Option<usize>,
 }
 
+/// The text of a regular file. Reading a pipe would never end, and `/dev/zero` would fill the
+/// memory of whatever a prompt injection sent here.
+async fn read_text(path: &Path) -> Result<String> {
+    let read = || format!("reading {}", path.display());
+    let metadata = tokio::fs::metadata(path).await.with_context(read)?;
+    if !metadata.is_file() {
+        bail!("{} isn't a regular file", path.display());
+    }
+    tokio::fs::read_to_string(path).await.with_context(read)
+}
+
 async fn read_file(a: ReadArgs) -> Result<String> {
-    let text = tokio::fs::read_to_string(&a.path)
-        .await
-        .with_context(|| format!("reading {}", a.path.display()))?;
+    let text = read_text(&a.path).await?;
     let start = a.offset.unwrap_or(1).max(1);
     let limit = a.limit.unwrap_or(DEFAULT_READ_LIMIT);
     let total = text.lines().count();
@@ -266,9 +275,7 @@ async fn edit_file(a: EditArgs) -> Result<String> {
     if a.old_string.is_empty() {
         bail!("old_string must not be empty");
     }
-    let text = tokio::fs::read_to_string(&a.path)
-        .await
-        .with_context(|| format!("reading {}", a.path.display()))?;
+    let text = read_text(&a.path).await?;
     let count = text.matches(&a.old_string).count();
     let updated = match (count, a.replace_all) {
         (0, _) => bail!("old_string not found in {}", a.path.display()),
@@ -355,7 +362,7 @@ fn truncate(s: String) -> String {
 }
 
 /// Full tool outputs live in `$XDG_CACHE_HOME/tamale/out` (default `~/.cache/tamale/out`).
-fn spill_dir() -> Option<PathBuf> {
+pub fn spill_dir() -> Option<PathBuf> {
     std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
@@ -364,11 +371,11 @@ fn spill_dir() -> Option<PathBuf> {
 
 fn spill(s: &str) -> Result<PathBuf> {
     let dir = spill_dir().context("HOME is not set")?;
-    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    crate::secure::private_dir(&dir).with_context(|| format!("creating {}", dir.display()))?;
     static PRUNED: std::sync::Once = std::sync::Once::new();
     PRUNED.call_once(|| prune_spills(&dir, Duration::from_secs(7 * 24 * 3600)));
     let path = dir.join(format!("{}.txt", crate::session::new_id()));
-    std::fs::write(&path, s).with_context(|| format!("writing {}", path.display()))?;
+    crate::secure::write_private(&path, s).with_context(|| format!("writing {}", path.display()))?;
     Ok(path)
 }
 
@@ -436,6 +443,21 @@ mod tests {
             .expect("marker names the saved file");
         assert_eq!(std::fs::read_to_string(path).unwrap(), full);
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn only_regular_files_are_read() {
+        let args = |path: &str| json!({ "path": path, "old_string": "a", "new_string": "b" });
+        // Each of these would otherwise fill memory, rather than fail.
+        for path in ["/dev/zero", "/dev/urandom"] {
+            for tool in ["read_file", "edit_file"] {
+                let error = execute(tool, args(path)).await.unwrap_err();
+                assert!(format!("{error:#}").contains("isn't a regular file"), "{tool}: {error:#}");
+            }
+        }
+        assert!(execute("read_file", args("/nope")).await.is_err());
+        assert!(execute("read_file", args("Cargo.toml")).await.unwrap().contains("[package]"));
     }
 
     #[test]

@@ -102,6 +102,32 @@ export async function unseal(psk, sid, kind, sealed) {
   return JSON.parse(new TextDecoder().decode(plain));
 }
 
+/**
+ * A session as the list shows it, with its opened labels. Only what labels are for comes from
+ * them: they're written by whichever machine holds the key, and shouldn't get to say what the
+ * session's address is, or anything else the hub vouches for.
+ */
+export function withLabels(session, label, status) {
+  const text = (value) => (typeof value === 'string' ? value : '');
+  return {
+    ...session,
+    host: text(label.host),
+    cwd: text(label.cwd),
+    title: text(status.title),
+    model: text(status.model) || text(label.model),
+    encrypted: true,
+  };
+}
+
+/**
+ * Whether a session is really under `held`, the key whose `mid` it gives. A session's `mid` is
+ * only what it says of itself, and a page handed `held`'s secret could use it. The hub says
+ * which key it let the session in with.
+ */
+export function ticketFits(held, ticket) {
+  return Boolean(held) && held.mid === ticket.mid && held.id === ticket.id;
+}
+
 /** `text` as a QR code's rows of booleans, true for dark. */
 export async function qrRows(text) {
   const { default: qrcode } = await import('./qrcode.js');

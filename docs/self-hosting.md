@@ -176,6 +176,19 @@ ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/tamale-hub
 PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+UMask=0077
+# If the hub shares this server, it can't take the other sites down with it.
+MemoryMax=1G
 
 [Install]
 WantedBy=multi-user.target
@@ -220,6 +233,10 @@ key as `Authorization: Bearer`. For the terminal's `/open/<sid>` codes to open t
 Safari, start `serve` with `--apple-app-id <team id>.<bundle id>` (or set
 `TAMALE_HUB_APPLE_APP_ID`), which serves `/.well-known/apple-app-site-association`, and add your
 hub's domain to the app's associated domains.
+
+**What keeps one key from hurting the others.** Rate limits count an IPv6 address's whole /64. A
+socket whose reader stops reading is dropped once 128 MiB is waiting for it, or 512 MiB in all, and
+a page or tamale just reconnects. Each key can have 64 sessions, and 64 tickets waiting to be used.
 
 **What the hub stores.** The data dir holds `state.json` (mode 600): SHA-256 hashes of the keys'
 auth values and the secret that signs session cookies. No keys, no sessions, no history.

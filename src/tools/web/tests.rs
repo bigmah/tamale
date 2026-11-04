@@ -108,6 +108,7 @@ impl Server {
                 let path = request.split_whitespace().nth(1).unwrap_or("/");
                 let response = match path {
                     "/redirect" => "HTTP/1.1 302 Found\r\nLocation: /page\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+                    "/to-metadata" => "HTTP/1.1 302 Found\r\nLocation: http://169.254.169.254/latest/meta-data/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
                     "/page" => "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n<title>Test page</title><main><p>Readable text</p></main>".into(),
                     "/plain" => "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\nfirst\nsecond\nthird".into(),
                     "/pdf" => "HTTP/1.0 200 OK\r\nContent-Type: application/pdf\r\n\r\n%PDF".into(),
@@ -157,6 +158,100 @@ async fn fetch_follows_redirects_reads_text_and_reports_http_and_size_errors() {
             .unwrap_err();
         assert!(format!("{error:#}").contains(expected), "{path}: {error:#}");
     }
+}
+
+#[tokio::test]
+async fn fetch_refuses_cloud_metadata_however_its_spelled_without_trying_it() {
+    for url in [
+        "http://169.254.169.254/latest/meta-data/",
+        // Decimal, hexadecimal and octal spellings of the same address.
+        "http://2852039166/latest/meta-data/",
+        "http://0xa9fea9fe/",
+        "http://0251.0376.0251.0376/",
+        "http://169.254.169.254./",
+        "http://[::ffff:169.254.169.254]/",
+        "http://[fe80::1]/",
+        "http://[fd00:ec2::254]/",
+        "http://100.100.100.200/",
+    ] {
+        let error = fetch(json!({"url": url})).await.unwrap_err();
+        assert!(
+            format!("{error:#}").contains("link-local"),
+            "{url}: {error:#}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_redirect_cant_lead_to_cloud_metadata_but_local_servers_stay_reachable() {
+    let server = Server::new().await;
+    let error = fetch(json!({"url": format!("{}/to-metadata", server.base)}))
+        .await
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("link-local"), "{error:#}");
+
+    // A local server is fair game when it's asked for, by address or by name.
+    let by_name = server.base.replace("127.0.0.1", "localhost");
+    for base in [&server.base, &by_name] {
+        let out = fetch(json!({"url": format!("{base}/plain")}))
+            .await
+            .unwrap();
+        assert!(out.contains("second"), "{out}");
+    }
+}
+
+#[test]
+fn only_the_web_is_kept_from_redirecting_to_this_machine() {
+    let url = |text: &str| Url::parse(text).unwrap();
+    let refused = |from: &str, to: &str| redirect_refusal(&url(from), &url(to)).is_some();
+    let web = "https://example.com/";
+    for local in [
+        "http://localhost:6379/",
+        "http://LOCALHOST./",
+        "http://db.localhost/",
+        "http://printer.local/",
+        "http://vault.internal/",
+        "http://127.0.0.1/",
+        "http://2130706433/",
+        "http://[::1]/",
+        "http://[::ffff:127.0.0.1]/",
+        "http://10.0.0.1/",
+        "http://172.16.0.1/",
+        "http://192.168.1.1/",
+        "http://100.64.0.1/",
+        "http://[fd12::1]/",
+        "http://0.0.0.0/",
+    ] {
+        assert!(refused(web, local), "{local}");
+        assert!(
+            !refused("http://localhost:3000/", local),
+            "local to local: {local}"
+        );
+    }
+    assert!(!refused(web, "https://example.org/"));
+    assert!(!refused("http://localhost:3000/", web));
+    assert!(
+        !refused(web, "https://100.128.0.1/"),
+        "public, just past CGNAT"
+    );
+    // Not even a local page gets to send it there.
+    assert!(refused("http://localhost:3000/", "http://169.254.169.254/"));
+}
+
+#[test]
+fn names_cant_lead_to_addresses_that_are_off_limits() {
+    let addr = |text: &str| text.parse::<SocketAddr>().unwrap();
+    let found = [
+        addr("169.254.169.254:0"),
+        addr("93.184.216.34:0"),
+        addr("[fe80::1]:0"),
+        addr("127.0.0.1:0"),
+    ];
+    assert_eq!(
+        usable(found.into_iter()),
+        [addr("93.184.216.34:0"), addr("127.0.0.1:0")]
+    );
+    assert!(usable([addr("169.254.169.254:0")].into_iter()).is_empty());
 }
 
 #[tokio::test]

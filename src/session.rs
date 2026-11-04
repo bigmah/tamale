@@ -84,7 +84,7 @@ fn write_index(dir: &Path, path: &Path, meta: Meta, stat: &std::fs::Metadata) ->
     std::fs::create_dir_all(&index_dir)?;
     let path = index_dir.join(path.file_name().context("missing session file name")?);
     let tmp = path.with_extension(format!("json.{}.tmp", new_id()));
-    std::fs::write(&tmp, serde_json::to_vec(&index)?)?;
+    crate::secure::write_private(&tmp, serde_json::to_vec(&index)?)?;
     std::fs::rename(tmp, path)?;
     Ok(())
 }
@@ -228,6 +228,23 @@ pub fn dir() -> Option<PathBuf> {
     Some(data.join("tamale").join("sessions"))
 }
 
+/// Closes up the places tamale keeps conversations, snapshots of files, tool output and CLI
+/// logins, which hold whatever secrets went through them, including what earlier versions left
+/// there open. Best effort: a read-only home shouldn't stop tamale starting.
+pub fn make_storage_private() {
+    if let Some(sessions) = dir() {
+        let _ = crate::secure::private_dir(&sessions);
+    }
+    let others = [
+        crate::tools::spill_dir(),
+        crate::backend::logins::added_dir(crate::backend::Kind::ClaudeCode),
+        crate::backend::logins::added_dir(crate::backend::Kind::Codex),
+    ];
+    for other in others.into_iter().flatten().filter(|dir| dir.is_dir()) {
+        let _ = crate::secure::private_dir(&other);
+    }
+}
+
 /// File snapshots for one turn of a session: `<sessions>/<id>/checkpoints/<turn>/`.
 pub fn checkpoint_dir(id: &str, turn: u64) -> Option<PathBuf> {
     Some(dir()?.join(id).join("checkpoints").join(turn.to_string()))
@@ -244,10 +261,10 @@ pub fn save(session: &Session) -> Result<()> {
 }
 
 fn save_in(dir: &Path, session: &Session) -> Result<()> {
-    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    crate::secure::private_dir(dir).with_context(|| format!("creating {}", dir.display()))?;
     let path = path_in(dir, &session.id);
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec(session)?)
+    crate::secure::write_private(&tmp, serde_json::to_vec(session)?)
         .with_context(|| format!("writing {}", tmp.display()))?;
     std::fs::rename(&tmp, &path).with_context(|| format!("writing {}", path.display()))?;
     // Cache failures must never prevent saving/resuming the conversation.
@@ -365,6 +382,34 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn saved_sessions_are_this_users_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let dir = std::env::temp_dir().join(format!("tamale-sessions-private-{}", new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // As an earlier version left it.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let session = Session {
+            id: "a".into(),
+            cwd: "/x".into(),
+            additional_dirs: Vec::new(),
+            created: 1,
+            updated: 1,
+            model: "m".into(),
+            title: "t".into(),
+            context_tokens: 0,
+            history: Vec::new(),
+            entries: Vec::new(),
+            checkpoints: Vec::new(),
+        };
+        save_in(&dir, &session).unwrap();
+        assert_eq!(mode(&dir), 0o700);
+        assert_eq!(mode(&path_in(&dir, "a")), 0o600);
+        assert_eq!(mode(&dir.join(".index").join("a.json")), 0o600);
+        let _ = std::fs::remove_dir_all(dir);
+    }
     #[test]
     fn save_load_and_list_round_trip() {
         let dir = std::env::temp_dir().join(format!("tamale-sessions-test-{}", new_id()));

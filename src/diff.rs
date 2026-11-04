@@ -112,14 +112,85 @@ impl Target {
     }
 }
 
-fn git(dir: &Path, args: &[&str]) -> Result<std::process::Output> {
-    Command::new("git")
+/// git in `dir`. A repository's own config can name programs for git to run, and an unpacked
+/// archive brings its `.git/config` along. tamale loads the diff unasked, at startup and after
+/// each turn, so here git runs none of them: see also [`filters_off`] and `--ignore-submodules`.
+fn git_command(dir: &Path) -> Command {
+    let mut command = Command::new("git");
+    command
         .arg("-C")
         .arg(dir)
-        .args(["-c", "core.quotePath=false"])
+        .args(["-c", "core.quotePath=false", "-c", "core.fsmonitor=false"]);
+    command
+}
+
+fn git(dir: &Path, args: &[&str]) -> Result<std::process::Output> {
+    git_command(dir)
         .args(args)
         .output()
         .context("couldn't run git")
+}
+
+/// The filters a repository's own config defines, from `git config --show-scope --name-only
+/// -z`: scopes and keys, each ended by a NUL. Global and system ones (git-lfs's, usually) are
+/// the user's own, and stay on.
+fn repository_filters(listing: &str) -> Vec<&str> {
+    let mut names = Vec::new();
+    let mut fields = listing.split('\0');
+    while let (Some(scope), Some(key)) = (fields.next(), fields.next()) {
+        if matches!(scope, "local" | "worktree")
+            && let Some((name, _)) = key
+                .strip_prefix("filter.")
+                .and_then(|key| key.rsplit_once('.'))
+            && !names.contains(&name)
+        {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// Arguments for git that turn off the filters a repository's own config defines, which it
+/// would otherwise run on changed files. Files they'd clean show as they are instead.
+fn filters_off(dir: &Path) -> Result<Vec<String>> {
+    let listed = git(
+        dir,
+        &[
+            "config",
+            "--show-scope",
+            "--includes",
+            "--name-only",
+            "-z",
+            "--get-regexp",
+            r"^filter\.",
+        ],
+    )?;
+    // 1 means there are none. Anything else (a git too old for `--show-scope`) can't be trusted
+    // to have listed them.
+    if !matches!(listed.status.code(), Some(0 | 1)) {
+        bail!(
+            "couldn't list this repository's git filters: {}",
+            String::from_utf8_lossy(&listed.stderr).trim()
+        );
+    }
+    let listing = String::from_utf8(listed.stdout).context("a git filter's name isn't UTF-8")?;
+    let mut args = Vec::new();
+    for name in repository_filters(&listing) {
+        // `-c` splits at the first `=`, so this one couldn't be turned off.
+        if name.contains('=') {
+            bail!("this repository's git config defines a filter tamale can't turn off: {name:?}");
+        }
+        for (variable, value) in [
+            ("clean", ""),
+            ("smudge", ""),
+            ("process", ""),
+            ("required", "false"),
+        ] {
+            args.push("-c".to_string());
+            args.push(format!("filter.{name}.{variable}={value}"));
+        }
+    }
+    Ok(args)
 }
 
 /// Runs `git diff` in `dir` and parses it. Paths are relative to the repository root.
@@ -138,6 +209,8 @@ pub fn load(dir: &Path, target: &Target) -> Result<Vec<FileDiff>> {
         "--no-color",
         "--no-ext-diff",
         "--no-textconv",
+        // A submodule's status is a `git status` of its own, under its own config.
+        "--ignore-submodules=dirty",
         "--find-renames",
         "--src-prefix=a/",
         "--dst-prefix=b/",
@@ -152,7 +225,14 @@ pub fn load(dir: &Path, target: &Target) -> Result<Vec<FileDiff>> {
     } else {
         args.extend(target.args.iter().map(String::as_str));
     }
-    let output = git(root, &args)?;
+    let mut diff = git_command(root);
+    diff.args(filters_off(root)?).args(&args);
+    if target.args.is_empty() {
+        // A partial clone would fetch a blob it's missing, through whatever its config says.
+        // That's fine when someone asks for a diff of history, which is why it's only here.
+        diff.env("GIT_NO_LAZY_FETCH", "1");
+    }
+    let output = diff.output().context("couldn't run git")?;
     if !output.status.success() {
         bail!(
             "git diff failed: {}",

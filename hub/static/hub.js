@@ -10,7 +10,7 @@
 // this is the one place that sees them all. The hub only ever gets a key's auth value; a
 // session's page only the handshake's secret, in the fragment of the redirect into it.
 
-import { fromKey, isKey, newKey, qrRows, qrSvg, toBase64Url, unseal } from '/seal.js';
+import { fromKey, isKey, newKey, qrRows, qrSvg, ticketFits, toBase64Url, unseal, withLabels } from '/seal.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -105,7 +105,7 @@ async function readable(s) {
   try {
     const label = await openLabel(held.psk, s.sid, 'label', s.sealed_label);
     const status = await openLabel(held.psk, s.sid, 'status', s.sealed_status);
-    return { ...s, ...label, ...status, model: status.model || label.model || '', encrypted: true };
+    return withLabels(s, label, status);
   } catch {
     return null;
   }
@@ -411,7 +411,7 @@ async function ticketUrl(sid) {
   if (!ok || !data.url) return { problem: data.error || "Couldn't open that session." };
   if (!data.mid) return data.url;
   const held = await keys.byMid(data.mid);
-  if (!held) return { problem: "This browser doesn't have this session's key anymore. Scan its code or paste it." };
+  if (!ticketFits(held, data)) return { problem: "This browser doesn't have this session's key anymore. Scan its code or paste it." };
   return `${data.url}#k=${toBase64Url(held.psk)}`;
 }
 

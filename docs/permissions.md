@@ -32,5 +32,7 @@ In `-p` mode nothing can be approved interactively: calls that would prompt are 
 and the model is told why, unless `--yes` is passed.
 
 Rules are a guard against mistakes, not a sandbox: an allowed command like `cargo test`
-still runs arbitrary build scripts. A project's `tamale.toml` can also change the mode
-and add allow rules, so review it in repositories you don't trust.
+still runs arbitrary build scripts. A project's `tamale.toml` can ask for more caution (a
+stricter mode, more deny rules) but not less: its allow rules and a looser mode are ignored,
+and tamale says so when it starts. Put allow rules for a project you trust in your own
+config, or a file you pass with `--config`.

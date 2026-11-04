@@ -1,6 +1,8 @@
 # Built into the binary. Copy any sections to ~/.config/tamale/config.toml
 # for personal defaults, or tamale.toml in a project. All fields are optional
-# in those files; omitted fields keep the value from the previous layer.
+# in those files; omitted fields keep the value from the previous layer. A project's
+# tamale.toml can't set [hub], the backend's programs and directories or permissions.allow,
+# and can only make permissions.mode stricter: opening a repository shouldn't run anything.
 
 [backend]
 # Where inference comes from:

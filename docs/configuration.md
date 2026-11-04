@@ -51,6 +51,14 @@ lists are combined across layers rather than replaced. `effort = "default"` rese
 effort to the API default. Unknown fields, invalid types, empty model names, zero
 token limits and compaction percentages outside 1–100 produce a startup error.
 Missing personal/project files are skipped; an explicit `--config` file must exist.
+
+A repository is someone else's code until you've read it, so opening one can't do anything on
+its say-so. A project's `tamale.toml` can't set `[hub]` (where this session and your key's auth
+value go), `backend.claude_path`, `codex_path`, `claude_config_dirs` or `codex_homes` (what
+tamale runs) or `permissions.allow`, and it can make `permissions.mode` stricter but not looser.
+tamale says what it ignored when it starts. All of them work from your own `config.toml` or a
+file you pass with `--config`.
+
 The same settings apply to interactive and `-p` runs, tool follow-ups, retries and
 manual/automatic compaction. Settings load at startup; slash commands change the
 current session's settings without rewriting TOML files.

@@ -79,6 +79,7 @@ impl ClaudeCode {
         // An API key in the environment takes precedence over the Claude Code sign-in;
         // the API backend is the way to use one.
         cmd.env_remove("ANTHROPIC_API_KEY");
+        crate::secure::withhold_secrets(&mut cmd);
         if let Some(dir) = &self.config_dir {
             cmd.env("CLAUDE_CONFIG_DIR", dir);
         }
@@ -427,7 +428,8 @@ backend.claude_path if it isn't on PATH",
         if !run.persist {
             cmd.arg("--no-session-persistence");
         }
-        cmd.env("CLAUDE_CODE_MAX_OUTPUT_TOKENS", run.max_tokens.to_string())
+        cmd.env(mcp::TOKEN_ENV, &bridge.token)
+            .env("CLAUDE_CODE_MAX_OUTPUT_TOKENS", run.max_tokens.to_string())
             // Tool calls can wait on an approval prompt or a long command.
             .env("MCP_TOOL_TIMEOUT", "86400000");
         if run.reasoning.thinking == Thinking::Off {

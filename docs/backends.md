@@ -52,8 +52,8 @@ The `claude-code` backend runs `claude -p` headlessly for each turn, so it needs
   use the `api` backend for API keys.
 - **Tools**: Claude Code's built-in tools, settings files, hooks, skills, plugins' MCP
   servers and CLAUDE.md loading are turned off. tamale passes its own system prompt and
-  serves its own tools to Claude Code over a local MCP server (127.0.0.1, random URL
-  token, one per turn). Every call therefore goes through tamale's permission rules,
+  serves its own tools to Claude Code over a local MCP server (127.0.0.1, one per turn,
+  with a random token it's given in its environment). Every call therefore goes through tamale's permission rules,
   approval popup and checkpoints.
 - **Conversations**: each tamale session keeps a Claude Code session and continues it
   with `--resume`. After `/undo`, `/rewind`, `/resume`, `/clear`, compaction or a backend

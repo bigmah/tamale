@@ -41,6 +41,11 @@ sites, or extract PDFs. Search queries go to the selected provider and fetched U
 go to their destination servers. Web content is marked as untrusted reference data,
 and the agent is instructed to cite source URLs.
 
+`web_fetch` won't read link-local addresses, where cloud providers keep machines' credentials,
+whether by address, by a name that resolves there or by a redirect. A page on the web can't
+redirect it to this machine or its network either. Local servers stay reachable when asked for
+directly, as `http://localhost:3000` is.
+
 ## Subagents
 
 The `agent` tool starts a subagent: a fresh agent on the current backend (API, Claude
@@ -74,3 +79,4 @@ Output over 30,000 characters keeps its first third and last two thirds (where c
 errors and test summaries usually are), with a marker in between. The full output is
 saved to `~/.cache/tamale/out/` (`$XDG_CACHE_HOME/tamale/out`) and the marker gives its
 path, so the agent can `read_file` or `grep` it. Saved outputs older than 7 days are deleted.
+Only you can read them.

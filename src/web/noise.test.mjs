@@ -3,7 +3,7 @@
 // Prints what it sealed for tamale to open.
 import assert from 'node:assert/strict';
 import { Handshake, fromBase64, supported } from './noise.js';
-import { fromKey, isKey, machineId, newKey, qrRows, qrSvg, toBase64Url, unseal } from '../../hub/static/seal.js';
+import { fromKey, isKey, machineId, newKey, qrRows, qrSvg, ticketFits, toBase64Url, unseal, withLabels } from '../../hub/static/seal.js';
 
 const v = JSON.parse(process.argv[2]);
 const psk = fromBase64(v.psk);
@@ -43,6 +43,32 @@ assert.match(qrSvg(rows), /^<svg .*<\/svg>$/);
 assert.deepEqual(await unseal(psk, v.sid, 'label', v.label), { host: 'h', cwd: '~/x' });
 await assert.rejects(unseal(psk, v.sid, 'status', v.label), 'bound to its kind');
 await assert.rejects(unseal(psk, 'f'.repeat(32), 'label', v.label), 'bound to its session');
+
+// Labels say what they're for, and nothing else. They come from any machine with the key.
+const row = { sid: 'real', open: '/open/real', online: true, approval: false, host: '', title: '' };
+const shown = withLabels(
+  row,
+  { host: 'h', cwd: '~/x', model: 'label-model', sid: 'forged', open: 'javascript:alert(1)' },
+  { title: 't', online: false, approval: true, encrypted: false },
+);
+assert.deepEqual(shown, {
+  sid: 'real', open: '/open/real', online: true, approval: false,
+  host: 'h', cwd: '~/x', title: 't', model: 'label-model', encrypted: true,
+});
+assert.equal(withLabels(row, { model: 'label' }, { model: 'status' }).model, 'status');
+assert.deepEqual(
+  withLabels(row, { host: 7, cwd: null }, {}),
+  { ...row, host: '', cwd: '', title: '', model: '', encrypted: true },
+  'what isn\'t text does not break the list',
+);
+
+// A session gets a key's secret only if the hub let it in with that key. Its `mid` isn't enough.
+const held = { mid: v.mid, id: v.id };
+assert.equal(ticketFits(held, { mid: v.mid, id: v.id }), true);
+assert.equal(ticketFits(held, { mid: v.mid, id: 'another-key' }), false, 'borrowing the mid');
+assert.equal(ticketFits(held, { mid: v.mid }), false);
+assert.equal(ticketFits(held, { mid: 'other', id: v.id }), false);
+assert.equal(ticketFits(undefined, { mid: v.mid, id: v.id }), false);
 
 // The handshake, from the same ephemeral key: the same bytes as snow's.
 const payload = new TextEncoder().encode('{"v":1}');

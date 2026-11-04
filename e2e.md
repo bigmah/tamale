@@ -74,7 +74,8 @@ don't send to servers:
    ticket redirect as a fragment:
    `https://<sid>.tamale-hub.com/__hub/auth?ticket=…#k=…`. Fragments survive the `303` to
    `/`, so the session page reads it, keeps it in `sessionStorage` (for reloads in that
-   tab) and clears the address bar.
+   tab) and clears the address bar. The dashboard only does this if the hub's ticket says
+   the session is under that same key: a `mid` is only what a session says of itself.
 
 Why the dashboard holds the keys: every session is its own origin, so a key stored on one
 session's origin is invisible to the next session from the same machine (and to the same

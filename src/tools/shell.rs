@@ -12,26 +12,31 @@ const EXIT_GRACE: Duration = Duration::from_millis(500);
 /// Between asking a timed-out command to stop (SIGTERM) and killing it (SIGKILL).
 const TERM_GRACE: Duration = Duration::from_secs(2);
 
+/// `sh -c command`, without tamale's own secrets.
+fn shell(command: &str) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new("sh");
+    cmd.arg("-c")
+        .arg(command)
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
+    crate::secure::withhold_secrets(&mut cmd);
+    cmd
+}
+
 #[cfg(unix)]
 pub async fn run(command: &str, timeout: Duration) -> Result<String> {
     use std::os::fd::OwnedFd;
-    use std::process::Stdio;
     use tokio::io::AsyncReadExt;
     use tokio::net::unix::pipe;
-    use tokio::process::Command;
 
     let (reader, writer) = std::io::pipe()?;
     let child = {
         // The command holds the write ends; it must be dropped once the child is spawned
         // so the pipe reaches EOF when the command's processes exit.
-        let mut cmd = Command::new("sh");
-        cmd.arg("-c")
-            .arg(command)
-            .stdin(Stdio::null())
-            .stdout(writer.try_clone()?)
+        let mut cmd = shell(command);
+        cmd.stdout(writer.try_clone()?)
             .stderr(writer)
-            .process_group(0)
-            .kill_on_drop(true);
+            .process_group(0);
         cmd.spawn()?
     };
     let mut child = child;
@@ -159,12 +164,7 @@ impl Drop for Group {
 
 #[cfg(not(unix))]
 pub async fn run(command: &str, timeout: Duration) -> Result<String> {
-    let child = tokio::process::Command::new("sh")
-        .arg("-c")
-        .arg(command)
-        .stdin(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .output();
+    let child = shell(command).output();
     let out = tokio::time::timeout(timeout, child)
         .await
         .map_err(|_| anyhow!("command timed out after {}s", timeout.as_secs()))??;
@@ -182,6 +182,13 @@ pub async fn run(command: &str, timeout: Duration) -> Result<String> {
 mod tests {
     use super::*;
     use std::time::Instant;
+
+    #[test]
+    fn commands_dont_get_the_hub_key() {
+        let command = shell("true");
+        let envs: Vec<_> = command.as_std().get_envs().collect();
+        assert!(envs.contains(&(std::ffi::OsStr::new("TAMALE_HUB_KEY"), None)));
+    }
 
     #[tokio::test]
     async fn interleaves_stdout_and_stderr_in_order() {

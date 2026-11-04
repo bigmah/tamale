@@ -62,8 +62,9 @@ opens in the web UI.
 
 **A key gives access to every machine that uses it.** Treat it like an SSH key. A compromised
 machine exposes the others on its key: in tamale's default `auto` permission mode, whoever holds
-the key can run commands on them without approval. Tools tamale runs as you can read the key, so
-a prompt injection could steal it. **So machines you trust alike share a key, and a throwaway VPS
+the key can run commands on them without approval. tamale keeps the key out of the environment of
+what it runs, so it doesn't turn up in a transcript by accident, but tools run as you and can read
+it wherever else you keep it, like your shell profile, so a prompt injection could steal it. **So machines you trust alike share a key, and a throwaway VPS
 gets its own.** A browser can hold several, and the list merges them.
 
 ## What encryption covers
@@ -71,7 +72,8 @@ gets its own.** A browser can hold several, and the list merges them.
 Sessions are end-to-end encrypted between tamale and the browser, and the hub only moves opaque
 bytes: it can't read prompts, replies, tool output, files, artifacts, titles or directories, and
 can't forge messages, so it can't type a prompt or approve a tool. `[hub] e2e = false` turns this
-off, for debugging.
+off, for debugging. Whether a session is encrypted is only the hub's word, so the terminal and the
+iPhone app refuse anything unsealed: such a session only opens in a browser.
 
 **What it doesn't cover:** the hub still serves the page code, so someone in control of it could
 change that code to steal a key the next time a page loads, or as one is made. It still sees

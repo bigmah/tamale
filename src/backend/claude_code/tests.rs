@@ -241,15 +241,21 @@ fn unrestricted() -> TurnCtx {
     TurnCtx::new(policy.shared(), None)
 }
 
-async fn rpc(url: &str, body: Value) -> (reqwest::StatusCode, String) {
+async fn rpc_as(url: &str, token: &str, body: Value) -> (reqwest::StatusCode, String) {
     let response = reqwest::Client::new()
         .post(url)
+        .bearer_auth(token)
         .header("accept", "application/json, text/event-stream")
         .json(&body)
         .send()
         .await
         .unwrap();
     (response.status(), response.text().await.unwrap())
+}
+
+/// What the CLI sends.
+async fn rpc(bridge: &Bridge, body: Value) -> (reqwest::StatusCode, String) {
+    rpc_as(&bridge.url, &bridge.token, body).await
 }
 
 #[tokio::test]
@@ -270,7 +276,7 @@ async fn bridge_serves_tamale_tools_over_mcp() {
     .unwrap();
 
     let (status, body) = rpc(
-        &bridge.url,
+        &bridge,
         json!({"jsonrpc": "2.0", "id": 1,
         "method": "initialize", "params": {"protocolVersion": "2025-11-25"}}),
     )
@@ -280,7 +286,7 @@ async fn bridge_serves_tamale_tools_over_mcp() {
     assert_eq!(body["result"]["protocolVersion"], "2025-11-25");
 
     let (status, _) = rpc(
-        &bridge.url,
+        &bridge,
         json!({"jsonrpc": "2.0",
         "method": "notifications/initialized"}),
     )
@@ -288,7 +294,7 @@ async fn bridge_serves_tamale_tools_over_mcp() {
     assert_eq!(status, 202);
 
     let (_, body) = rpc(
-        &bridge.url,
+        &bridge,
         json!({"jsonrpc": "2.0", "id": 2, "method": "server/discover"}),
     )
     .await;
@@ -296,7 +302,7 @@ async fn bridge_serves_tamale_tools_over_mcp() {
     assert_eq!(body["error"]["code"], -32601);
 
     let (_, body) = rpc(
-        &bridge.url,
+        &bridge,
         json!({"jsonrpc": "2.0", "id": 3, "method": "tools/list"}),
     )
     .await;
@@ -311,7 +317,7 @@ async fn bridge_serves_tamale_tools_over_mcp() {
 
     let path = dir.join("note.txt");
     let (_, body) = rpc(
-        &bridge.url,
+        &bridge,
         json!({"jsonrpc": "2.0", "id": 4, "method": "tools/call",
         "params": {"name": "read_file", "arguments": {"path": path}}}),
     )
@@ -330,15 +336,38 @@ async fn bridge_serves_tamale_tools_over_mcp() {
             .contains("pumpernickel")
     );
 
-    // Wrong token: not found, and no tool runs.
-    let wrong = bridge.url.rsplit_once('/').unwrap().0.to_string() + "/nope";
-    let (status, _) = rpc(
-        &wrong,
-        json!({"jsonrpc": "2.0", "id": 5, "method": "tools/list"}),
-    )
-    .await;
+    // Without the token nothing answers, and no tool runs.
+    let marker = dir.join("ran");
+    let call = json!({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {
+        "name": "bash", "arguments": {"command": format!("touch {}", marker.display())}}});
+    let (status, _) = rpc_as(&bridge.url, "nope", call.clone()).await;
+    assert_eq!(status, 401);
+    let unauthenticated = reqwest::Client::new()
+        .post(&bridge.url)
+        .json(&call)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauthenticated.status(), 401);
+    assert!(!marker.exists(), "a call without the token ran");
+    // Anywhere else isn't found, token or not.
+    let elsewhere = format!("{}/nope", bridge.url);
+    let (status, _) = rpc_as(&elsewhere, &bridge.token, call).await;
     assert_eq!(status, 404);
     assert!(rx.try_recv().is_err(), "the bridge reports nothing itself");
+
+    // What a CLI is told holds nothing another user could read and use.
+    assert!(!bridge.url.contains(&bridge.token));
+    assert!(
+        !bridge.config().contains(&bridge.token),
+        "{}",
+        bridge.config()
+    );
+    assert!(
+        bridge.config().contains("Bearer ${TAMALE_MCP_TOKEN}"),
+        "{}",
+        bridge.config()
+    );
 
     drop(bridge);
     let _ = std::fs::remove_dir_all(dir);
@@ -355,7 +384,7 @@ async fn bridge_refuses_calls_without_a_turn() {
     .await
     .unwrap();
     let (_, body) = rpc(
-        &bridge.url,
+        &bridge,
         json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
         "params": {"name": "bash", "arguments": {"command": "touch should-not-exist"}}}),
     )

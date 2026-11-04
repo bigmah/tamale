@@ -3,6 +3,10 @@
 // `hs1`, tamale `hs2`, and from then on every /web message travels sealed in `box` frames.
 // Reconnects with backoff, keeps retrying while the session's tamale is offline (503), and
 // stops for good on close code 4000 (the session ended, or the key is wrong).
+//
+// Nothing here takes plaintext. Whether a session is encrypted is only the hub's word, and a
+// hub that said one wasn't could then read what's typed here and forge its approvals. So, as in
+// the terminal, an unencrypted session (`[hub] e2e = false`) only opens in a browser.
 
 import Foundation
 
@@ -11,7 +15,7 @@ public enum ChannelState: Equatable, Sendable {
     case connecting
     /// Connected; the handshake is under way.
     case handshaking
-    case live(encrypted: Bool)
+    case live
     /// tamale is offline or the connection dropped; retrying.
     case retrying(String)
     /// Won't retry: the session ended, or the key doesn't fit.
@@ -24,9 +28,6 @@ public enum ChannelState: Equatable, Sendable {
 public final class SessionChannel {
     public let hub: HubClient
     public let sid: String
-    /// Whether the hub says the session is encrypted. tamale insists either way, but this
-    /// keeps a hub from talking the app into plaintext.
-    public var expectEncrypted: Bool
 
     public var onState: (ChannelState) -> Void = { _ in }
     public var onMessage: (Incoming) -> Void = { _ in }
@@ -38,17 +39,15 @@ public final class SessionChannel {
     private var task: URLSessionWebSocketTask?
     private var handshake: NoiseHandshake?
     private var transport: NoiseTransport?
-    private var plain = false
     private var retry = 0
     private var generation = 0
     private var wanted = false
     private var pinger: Task<Void, Never>?
     private let socketSession: URLSession
 
-    public init(hub: HubClient, sid: String, expectEncrypted: Bool = true) {
+    public init(hub: HubClient, sid: String) {
         self.hub = hub
         self.sid = sid
-        self.expectEncrypted = expectEncrypted
         let config = URLSessionConfiguration.ephemeral
         config.httpShouldSetCookies = false
         config.httpCookieAcceptPolicy = .never
@@ -89,14 +88,8 @@ public final class SessionChannel {
     /// Sends one message; false if not connected.
     @discardableResult
     public func send(_ message: Outgoing) -> Bool {
-        guard state.isLive, let task else { return false }
-        let text = message.json
-        if plain {
-            task.send(.string(text)) { _ in }
-            return true
-        }
-        guard var transport else { return false }
-        let boxes = transport.seal(text)
+        guard state.isLive, let task, var transport else { return false }
+        let boxes = transport.seal(message.json)
         self.transport = transport
         for m in boxes {
             let frame = Self.frame(["t": "box", "m": m])
@@ -115,7 +108,6 @@ public final class SessionChannel {
         task = nil
         handshake = nil
         transport = nil
-        plain = false
     }
 
     private func connect() {
@@ -234,13 +226,13 @@ public final class SessionChannel {
 
     /// Handles one frame; anything out of place drops the connection, and with it
     /// whatever was forged.
-    private func frame(_ text: String, _ task: URLSessionWebSocketTask) {
+    func frame(_ text: String, _ task: URLSessionWebSocketTask) {
         do {
             guard let object = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
                   let t = object["t"] as? String
             else { throw NoiseError.badFlag }
             switch t {
-            case "hs0" where handshake == nil && transport == nil && !plain:
+            case "hs0" where handshake == nil && transport == nil:
                 guard let n = object["n"] as? String, let nonce = Data(lenientBase64: n) else { throw NoiseError.notBase64 }
                 var hs = NoiseHandshake(psk: hub.key.psk, sid: sid, nonce: nonce)
                 let first = hs.first(Data(#"{"v":1}"#.utf8))
@@ -250,30 +242,26 @@ public final class SessionChannel {
                 guard let m = object["m"] as? String, let message = Data(lenientBase64: m) else { throw NoiseError.notBase64 }
                 transport = try handshake!.finish(message)
                 handshake = nil
-                ready(encrypted: true)
+                ready()
             case "box" where transport != nil:
                 guard let m = object["m"] as? String else { throw NoiseError.notBase64 }
                 if let message = try transport!.open(m) {
                     deliver(message)
                 }
             default:
-                // Plaintext, which only an unencrypted session (an old tamale, or
-                // `[hub] e2e = false`) may send.
-                guard !expectEncrypted, handshake == nil, transport == nil else { throw NoiseError.badFlag }
-                if !plain {
-                    plain = true
-                    ready(encrypted: false)
-                }
-                deliver(text)
+                guard handshake == nil, transport == nil else { throw NoiseError.badFlag }
+                // Plaintext from the start: not worth retrying, whoever's sending it.
+                teardown()
+                state = .stopped("This session isn't encrypted ([hub] e2e = false there), so it only opens in a browser.")
             }
         } catch {
             dropped("The encrypted connection broke. Reconnecting…")
         }
     }
 
-    private func ready(encrypted: Bool) {
+    private func ready() {
         retry = 0
-        state = .live(encrypted: encrypted)
+        state = .live
     }
 
     private func deliver(_ text: String) {
