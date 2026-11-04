@@ -245,6 +245,8 @@ pub struct App {
     web_session: bool,
     /// Viewers connected through a tamale-hub, while connected to one.
     hub_viewers: Option<usize>,
+    /// Whether the hub connection is up, rather than still being tried.
+    hub_live: bool,
     /// A reply being continued in place after a token limit cut it off inside a code
     /// block: its entry and its length before the continuation.
     joining: Option<(usize, usize)>,
@@ -336,6 +338,7 @@ impl App {
             busy_since: None,
             web_session: false,
             hub_viewers: None,
+            hub_live: false,
             joining: None,
             should_quit: false,
             detachable: false,
@@ -457,7 +460,7 @@ impl App {
     }
 
     fn send_prompt(&mut self, text: String) {
-        let prompt = if self.web_session {
+        let prompt = if self.writes_for_web() {
             format!("{text}{}", crate::web::ARTIFACT_PROMPT)
         } else {
             text.clone()
@@ -483,7 +486,7 @@ impl App {
             prompt,
             thread: self.thread.clone(),
             config: agent::TurnConfig {
-                web_ui: self.web_session,
+                web_ui: self.writes_for_web(),
                 ..self.settings.turn_config(self.context_tokens)
             },
             workspace: self.workspace.clone(),

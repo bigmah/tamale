@@ -89,7 +89,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ),
     (
         "/remote [off]",
-        "Make the session reachable anywhere through tamale-hub.com (set TAMALE_HUB_KEY to a key made on the site; encrypted so the hub can't read it); /remote off disconnects (the Remote tab connects too)",
+        "Make the session reachable anywhere through tamale-hub.com (set TAMALE_HUB_KEY to a key made on the site; encrypted so the hub can't read it); esc on its screen goes back to the TUI and stays connected, /remote shows the screen again, /remote off or x there disconnects (the Remote tab shows on/off and does the same as /remote)",
     ),
     (
         "/artifacts",
@@ -141,7 +141,7 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
                 "Focus the tabs: ←/→ pick Remote (like /remote), Web (like /web) or Diff, Enter/↓ opens it; ↑ or Esc back",
             ),
             ("Ctrl+O / click Web", "Open the web UI on your Wi-Fi, like /web"),
-            ("Click Remote", "Connect to the hub, like /remote"),
+            ("Click Remote", "Connect to the hub or show its QR code, like /remote"),
             ("v / V (in a diff)", "Select lines; Enter quotes them into the prompt, y copies"),
             ("Esc", "Interrupt the agent (unsent queued messages return to the input)"),
             (

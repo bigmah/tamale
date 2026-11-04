@@ -253,7 +253,7 @@ fn web_tab_click_ctrl_o_or_down_left_enter_open_the_web_ui() {
     );
     let lines = screen_lines(&mut app, 100, 30);
     let footer = &lines[28];
-    assert!(footer.ends_with(" ⇄ Remote  ◉ Web  Chat   "), "{footer}");
+    assert!(footer.ends_with(" ⇄ Remote off  ◉ Web  Chat   "), "{footer}");
 
     let click = |column, row| {
         Event::Mouse(MouseEvent {
@@ -287,7 +287,7 @@ fn web_tab_click_ctrl_o_or_down_left_enter_open_the_web_ui() {
     app.on_event(key(KeyCode::Down));
     assert_eq!(app.tab_focus, Some(FooterTab::Chat));
     let footer = screen_lines(&mut app, 100, 30)[28].clone();
-    assert!(footer.ends_with("← ⇄ Remote  ◉ Web  Chat   "), "{footer}");
+    assert!(footer.ends_with("← ⇄ Remote off  ◉ Web  Chat   "), "{footer}");
     // ← only highlights Web; Enter or ↓ opens it.
     app.on_event(key(KeyCode::Left));
     assert_eq!(app.tab_focus, Some(FooterTab::Web));
@@ -369,6 +369,47 @@ fn web_tab_click_ctrl_o_or_down_left_enter_open_the_web_ui() {
 }
 
 #[test]
+fn the_remote_tab_says_whether_the_hub_is_connected_and_stays_clickable() {
+    use super::WebRequest;
+    use crossterm::event::{MouseButton, MouseEvent};
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("claude-sonnet-4-6"),
+        Workspace::current().unwrap(),
+    );
+    let footer = |app: &mut App| screen_lines(app, 100, 30)[28].clone();
+    assert!(footer(&mut app).contains("⇄ Remote off"));
+    // Still being tried isn't reachable yet.
+    app.set_hub_viewers(Some(0));
+    assert!(footer(&mut app).contains("⇄ Remote off"));
+    app.set_hub_live(true);
+    let on = footer(&mut app);
+    assert!(on.ends_with(" ⇄ Remote on  ◉ Web  Chat   "), "{on}");
+    // The narrower tab is still where a click lands, on it and on Web beside it.
+    let click = |column| {
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row: 28,
+            modifiers: KeyModifiers::NONE,
+        })
+    };
+    app.on_event(click(73));
+    assert!(matches!(
+        app.take_web_request(),
+        Some(WebRequest::Remote { on: true })
+    ));
+    app.on_event(click(86));
+    assert!(matches!(
+        app.take_web_request(),
+        Some(WebRequest::Open { .. })
+    ));
+    app.set_hub_viewers(None);
+    assert!(footer(&mut app).contains("⇄ Remote off"), "a stale live doesn't count");
+}
+
+#[test]
 fn the_web_session_screen_shows_what_became_of_the_hub() {
     let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
     let (app, _rx) = App::new_with_channel(
@@ -376,11 +417,11 @@ fn the_web_session_screen_shows_what_became_of_the_hub() {
         test_settings("claude-sonnet-4-6"),
         Workspace::current().unwrap(),
     );
-    let screen = |remote| {
+    let screen_at = |url: &str, remote| {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 60)).unwrap();
         terminal
-            .draw(|f| app.draw_web_session(f, "http://127.0.0.1:1/?t=x", remote, 0))
+            .draw(|f| app.draw_web_session(f, url, remote, 0))
             .unwrap();
         let buffer = terminal.backend().buffer();
         (0..60)
@@ -392,6 +433,7 @@ fn the_web_session_screen_shows_what_became_of_the_hub() {
             .collect::<Vec<_>>()
             .join("\n")
     };
+    let screen = |remote| screen_at("http://127.0.0.1:1/?t=x", remote);
     use crate::web::HubState;
     let refused = screen(Some(HubState::Connecting(Some(
         "The hub refused this session".into(),
@@ -401,8 +443,18 @@ fn the_web_session_screen_shows_what_became_of_the_hub() {
     assert!(screen(Some(HubState::Connecting(None))).contains("Connecting to the hub"));
     let live = screen(Some(HubState::Live("https://hub.example/open/ab")));
     assert!(live.contains("https://hub.example/open/ab"), "{live}");
-    assert!(live.contains("stop serving"), "esc says what it does");
-    assert!(!screen(None).contains("hub"));
+    assert!(live.contains("back to the session"), "esc says what it does");
+    assert!(live.contains("turn remote off"), "{live}");
+    let local = screen(None);
+    assert!(!local.contains("hub"));
+    assert!(local.contains("stop serving"), "{local}");
+    assert!(!local.contains("turn remote off"), "{local}");
+    // On the network, esc still closes it: the TUI wouldn't show it's open.
+    let lan = screen_at(
+        "http://192.168.1.2:1/?t=x",
+        Some(HubState::Live("https://hub.example/open/ab")),
+    );
+    assert!(lan.contains("stop serving"), "{lan}");
 }
 
 #[test]
@@ -1584,12 +1636,12 @@ async fn arrow_keys_switch_between_chat_and_diff_tabs() {
     assert!(!app.diff_open);
     app.on_event(key(KeyCode::Down));
     let footer = screen_lines(&mut app, 100, 30)[28].clone();
-    assert!(footer.contains("← ⇄ Remote  ◉ Web  Chat  Diff 2 +2 −0 → "), "{footer}");
+    assert!(footer.contains("← ⇄ Remote off  ◉ Web  Chat  Diff 2 +2 −0 → "), "{footer}");
     // → highlights Diff without opening it; ↓ (or Enter) opens it.
     app.on_event(key(KeyCode::Right));
     assert!(!app.diff_open);
     let footer = screen_lines(&mut app, 100, 30)[28].clone();
-    assert!(footer.contains("← ⇄ Remote  ◉ Web  Chat  Diff 2 +2 −0   "), "{footer}");
+    assert!(footer.contains("← ⇄ Remote off  ◉ Web  Chat  Diff 2 +2 −0   "), "{footer}");
     app.on_event(key(KeyCode::Down));
     assert!(app.diff_open);
     let event = rx.recv().await.unwrap();
@@ -1777,6 +1829,13 @@ async fn web_sessions_ask_for_artifacts_but_show_the_prompt_as_typed() {
     app.set_web_session(false);
     app.web_send("and now?".into());
     assert!(!last_prompt(&app).contains("html artifact"));
+    app.task.take().unwrap().abort();
+    app.on_agent(app.turn, AgentEvent::Done);
+
+    // Back in the TUI with a phone still watching through the hub, it gets artifacts too.
+    app.set_hub_viewers(Some(1));
+    app.web_send("from the phone".into());
+    assert!(last_prompt(&app).contains("html artifact"));
     app.task.take().unwrap().abort();
     app.finish_saves().await;
     unsafe { std::env::remove_var("TAMALE_SESSIONS_DIR") };

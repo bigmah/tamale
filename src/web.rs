@@ -502,6 +502,12 @@ impl Server {
         self.relay.as_ref().map(|r| r.open_url.as_str())
     }
 
+    /// The link for `o` and `c` on the terminal's screen: the hub's while connected to one,
+    /// since it works from any device and the local one doesn't.
+    pub fn share_url(&self) -> &str {
+        self.hub_url().unwrap_or(&self.url)
+    }
+
     /// How the connection to the hub is going, for the terminal's screen.
     pub fn hub_state(&self) -> Option<HubState<'_>> {
         let relay = self.relay.as_ref()?;
@@ -1160,6 +1166,23 @@ mod tests {
         assert_eq!(sessions[0]["items"][0]["hash"], content_hash("<title>New</title>"));
         assert_eq!(sessions[1]["items"][0]["title"], "Old");
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn the_share_link_is_the_hubs_while_connected_to_one() {
+        let mut server = Server::start(false).await.unwrap();
+        let local = server.url.clone();
+        assert_eq!(server.share_url(), local);
+        let label = relay::Label {
+            host: "h".into(),
+            cwd: "c".into(),
+            model: "m".into(),
+        };
+        // Nothing listens there: the link doesn't wait for the connection.
+        server.connect_hub("ws://127.0.0.1:1", "token", label, None);
+        assert_eq!(server.share_url(), relay::open_url("ws://127.0.0.1:1", relay::sid()));
+        assert!(server.disconnect_hub());
+        assert_eq!(server.share_url(), local);
     }
 
     #[tokio::test]

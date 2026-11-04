@@ -255,9 +255,13 @@ async fn web_event(web: &mut Option<web::Server>) -> Option<web::WebEvent> {
 async fn web_request(app: &mut App, web: &mut Option<web::Server>, request: WebRequest) {
     match request {
         WebRequest::Open { lan } => {
-            // Switching between local and LAN serving restarts on the other address.
-            if web.as_ref().is_some_and(|w| w.lan != lan) {
+            // Switching between local and LAN serving restarts on the other address, which
+            // mustn't cost the session its hub connection.
+            let mut reconnect = false;
+            if let Some(server) = web.as_ref().filter(|w| w.lan != lan) {
+                reconnect = server.hub_url().is_some();
                 *web = None;
+                app.set_hub_viewers(None);
             }
             if web.is_none() {
                 let started = match web::Server::start(lan).await {
@@ -276,20 +280,22 @@ async fn web_request(app: &mut App, web: &mut Option<web::Server>, request: WebR
             }
             // The terminal shows the address instead of the conversation from now on.
             if let Some(server) = web {
+                if reconnect {
+                    match connect_hub(app, server) {
+                        Ok(()) => app.set_hub_viewers(Some(0)),
+                        Err(message) => app.on_web(Err(message)),
+                    }
+                }
                 browser::open(&server.url);
                 app.set_web_session(true);
             }
         }
         WebRequest::Remote { on: true } => {
             // Before anything opens: without a key there's nothing to connect with.
-            let hub = app.settings_hub().clone();
-            let key = match hub.key_bytes() {
-                Ok(key) => key,
-                Err(message) => {
-                    app.on_web(Err(message));
-                    return;
-                }
-            };
+            if let Err(message) = app.settings_hub().key_bytes() {
+                app.on_web(Err(message));
+                return;
+            }
             if web.is_none() {
                 match web::Server::start(false).await {
                     Ok(server) => *web = Some(server),
@@ -300,14 +306,11 @@ async fn web_request(app: &mut App, web: &mut Option<web::Server>, request: WebR
                 }
             }
             if let Some(server) = web {
-                if server.hub_url().is_none() {
-                    web::e2e::remove_old_pairing_key();
-                    server.connect_hub(
-                        &hub.url,
-                        &tamale_hub_protocol::auth_value(&key),
-                        app.hub_label(),
-                        hub.e2e.then(|| web::e2e::Keys::from_key(&key)),
-                    );
+                if server.hub_url().is_none()
+                    && let Err(message) = connect_hub(app, server)
+                {
+                    app.on_web(Err(message));
+                    return;
                 }
                 app.set_web_session(true);
                 app.set_hub_viewers(Some(server.remote_tabs()));
@@ -333,29 +336,37 @@ async fn web_request(app: &mut App, web: &mut Option<web::Server>, request: WebR
     }
 }
 
+/// Connects `server` to the hub in the settings.
+fn connect_hub(app: &App, server: &mut web::Server) -> Result<(), String> {
+    let hub = app.settings_hub();
+    let key = hub.key_bytes()?;
+    web::e2e::remove_old_pairing_key();
+    server.connect_hub(
+        &hub.url,
+        &tamale_hub_protocol::auth_value(&key),
+        app.hub_label(),
+        hub.e2e.then(|| web::e2e::Keys::from_key(&key)),
+    );
+    Ok(())
+}
+
 /// With `[hub] connect = "auto"`, makes the session reachable through the hub from the
 /// start, without taking over the terminal the way `/remote` does.
 async fn connect_hub_on_start(app: &mut App, web: &mut Option<web::Server>) {
-    let hub = app.settings_hub().clone();
+    let hub = app.settings_hub();
     if hub.connect != config::HubConnect::Auto {
         return;
     }
-    let key = match hub.key_bytes() {
-        Ok(key) => key,
-        Err(message) => {
-            app.on_web(Err(message));
-            return;
-        }
-    };
+    if let Err(message) = hub.key_bytes() {
+        app.on_web(Err(message));
+        return;
+    }
     match web::Server::start(false).await {
         Ok(mut server) => {
-            web::e2e::remove_old_pairing_key();
-            server.connect_hub(
-                &hub.url,
-                &tamale_hub_protocol::auth_value(&key),
-                app.hub_label(),
-                hub.e2e.then(|| web::e2e::Keys::from_key(&key)),
-            );
+            if let Err(message) = connect_hub(app, &mut server) {
+                app.on_web(Err(message));
+                return;
+            }
             app.set_hub_viewers(Some(0));
             *web = Some(server);
         }
@@ -374,13 +385,26 @@ async fn web_session_key(app: &mut App, web: &mut Option<web::Server>, event: &E
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.quit_or_detach();
         }
-        KeyCode::Char('o') => browser::open(&server.url),
+        KeyCode::Char('o') => browser::open(server.share_url()),
         KeyCode::Char('c') => {
-            let url = server.url.clone();
+            let url = server.share_url().to_string();
             tokio::spawn(async move { clipboard::write(&url).await });
         }
+        // The hub stays connected behind the TUI, as with `[hub] connect = "auto"`. A server
+        // on the network doesn't: nothing in the TUI would say it's still open to it.
         KeyCode::Esc | KeyCode::Char('q') => {
-            web_request(app, web, WebRequest::Close).await;
+            if server.hub_url().is_some() && !server.lan {
+                app.set_web_session(false);
+            } else {
+                web_request(app, web, WebRequest::Close).await;
+            }
+        }
+        KeyCode::Char('x') if server.hub_url().is_some() => {
+            let lan = server.lan;
+            web_request(app, web, WebRequest::Remote { on: false }).await;
+            if !lan {
+                app.set_web_session(false);
+            }
         }
         _ => {}
     }
@@ -560,6 +584,7 @@ async fn run(
                     if let Some(w) = &web
                         && w.hub_url().is_some() {
                             app.set_hub_viewers(Some(w.remote_tabs()));
+                            app.set_hub_live(matches!(w.hub_state(), Some(web::HubState::Live(_))));
                         }
                     let session = web
                         .as_ref()

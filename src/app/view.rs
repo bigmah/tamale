@@ -506,9 +506,15 @@ impl App {
         // Arrows show where ← and → can still go.
         let arrow =
             |s: &'static str, shown: bool| Span::from(if shown { s } else { " " }).fg(Color::Cyan);
+        let remote_on = self.remote_on();
+        let remote_tab = if remote_on { REMOTE_ON_TAB } else { REMOTE_OFF_TAB };
+        let mut remote_style = style(FooterTab::Remote, Color::Blue);
+        if remote_on && !picked(FooterTab::Remote) {
+            remote_style = remote_style.fg(Color::Green);
+        }
         let mut tabs = vec![
             arrow("←", focus.is_some_and(|t| t != FooterTab::Remote)),
-            Span::styled(REMOTE_TAB, style(FooterTab::Remote, Color::Blue)),
+            Span::styled(remote_tab, remote_style),
             Span::styled(WEB_TAB, style(FooterTab::Web, Color::Blue)),
         ];
         let remote_offset = tabs[0].content.width() as u16;
@@ -573,6 +579,9 @@ impl App {
             "↑/↓ j/k scroll · pgup/pgdn page · esc close"
         } else if let Some(tab) = self.tab_focus {
             match tab {
+                FooterTab::Remote if self.hub_viewers.is_some() => {
+                    "enter/↓ show the QR code · ←/→ choose · ↑ back"
+                }
                 FooterTab::Remote => "enter/↓ connect to the hub · ←/→ choose · ↑ back",
                 FooterTab::Web => "enter/↓ open the web UI · ←/→ choose · ↑ back",
                 FooterTab::Diff => "enter/↓ open the diff · ←/→ choose · ↑ back",
@@ -655,7 +664,7 @@ impl App {
         frame.render_widget(Line::from(tabs).right_aligned(), area);
         // Clickable where it was drawn, right-aligned with the rest of the tabs.
         let start = (area.x + area.width).saturating_sub(tabs_width as u16) + remote_offset;
-        let remote_width = REMOTE_TAB.width() as u16;
+        let remote_width = remote_tab.width() as u16;
         self.remote_tab = Some(Rect::new(start, area.y, remote_width, 1).intersection(area));
         self.web_tab = Some(
             Rect::new(start + remote_width, area.y, WEB_TAB.width() as u16, 1).intersection(area),
@@ -663,7 +672,8 @@ impl App {
     }
 }
 
-const REMOTE_TAB: &str = " ⇄ Remote ";
+const REMOTE_ON_TAB: &str = " ⇄ Remote on ";
+const REMOTE_OFF_TAB: &str = " ⇄ Remote off ";
 const WEB_TAB: &str = " ◉ Web ";
 
 /// Compact token count, e.g. 950, 12.3k, 1.2M.

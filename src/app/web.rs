@@ -22,7 +22,7 @@ impl App {
         self.web_request = Some(WebRequest::Open { lan: true });
     }
 
-    /// Asks to connect to the hub, as `/remote` and the Remote tab do.
+    /// Asks to connect to the hub and show its code, as `/remote` and the Remote tab do.
     pub(super) fn open_remote(&mut self) {
         self.web_request = Some(WebRequest::Remote { on: true });
     }
@@ -98,8 +98,8 @@ impl App {
         }
     }
 
-    /// Starts or ends the web session: while it lasts, prompts ask for replies written
-    /// for the web UI, and the terminal shows [`Self::draw_web_session`] instead.
+    /// Starts or ends the web session: while it lasts, the terminal shows
+    /// [`Self::draw_web_session`] instead of the TUI.
     pub fn set_web_session(&mut self, on: bool) {
         self.web_session = on;
     }
@@ -108,9 +108,24 @@ impl App {
         self.web_session
     }
 
+    /// Whether prompts ask for replies written for the web UI: during a web session, or
+    /// while a browser or phone is watching through the hub from behind the TUI.
+    pub(super) fn writes_for_web(&self) -> bool {
+        self.web_session || self.hub_viewers.is_some_and(|viewers| viewers > 0)
+    }
+
     /// What the footer's hub indicator shows: `None` when not connected to a hub.
     pub fn set_hub_viewers(&mut self, viewers: Option<usize>) {
         self.hub_viewers = viewers;
+    }
+
+    pub fn set_hub_live(&mut self, live: bool) {
+        self.hub_live = live;
+    }
+
+    /// Whether the session is reachable through the hub right now.
+    pub(super) fn remote_on(&self) -> bool {
+        self.hub_viewers.is_some() && self.hub_live
     }
 
     pub fn settings_hub(&self) -> &crate::config::HubSettings {
@@ -144,6 +159,13 @@ impl App {
     ) {
         let dim = Style::new().fg(Color::DarkGray);
         let key = |k: &'static str| Span::from(k).fg(Color::Cyan).bold();
+        let hub = remote.is_some();
+        // Esc only stops serving what the TUI wouldn't show is still open (see main.rs).
+        let esc = if hub && url.starts_with("http://127.0.0.1") {
+            " back to the session   "
+        } else {
+            " stop serving, back to the terminal   "
+        };
         let state = if self.approval.is_some() {
             Line::from(vec![
                 Span::from("● ").fg(Color::Yellow),
@@ -204,6 +226,28 @@ impl App {
             lines.extend(qr_lines(url));
             lines.push(Line::default());
         }
+        let mut keys = vec![
+            key("o"),
+            Span::styled(" open in browser   ", dim),
+            key("c"),
+            Span::styled(" copy link   ", dim),
+            key("esc"),
+            Span::styled(esc, dim),
+        ];
+        if hub {
+            keys.extend([key("x"), Span::styled(" turn remote off   ", dim)]);
+        }
+        keys.extend([
+            key("ctrl+c"),
+            Span::styled(
+                if self.detachable && self.is_running() {
+                    " detach"
+                } else {
+                    " quit"
+                },
+                dim,
+            ),
+        ]);
         lines.extend([
             state,
             Line::styled(
@@ -215,23 +259,7 @@ impl App {
                 dim,
             ),
             Line::default(),
-            Line::from(vec![
-                key("o"),
-                Span::styled(" open in browser   ", dim),
-                key("c"),
-                Span::styled(" copy link   ", dim),
-                key("esc"),
-                Span::styled(" stop serving, back to the terminal   ", dim),
-                key("ctrl+c"),
-                Span::styled(
-                    if self.detachable && self.is_running() {
-                        " detach"
-                    } else {
-                        " quit"
-                    },
-                    dim,
-                ),
-            ]),
+            Line::from(keys),
         ]);
         let area = frame.area();
         let body = Paragraph::new(lines)

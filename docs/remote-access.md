@@ -26,8 +26,10 @@ The designs are in [`single_key.md`](../single_key.md) (keys),
    ```
 
    tamale never makes a key: without one, `/remote` says where to get one. It connects to
-   tamale-hub.com unless `[hub] url` or `TAMALE_HUB_URL` says otherwise. `/remote off`
-   disconnects, and `[hub] connect = "auto"` connects on startup.
+   tamale-hub.com unless `[hub] url` or `TAMALE_HUB_URL` says otherwise. It shows the session's
+   QR code; `esc` goes back to the TUI and stays connected, and the footer's tab says **Remote
+   on** or **off**. `/remote` or the tab shows the code again. `/remote off`, or `x` on that
+   screen, disconnects, and `[hub] connect = "auto"` connects on startup.
 3. **On your phone**, scan the key's QR code from the site, once. Your sessions are listed
    there; tap one to drive it. Add the page to the home screen for an app-like icon, or use the
    [iPhone app](ios.md), which keeps the key in the Keychain and artifacts on the phone.
