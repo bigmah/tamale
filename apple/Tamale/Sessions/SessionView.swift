@@ -1,4 +1,5 @@
-// One session: the conversation, its status, any approval waiting, and the composer.
+// One session: the conversation, its status, any approval or questions waiting, and the
+// composer.
 
 import SwiftUI
 import TamaleKit
@@ -41,11 +42,23 @@ struct SessionView: View {
                 }
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
+            if let question = model.question {
+                QuestionCard(asked: question) { answers in
+                    model.answer(answers)
+                }
+                // Fresh picks for each new set of questions.
+                .id(question)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
             Composer(model: model, draft: $draft, focused: $composing)
         }
         .animation(.snappy, value: model.approval)
+        .animation(.snappy, value: model.question)
         // With the keyboard up as well, there'd be no conversation left to see what it's about.
         .onChange(of: model.approval == nil) { _, none in
+            if !none { composing = false }
+        }
+        .onChange(of: model.question == nil) { _, none in
             if !none { composing = false }
         }
         .background(Theme.background)

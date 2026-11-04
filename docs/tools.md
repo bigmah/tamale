@@ -10,6 +10,7 @@
 | `web_fetch` | Read a URL as numbered text, with extracted links and line pagination |
 | `bash` | Run builds, tests, git, and other shell commands |
 | `agent` | Hand a self-contained task to a subagent and get back its report |
+| `ask_user` | Ask you 1–4 multiple-choice questions and wait for your answers |
 
 `grep` and `glob` are built into the binary; no `rg` installation is needed. They
 respect `.gitignore`, `.ignore`, and global Git ignores, skip hidden files, and
@@ -63,6 +64,22 @@ could make itself.
   needs no approval itself; `deny = ["agent"]` turns subagents off.
 - Subagents can't start subagents, and they run one at a time. Their usage counts in
   the session totals but not in the context meter. Esc stops them with the turn.
+
+## Questions
+
+When the model needs a decision only you can make, it calls `ask_user` with 1–4 questions,
+each with 2–6 options (single or multiple choice). The terminal shows them in a popup:
+
+- `↑`/`↓` move, `Enter` or a number picks an option; on a multiple-choice question `Space`
+  or a number toggles options and `Enter` confirms.
+- The last option, **Type something else…**, takes your own answer instead (or as well).
+- With several questions, `←`/`→` or `Tab` go between them, and a review page sends them all.
+  `Esc` interrupts the turn.
+
+The web UI and the iPhone app show the same questions as a card to click or tap through (in
+the browser, `1`–`9`, `⏎` and `←`/`→` work too when you're not typing). A message you send
+instead also answers them, which is how it works when driving a session from another terminal. Subagents and `-p` runs can't ask; they're told to make an assumption and say so.
+`deny = ["ask_user"]` turns questions off.
 
 Every tool call carries a short model-written `description` ("Find where tool calls are
 rendered"). The chat shows that as the step's label, with the raw call dimmed after it, so a

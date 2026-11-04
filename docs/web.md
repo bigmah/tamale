@@ -53,6 +53,8 @@ back to the terminal, and `Ctrl+C` quits. Any number of tabs can be open.
   fold. Type `/` for a menu of commands. `Enter` sends (or queues while the agent works),
   `Shift+Enter` adds a new line, `↑`/`↓` recall earlier prompts and `Esc` interrupts.
   Approvals appear above the prompt: answer with the buttons or `y`, `a` and `n`.
+  The agent's questions do too, as a card: click options (or press `1`–`9`), type your own
+  answer if none fit, and press **Next** / **Send answers** or `⏎`; `←`/`→` switch questions.
   The top bar shows the permission mode (click to cycle), the model, context use and
   cost.
 - **Code.** `/code` (or `⌘B`) opens the code browser beside the chat, with a file tree,

@@ -272,7 +272,8 @@ struct Composer: View {
                     .lineLimit(2)
             }
             HStack(alignment: .bottom, spacing: 8) {
-                TextField(model.busy ? "Queue a message…" : "Ask tamale…", text: $draft, axis: .vertical)
+                TextField(model.question != nil ? "Or reply in your own words…" : model.busy ? "Queue a message…" : "Ask tamale…",
+                          text: $draft, axis: .vertical)
                     .lineLimit(1...8)
                     .focused(focused)
                     .padding(.horizontal, 12)

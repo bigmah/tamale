@@ -941,3 +941,47 @@ fn open_fences_are_detected_only_until_closed() {
     assert!(!open("just `inline` code"));
     assert!(open("~~~\n```\n"));
 }
+
+#[tokio::test]
+async fn ask_user_waits_for_answers_only_when_someone_can_answer() {
+    use crate::tools::ask::{Answer, Reply};
+    let workspace = Workspace::current().unwrap();
+    let args = json!({
+        "description": "Pick a database",
+        "questions": [{ "question": "Which database?", "options": [{ "label": "Postgres" }, { "label": "SQLite" }] }]
+    });
+
+    // Non-interactive runs (and subagents) get told to assume instead.
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (output, is_error) = unrestricted()
+        .call_tool("ask_user", args.clone(), &workspace, &tx)
+        .await;
+    assert!(is_error && output.contains("reasonable assumption"), "{output}");
+    assert!(rx.try_recv().is_err());
+
+    let mut ctx = unrestricted().interactive();
+    let (output, is_error) = ctx
+        .call_tool("ask_user", json!({ "questions": [] }), &workspace, &tx)
+        .await;
+    assert!(is_error && output.contains("at least one"), "{output}");
+
+    let answering = tokio::spawn(async move {
+        match rx.recv().await {
+            Some(AgentEvent::Ask { description, questions, reply }) => {
+                assert_eq!(description, "Pick a database");
+                assert_eq!(questions[0].options[1].label, "SQLite");
+                reply
+                    .send(Reply::Answers(vec![Answer { chosen: vec!["SQLite".into()], other: None }]))
+                    .unwrap();
+            }
+            _ => panic!("expected the questions"),
+        }
+        // Dropping the reply dismisses the next questions.
+        drop(rx.recv().await);
+    });
+    let (output, is_error) = ctx.call_tool("ask_user", args.clone(), &workspace, &tx).await;
+    assert!(!is_error && output.contains("Which database? → SQLite"), "{output}");
+    let (output, is_error) = ctx.call_tool("ask_user", args, &workspace, &tx).await;
+    assert!(is_error && output.contains("dismissed"), "{output}");
+    answering.await.unwrap();
+}

@@ -21,13 +21,13 @@ impl App {
                 self.tab_focus = None;
                 self.on_paste(&text)
             }
-            Event::Mouse(mouse) if self.diff_open && self.approval.is_none() => {
+            Event::Mouse(mouse) if self.diff_open && !self.waiting_for_user() => {
                 self.on_diff_mouse(mouse)
             }
             Event::Mouse(mouse) => match mouse.kind {
                 MouseEventKind::ScrollUp => self.on_wheel(true),
                 MouseEventKind::ScrollDown => self.on_wheel(false),
-                MouseEventKind::Down(MouseButton::Left) if self.approval.is_none() => {
+                MouseEventKind::Down(MouseButton::Left) if !self.waiting_for_user() => {
                     let at = Position::new(mouse.column, mouse.row);
                     let tab = self.tab_areas.iter().find(|(_, area)| area.contains(at));
                     if let Some(&(tab, _)) = tab {
@@ -120,6 +120,10 @@ impl App {
         // A waiting tool call takes the keyboard from everything else.
         if self.approval.is_some() {
             self.on_approval_key(key, ctrl);
+            return;
+        }
+        if self.question.is_some() {
+            self.on_question_key(key, ctrl);
             return;
         }
 
@@ -309,7 +313,9 @@ impl App {
 
     pub(super) fn on_paste(&mut self, text: &str) {
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
-        if let Some(approval) = &mut self.approval {
+        if self.question.is_some() {
+            self.on_question_paste(&text);
+        } else if let Some(approval) = &mut self.approval {
             if let Some(reason) = &mut approval.reason {
                 reason.push_str(&text.replace('\n', " "));
             }

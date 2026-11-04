@@ -218,7 +218,7 @@ impl App {
 
     pub(super) fn draw_remote_view(&mut self, frame: &mut Frame) {
         let area = frame.area();
-        let local_waiting = self.approval.is_some();
+        let local_waiting = self.waiting_for_user();
         let (rows, cursor) = wrap_input(
             &self.input,
             self.cursor,

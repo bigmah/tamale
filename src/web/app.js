@@ -1,7 +1,7 @@
 // tamale's web UI: the conversation first, with a code browser beside it (/code).
 //
 // One WebSocket carries everything (see src/web.rs). tamale sends the session as JSON:
-// `entries` (from an index on, replacing what was there), `status` and `approval`.
+// `entries` (from an index on, replacing what was there), `status`, `approval` and `question`.
 // The page sends prompts, interrupts and approvals, and asks for the file tree, files
 // and searches, whose replies carry the request's `seq` so stale ones are dropped.
 
@@ -190,6 +190,11 @@ const state = {
   status: null,
   approval: null,
   approvalAt: 0,
+  /** The agent's questions: { description, questions }, the answers so far and which is shown. */
+  question: null,
+  questionAt: 0,
+  answers: [],
+  asking: 0,
   /** From the server's `tree`: [{ name, path, files, total }]. */
   roots: [],
   fileSets: [],
@@ -399,6 +404,8 @@ function onMessage(m) {
       return applyStatus(m.status);
     case 'approval':
       return applyApproval(m.approval);
+    case 'question':
+      return applyQuestion(m.question);
     case 'roots':
       return request('tree');
     case 'tree':
@@ -905,6 +912,7 @@ function resolvePath(raw) {
 function activityLabel() {
   const s = state.status;
   if (state.approval) return 'Waiting for your approval';
+  if (state.question) return 'Waiting for your answer';
   if (s.compacting) return 'Compacting the conversation';
   const last = state.entries[state.entries.length - 1];
   if (last?.kind === 'tool' && last.output == null) return last.description;
@@ -919,7 +927,7 @@ function updateActivity() {
   const stick = nearBottom();
   node.hidden = !running;
   if (!running) return;
-  node.classList.toggle('waiting', !!state.approval);
+  node.classList.toggle('waiting', !!(state.approval || state.question));
   $('act-label').textContent = activityLabel();
   $('act-time').textContent = s.since ? fmtElapsed(Math.max(0, Math.floor(Date.now() / 1000) - s.since)) : '';
   if (stick) scrollToBottom();
@@ -1033,6 +1041,186 @@ function approvalKey(ev) {
   if (key === 'y') send({ t: 'approve', choice: 'yes' });
   else if (key === 'a' && state.approval.always.length) send({ t: 'approve', choice: 'always' });
   else if (key === 'n') $('approval')._deny?.();
+  else return false;
+  ev.preventDefault();
+  return true;
+}
+
+// ---------------------------------------------------------------- questions
+
+const answered = (a) => a.chosen.length > 0 || a.other.trim() !== '';
+
+function applyQuestion(q) {
+  const had = state.question;
+  const node = $('question');
+  // A resync sends the same questions again; keep what's been picked.
+  if (q && had && JSON.stringify(q) === JSON.stringify(had)) return;
+  state.question = q;
+  node.hidden = !q;
+  updateActivity();
+  input.placeholder = q ? 'Or reply in your own words…' : touch.matches ? 'Ask tamale anything…' : 'Ask tamale anything…   / for commands';
+  if (!q) {
+    node.replaceChildren();
+    if (had && !document.hasFocus()) document.title = document.title.replace(/^⚠ /, '');
+    return;
+  }
+  state.questionAt = Date.now();
+  state.answers = q.questions.map(() => ({ chosen: [], other: '' }));
+  state.asking = 0;
+  renderQuestion();
+  if (!document.hasFocus()) document.title = `⚠ ${document.title}`;
+  if (nearBottom()) scrollToBottom();
+}
+
+/** Builds the card for the question being shown. */
+function renderQuestion() {
+  const set = state.question;
+  const node = $('question');
+  const i = state.asking;
+  const q = set.questions[i];
+  const many = set.questions.length > 1;
+  const tabs = many
+    ? h(
+        'div',
+        { class: 'q-tabs' },
+        set.questions.map((qq, j) =>
+          h(
+            'button',
+            { class: 'q-tab', 'data-i': j, onclick: () => goQuestion(j) },
+            h('span', { class: 'q-mark' }),
+            h('span', { text: qq.header || `Q${j + 1}` }),
+          ),
+        ),
+      )
+    : null;
+  const options = q.options.map((o, row) =>
+    h(
+      'button',
+      {
+        class: `q-opt${q.multi_select ? ' multi' : ''}`,
+        role: q.multi_select ? 'checkbox' : 'radio',
+        'data-label': o.label,
+        onclick: () => chooseOption(row),
+      },
+      h('span', { class: 'q-box' }),
+      h('span', { class: 'q-text' }, h('span', { class: 'q-label', text: o.label }), o.description ? h('span', { class: 'q-desc', text: o.description }) : null),
+      row < 9 ? h('kbd', { text: String(row + 1) }) : null,
+    ),
+  );
+  const other = h('input', {
+    class: 'q-other',
+    placeholder: q.options.length ? 'Or type your own answer' : 'Your answer',
+    oninput: (ev) => {
+      const a = state.answers[state.asking];
+      a.other = ev.target.value;
+      if (!q.multi_select && a.other.trim()) a.chosen = [];
+      refreshQuestion();
+    },
+    onkeydown: (ev) => {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        nextQuestion();
+      } else if (ev.key === 'Escape') {
+        ev.target.blur();
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
+    },
+  });
+  other.value = state.answers[i].other;
+  const last = i === set.questions.length - 1;
+  const parts = [
+    h(
+      'div',
+      { class: 'q-head' },
+      h('span', { class: 'q-title', text: set.description || 'tamale has a question' }),
+      many ? h('span', { class: 'q-count', text: `${i + 1} of ${set.questions.length}` }) : null,
+    ),
+    tabs,
+    h('div', { class: 'q-question', text: q.question }),
+    q.multi_select ? h('div', { class: 'q-hint', text: 'Pick any that apply.' }) : null,
+    h('div', { class: 'q-opts' }, options),
+    other,
+    h(
+      'div',
+      { class: 'ap-actions q-actions' },
+      i > 0 ? h('button', { class: 'btn', onclick: () => goQuestion(i - 1) }, h('span', { text: 'Back' })) : null,
+      h(
+        'button',
+        { class: 'btn primary q-next', onclick: nextQuestion },
+        h('span', { text: last ? (many ? 'Send answers' : 'Send') : 'Next' }),
+        h('kbd', { text: '⏎' }),
+      ),
+    ),
+  ];
+  node.replaceChildren(...parts.filter(Boolean));
+  refreshQuestion();
+}
+
+/** Marks what's picked and answered, without rebuilding the card (or losing the field's focus). */
+function refreshQuestion() {
+  const node = $('question');
+  const a = state.answers[state.asking];
+  for (const opt of node.querySelectorAll('.q-opt')) {
+    const on = a.chosen.includes(opt.dataset.label);
+    opt.classList.toggle('on', on);
+    opt.setAttribute('aria-checked', on);
+  }
+  for (const tab of node.querySelectorAll('.q-tab')) {
+    const j = Number(tab.dataset.i);
+    tab.classList.toggle('current', j === state.asking);
+    tab.classList.toggle('done', answered(state.answers[j]));
+  }
+  const next = node.querySelector('.q-next');
+  if (next) next.disabled = !answered(a);
+}
+
+function chooseOption(row) {
+  const q = state.question.questions[state.asking];
+  const label = q.options[row]?.label;
+  if (label == null) return;
+  const a = state.answers[state.asking];
+  if (q.multi_select) {
+    a.chosen = a.chosen.includes(label) ? a.chosen.filter((l) => l !== label) : [...a.chosen, label];
+    // Keep the options' order.
+    const order = q.options.map((o) => o.label);
+    a.chosen.sort((x, y) => order.indexOf(x) - order.indexOf(y));
+  } else {
+    a.chosen = [label];
+    a.other = '';
+    const field = $('question').querySelector('.q-other');
+    if (field) field.value = '';
+  }
+  refreshQuestion();
+}
+
+function goQuestion(i) {
+  state.asking = Math.max(0, Math.min(i, state.question.questions.length - 1));
+  renderQuestion();
+}
+
+/** Moves on once the shown question is answered; from the last, sends them all. */
+function nextQuestion() {
+  if (!state.question || !answered(state.answers[state.asking])) return;
+  if (state.asking < state.question.questions.length - 1) return goQuestion(state.asking + 1);
+  const missing = state.answers.findIndex((a) => !answered(a));
+  if (missing >= 0) return goQuestion(missing);
+  send({
+    t: 'answer',
+    answers: state.answers.map((a) => ({ chosen: a.chosen, other: a.other.trim() || undefined })),
+  });
+}
+
+/** 1–9 pick, ⏎ moves on, ←/→ go between questions, unless they're being typed into something. */
+function questionKey(ev) {
+  if (!state.question || ev.metaKey || ev.ctrlKey || ev.altKey) return false;
+  if (Date.now() - state.questionAt < 300) return false;
+  const t = ev.target;
+  if (t.matches?.('input') || (t === input && input.value !== '')) return false;
+  if (/^[1-9]$/.test(ev.key)) chooseOption(Number(ev.key) - 1);
+  else if (ev.key === 'Enter' && !ev.shiftKey) nextQuestion();
+  else if (ev.key === 'ArrowLeft' && state.question.questions.length > 1) goQuestion(state.asking - 1);
+  else if (ev.key === 'ArrowRight' && state.question.questions.length > 1) goQuestion(state.asking + 1);
   else return false;
   ev.preventDefault();
   return true;
@@ -1231,6 +1419,8 @@ input.addEventListener('focus', updateSlash);
 
 input.addEventListener('keydown', (ev) => {
   if (ev.isComposing) return;
+  // With nothing typed, the keys answer the agent's questions.
+  if (questionKey(ev)) return;
   if (!$('slash').hidden) {
     if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
       ev.preventDefault();
@@ -2127,6 +2317,7 @@ const KEYS = [
   ['⌘B / Ctrl+B', 'Show or hide the code browser'],
   ['⌘⏎ / Ctrl+⏎', 'Ask about the selected lines (click line numbers; shift-click or drag for a range)'],
   ['y / a / n', 'Answer a tool approval (when not typing)'],
+  ['1–9 / ⏎ / ← →', "Pick an answer to the agent's questions, move on, switch questions (when not typing)"],
   ['/', 'Start a command from anywhere'],
 ];
 
@@ -2177,6 +2368,7 @@ addEventListener('keydown', (ev) => {
     return;
   }
   if (approvalKey(ev)) return;
+  if (questionKey(ev)) return;
   // Typing anywhere that isn't a field goes to the prompt.
   const t = ev.target;
   if (t.matches?.('input, textarea') || mod || ev.altKey || ev.key.length !== 1) return;

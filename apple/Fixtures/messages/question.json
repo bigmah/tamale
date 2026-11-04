@@ -1,0 +1,38 @@
+{
+  "question": {
+    "description": "Ask how to fix login",
+    "questions": [
+      {
+        "header": "Cookie",
+        "multi_select": false,
+        "options": [
+          {
+            "description": "Renew it on every request",
+            "label": "Refresh it (Recommended)"
+          },
+          {
+            "description": "",
+            "label": "Longer expiry"
+          }
+        ],
+        "question": "How should the cookie be kept?"
+      },
+      {
+        "header": "Tests",
+        "multi_select": true,
+        "options": [
+          {
+            "description": "",
+            "label": "Unit"
+          },
+          {
+            "description": "",
+            "label": "Integration"
+          }
+        ],
+        "question": "Which tests should I add?"
+      }
+    ]
+  },
+  "t": "question"
+}

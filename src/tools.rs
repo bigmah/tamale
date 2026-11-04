@@ -6,12 +6,15 @@ use rig_core::completion::ToolDefinition;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+pub mod ask;
 mod search;
 mod shell;
 mod web;
 
 /// The tool that starts a subagent. It's run by the turn, not by [`execute`].
 pub const AGENT: &str = "agent";
+/// The tool that asks the user questions. It's run by the turn too.
+pub use ask::ASK_USER;
 
 const MAX_OUTPUT_CHARS: usize = 30_000;
 const DEFAULT_READ_LIMIT: usize = 2_000;
@@ -97,6 +100,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
     ];
     defs.extend(search::definitions());
     defs.extend(web::definitions());
+    defs.push(ask::definition());
     defs.push(ToolDefinition {
         name: AGENT.into(),
         description: "Hand a self-contained task to a subagent: a fresh agent with the same \
@@ -155,6 +159,7 @@ pub fn describe(name: &str, args: &Value) -> String {
         "web_fetch" => format!("Fetch {target}"),
         "bash" => "Run a shell command".into(),
         "agent" => "Hand a task to a subagent".into(),
+        ASK_USER => "Ask you a question".into(),
         _ => format!("Use {name}"),
     }
 }
@@ -178,6 +183,7 @@ pub fn summarize(name: &str, args: &Value) -> String {
         "web_search" => s("query"),
         "web_fetch" => s("url"),
         "agent" => s("prompt"),
+        ASK_USER => ask::summarize(args),
         _ => args.to_string(),
     }
 }

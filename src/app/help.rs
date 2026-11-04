@@ -201,6 +201,17 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Agent questions",
+        &[
+            ("↑/↓, j/k", "Move between options"),
+            ("Enter / 1–9", "Pick an option (or confirm a multiple choice)"),
+            ("Space", "Toggle an option of a multiple choice"),
+            ("Last option", "Type your own answer (Enter confirms, Esc back)"),
+            ("←/→, Tab", "Go between questions and the Submit page"),
+            ("Esc", "Interrupt the agent"),
+        ],
+    ),
+    (
         "Rewind picker",
         &[
             ("↑/↓, j/k", "Move selection (most recent turn first)"),

@@ -176,6 +176,92 @@ public struct Approval: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - Questions
+
+/// The agent's `ask_user` questions (src/tools/ask.rs), waiting for answers.
+public struct QuestionSet: Codable, Equatable, Hashable, Sendable {
+    public struct Option: Codable, Equatable, Hashable, Sendable {
+        public var label: String
+        public var description: String
+
+        public init(label: String, description: String = "") {
+            self.label = label
+            self.description = description
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            label = try c.decodeIfPresent(String.self, forKey: .label) ?? ""
+            description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
+        }
+    }
+
+    public struct Question: Codable, Equatable, Hashable, Sendable {
+        public var question: String
+        /// A very short label, for the question tabs.
+        public var header: String
+        public var options: [Option]
+        public var multiSelect: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case question, header, options
+            case multiSelect = "multi_select"
+        }
+
+        public init(question: String, header: String = "", options: [Option], multiSelect: Bool = false) {
+            self.question = question
+            self.header = header
+            self.options = options
+            self.multiSelect = multiSelect
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            question = try c.decodeIfPresent(String.self, forKey: .question) ?? ""
+            header = try c.decodeIfPresent(String.self, forKey: .header) ?? ""
+            options = try c.decodeIfPresent([Option].self, forKey: .options) ?? []
+            multiSelect = try c.decodeIfPresent(Bool.self, forKey: .multiSelect) ?? false
+        }
+    }
+
+    /// The model's label for the step, e.g. "Ask how to fix login".
+    public var description: String
+    public var questions: [Question]
+
+    public init(description: String, questions: [Question]) {
+        self.description = description
+        self.questions = questions
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
+        questions = try c.decodeIfPresent([Question].self, forKey: .questions) ?? []
+    }
+}
+
+/// The answer to one question: the labels picked, and what was typed instead or as well.
+public struct QuestionAnswer: Equatable, Sendable {
+    public var chosen: [String]
+    public var other: String
+
+    public init(chosen: [String] = [], other: String = "") {
+        self.chosen = chosen
+        self.other = other
+    }
+
+    public var isEmpty: Bool {
+        chosen.isEmpty && other.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var object: [String: Any] {
+        var object: [String: Any] = ["chosen": chosen]
+        let other = other.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !other.isEmpty { object["other"] = other }
+        return object
+    }
+}
+
 // MARK: - Artifacts
 
 public struct ArtifactReply: Codable, Equatable, Sendable {
@@ -214,6 +300,7 @@ public enum Incoming: Equatable, Sendable {
     case entries(from: Int, items: [Entry])
     case status(SessionStatus?)
     case approval(Approval?)
+    case question(QuestionSet?)
     case artifact(ArtifactReply)
     case artifacts(Gallery)
     case other(String)
@@ -222,6 +309,7 @@ public enum Incoming: Equatable, Sendable {
     struct EntriesBody: Decodable { var from: Int; var items: [Entry] }
     struct StatusBody: Decodable { var status: SessionStatus? }
     struct ApprovalBody: Decodable { var approval: Approval? }
+    struct QuestionBody: Decodable { var question: QuestionSet? }
 
     public static func decode(_ text: String) throws -> Incoming {
         let data = Data(text.utf8)
@@ -233,6 +321,7 @@ public enum Incoming: Equatable, Sendable {
             return .entries(from: body.from, items: body.items)
         case "status": return .status(try d.decode(StatusBody.self, from: data).status)
         case "approval": return .approval(try d.decode(ApprovalBody.self, from: data).approval)
+        case "question": return .question(try d.decode(QuestionBody.self, from: data).question)
         case "artifact": return .artifact(try d.decode(ArtifactReply.self, from: data))
         case "artifacts": return .artifacts(try d.decode(Gallery.self, from: data))
         default: return .other(t)
@@ -248,6 +337,8 @@ public enum Outgoing: Equatable, Sendable {
     case send(String)
     case interrupt
     case approve(ApprovalChoice, reason: String?)
+    /// One answer per question of the pending `QuestionSet`.
+    case answer([QuestionAnswer])
     case artifact(id: String)
     case artifacts(seq: Int)
     /// Ends the session, as `tamale kill` would on its machine; it stays saved there.
@@ -261,6 +352,7 @@ public enum Outgoing: Equatable, Sendable {
         case .approve(let choice, let reason):
             object = ["t": "approve", "choice": choice.rawValue]
             if let reason, !reason.trimmingCharacters(in: .whitespaces).isEmpty { object["reason"] = reason }
+        case .answer(let answers): object = ["t": "answer", "answers": answers.map(\.object)]
         case .artifact(let id): object = ["t": "artifact", "id": id]
         case .artifacts(let seq): object = ["t": "artifacts", "seq": seq]
         case .close: object = ["t": "close"]

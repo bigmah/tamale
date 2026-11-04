@@ -78,6 +78,9 @@ impl App {
         if self.approval.is_some() {
             self.draw_approval(frame, chat_area);
         }
+        if self.question.is_some() {
+            self.draw_question(frame, chat_area);
+        }
     }
 
     fn draw_resume_picker(&self, frame: &mut Frame, area: Rect) {
@@ -387,10 +390,12 @@ impl App {
             ("Compacting…", activity::COMPACTING)
         } else if self.approval.is_some() {
             ("Waiting for approval…", activity::WAITING)
+        } else if self.question.is_some() {
+            ("Waiting for your answer…", activity::WAITING)
         } else {
             ("Thinking…", activity::THINKING)
         };
-        let spinner = activity::line(label, palette, since.elapsed(), self.approval.is_none());
+        let spinner = activity::line(label, palette, since.elapsed(), !self.waiting_for_user());
         let spinner_rows = if running {
             Paragraph::new(spinner.clone())
                 .wrap(Wrap { trim: false })
@@ -481,6 +486,8 @@ impl App {
         self.draw_tabs(frame, tabs_row);
         let hint = if self.approval.is_some() {
             "approve the tool call · esc to interrupt"
+        } else if self.question.is_some() {
+            "answer the agent's questions · esc to interrupt"
         } else if self.rewind_picker.is_some() {
             "↑/↓ move · enter rewind · esc cancel"
         } else if self.picker.is_some() || self.resume_picker.is_some() {

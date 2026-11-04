@@ -17,7 +17,9 @@ phone (below).
    the rest. Pull to refresh; the list also refreshes every few seconds while it's open.
 4. Tap one to open it. The conversation streams in over the same end-to-end encrypted channel the
    web page uses. Send prompts (they queue while tamale is working), stop a run with the stop
-   button, and answer approvals with **Yes**, **Always** or **No** (with a reason). A session with
+   button, and answer approvals with **Yes**, **Always** or **No** (with a reason). When the agent
+   asks questions, a card shows them: tap an option (or several, on a multiple choice) or type
+   your own answer, then **Next** and **Send answers**. A session with
    `[hub] e2e = false` only opens in a browser: the app takes nothing unsealed.
 5. **Close** a session by swiping it left in the list, long-pressing it, or from the session's
    menu. It ends on its machine as `tamale kill` would there, mid-turn if need be, and stays saved

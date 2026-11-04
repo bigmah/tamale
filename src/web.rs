@@ -192,6 +192,8 @@ pub enum WebEvent {
     TerminalSend(String),
     Interrupt,
     Approve(Choice, Option<String>),
+    /// Answers to the agent's questions, one per question.
+    Answer(Vec<crate::tools::ask::Answer>),
     /// End the session, as `tamale kill` does: it stays saved.
     Close,
 }
@@ -237,11 +239,19 @@ pub struct Approval {
     pub always: Vec<String>,
 }
 
+/// The agent's `ask_user` questions, waiting for answers.
+#[derive(Serialize, PartialEq, Clone, Debug)]
+pub struct Questions {
+    pub description: String,
+    pub questions: Vec<crate::tools::ask::Question>,
+}
+
 /// Everything a sync sends, borrowed from the app.
 pub struct View<'a> {
     pub status: Status,
     pub entries: &'a [Entry],
     pub approval: Option<Approval>,
+    pub question: Option<Questions>,
     /// The workspace: the working directory first, then added directories.
     pub roots: Vec<PathBuf>,
     /// Where finished artifacts are saved, if anywhere.
@@ -643,6 +653,7 @@ struct Mirror {
     hub_status: relay::HubStatus,
     status: String,
     approval: String,
+    question: String,
     artifacts: Arc<Mutex<Artifacts>>,
 }
 
@@ -674,9 +685,14 @@ impl Mirror {
             out.push(approval.clone());
             self.approval = approval;
         }
+        let question = json!({ "t": "question", "question": view.question }).to_string();
+        if question != self.question {
+            out.push(question.clone());
+            self.question = question;
+        }
         self.hub_status = relay::HubStatus {
             busy: view.status.running || view.status.compacting,
-            approval: view.approval.is_some(),
+            approval: view.approval.is_some() || view.question.is_some(),
             title: view
                 .entries
                 .iter()
@@ -695,6 +711,7 @@ impl Mirror {
             self.entries_message(0),
             self.status.clone(),
             self.approval.clone(),
+            self.question.clone(),
         ]
         .into_iter()
         .filter(|m| !m.is_empty())
@@ -937,6 +954,12 @@ fn handle(shared: &Arc<Shared>, id: u64, request: Value) {
             let reason = Some(str_field("reason")).filter(|r| !r.trim().is_empty());
             let _ = shared.events.send(WebEvent::Approve(choice, reason));
         }
+        "answer" => {
+            let answers = request.get("answers").cloned().unwrap_or_default();
+            if let Ok(answers) = serde_json::from_value(answers) {
+                let _ = shared.events.send(WebEvent::Answer(answers));
+            }
+        }
         "tree" => reply(Box::new(files::tree)),
         "open" => {
             let root = request.get("root").and_then(Value::as_u64).unwrap_or(0) as usize;
@@ -1056,6 +1079,7 @@ mod tests {
             status: Status::default(),
             entries,
             approval: None,
+            question: None,
             roots: Vec::new(),
             artifact_dir: None,
         }
@@ -1074,7 +1098,7 @@ mod tests {
         let mut mirror = Mirror::default();
         let mut entries = vec![Entry::User("hi".into()), Entry::Assistant("He".into())];
         let first = mirror.update(&view(&entries));
-        assert_eq!(first.len(), 3, "entries, status and approval");
+        assert_eq!(first.len(), 4, "entries, status, approval and questions");
         assert_eq!(from(&first[0]), (0, 2));
         assert!(mirror.update(&view(&entries)).is_empty());
 
@@ -1544,7 +1568,7 @@ mod tests {
             let event = tokio::time::timeout(Duration::from_secs(5), server.events.recv()).await.unwrap();
             match event {
                 Some(WebEvent::Connected(id)) => break id,
-                Some(WebEvent::Send(_) | WebEvent::Approve(..)) => panic!("a forged message got through"),
+                Some(WebEvent::Send(_) | WebEvent::Approve(..) | WebEvent::Answer(_)) => panic!("a forged message got through"),
                 _ => {}
             }
         };
@@ -1560,6 +1584,7 @@ mod tests {
         };
         let _ = opened(answer(&mut frames, 8).await.unwrap()); // status
         let _ = opened(answer(&mut frames, 8).await.unwrap()); // approval
+        let _ = opened(answer(&mut frames, 8).await.unwrap()); // questions
 
         // The hub can't tunnel an artifact; the frame page holds nothing.
         to_agent.send(ToAgent::Get { r: 1, path: format!("/artifact/{artifact_id}") }).unwrap();
@@ -1744,12 +1769,15 @@ document.getElementById('m').innerHTML = html;
             description: "Clean the build".into(),
             always: vec!["bash: rm *".into()],
         });
-        let sync = |server: &mut Server, entries: &[Entry], approval: &Option<Approval>| {
+        // "ask" gets questions instead of an approval.
+        let mut question: Option<Questions> = None;
+        let sync = |server: &mut Server, entries: &[Entry], approval: &Option<Approval>, question: &Option<Questions>| {
             let mut v = view(entries);
             v.approval = approval.clone();
+            v.question = question.clone();
             server.sync(v);
         };
-        sync(&mut server, &entries, &approval);
+        sync(&mut server, &entries, &approval, &question);
         server.connect_hub(
             &hub,
             &tamale_hub_protocol::auth_value(&key),
@@ -1761,6 +1789,50 @@ document.getElementById('m').innerHTML = html;
         while let Ok(Some(event)) = tokio::time::timeout_at(deadline, server.events.recv()).await {
             match event {
                 WebEvent::Connected(id) => server.welcome(id),
+                WebEvent::Send(text) if text == "ask" => {
+                    entries.push(Entry::User(text));
+                    question = Some(Questions {
+                        description: "Ask about the release".into(),
+                        questions: crate::tools::ask::parse(&serde_json::json!({
+                            "questions": [
+                                {
+                                    "question": "Which channel should it go to?",
+                                    "header": "Channel",
+                                    "options": [
+                                        { "label": "Beta (Recommended)", "description": "Testers first" },
+                                        { "label": "Stable" }
+                                    ]
+                                },
+                                {
+                                    "question": "What should the notes cover?",
+                                    "header": "Notes",
+                                    "options": [{ "label": "Fixes" }, { "label": "Features" }],
+                                    "multi_select": true
+                                }
+                            ]
+                        }))
+                        .unwrap(),
+                    });
+                }
+                WebEvent::Answer(answers) => {
+                    question = None;
+                    // As after any prompt, so the next test finds one.
+                    approval.get_or_insert_with(|| Approval {
+                        name: "bash".into(),
+                        summary: "rm -rf target".into(),
+                        description: "Clean the build".into(),
+                        always: Vec::new(),
+                    });
+                    let shown: Vec<String> = answers
+                        .iter()
+                        .map(|a| {
+                            let mut parts = a.chosen.clone();
+                            parts.extend(a.other.clone());
+                            parts.join(" + ")
+                        })
+                        .collect();
+                    entries.push(Entry::Info(format!("answered: {}", shown.join(" | "))));
+                }
                 WebEvent::Send(text) => {
                     approval.get_or_insert_with(|| Approval {
                         name: "bash".into(),
@@ -1773,7 +1845,7 @@ document.getElementById('m').innerHTML = html;
                         entries.push(Entry::Assistant(format!(
                             "A long one.\n\n```html artifact\n{LONG_ARTIFACT}\n```"
                         )));
-                        sync(&mut server, &entries, &approval);
+                        sync(&mut server, &entries, &approval, &question);
                         continue;
                     }
                     entries.push(Entry::Assistant(format!(
@@ -1793,7 +1865,7 @@ document.getElementById('m').innerHTML = html;
                 }
                 _ => {}
             }
-            sync(&mut server, &entries, &approval);
+            sync(&mut server, &entries, &approval, &question);
         }
     }
 

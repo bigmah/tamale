@@ -581,6 +581,7 @@ async fn run(
                         web::WebEvent::TerminalSend(text) => app.terminal_send(text),
                         web::WebEvent::Interrupt => app.web_interrupt(),
                         web::WebEvent::Approve(choice, reason) => app.web_approve(choice, reason),
+                        web::WebEvent::Answer(answers) => app.web_answer(answers),
                         web::WebEvent::Close => app.should_quit = true,
                     }
                     dirty = true;

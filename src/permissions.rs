@@ -25,6 +25,8 @@ const READ_ONLY_TOOLS: &[&str] = &[
     "web_fetch",
     // Starting a subagent needs no approval; its own calls are checked one by one.
     "agent",
+    // Questions only reach the user; their answers are the result.
+    "ask_user",
 ];
 const EDIT_TOOLS: &[&str] = &["write_file", "edit_file"];
 const PATH_TOOLS: &[&str] = &[

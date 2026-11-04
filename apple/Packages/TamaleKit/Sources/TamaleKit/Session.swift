@@ -11,6 +11,8 @@ public final class SessionModel {
     public private(set) var entries: [Entry] = []
     public private(set) var status: SessionStatus?
     public private(set) var approval: Approval?
+    /// The agent's questions, waiting for answers.
+    public private(set) var question: QuestionSet?
     public private(set) var connection: ChannelState = .idle
     /// Artifact pages tamale sent, by id.
     public private(set) var pages: [String: ArtifactReply] = [:]
@@ -58,6 +60,8 @@ public final class SessionModel {
             self.status = status
         case .approval(let approval):
             self.approval = approval
+        case .question(let question):
+            self.question = question
         case .artifact(let reply):
             due.remove(reply.id)
             pages[reply.id] = reply
@@ -84,6 +88,14 @@ public final class SessionModel {
     @discardableResult
     public func approve(_ choice: ApprovalChoice, reason: String? = nil) -> Bool {
         channel?.send(.approve(choice, reason: reason)) ?? false
+    }
+
+    /// Answers the pending questions, one answer per question.
+    @discardableResult
+    public func answer(_ answers: [QuestionAnswer]) -> Bool {
+        guard let question, answers.count == question.questions.count,
+              !answers.contains(where: \.isEmpty) else { return false }
+        return channel?.send(.answer(answers)) ?? false
     }
 
     /// Ends the session on its machine, as `tamale kill` would there (it stays saved), and

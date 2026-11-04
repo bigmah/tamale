@@ -79,12 +79,17 @@ impl App {
             description: p.description.clone(),
             always: p.always.clone(),
         });
+        let question = self.question.as_ref().map(|p| web::Questions {
+            description: p.description.clone(),
+            questions: p.questions.clone(),
+        });
         let mut roots = vec![self.workspace.cwd.clone()];
         roots.extend(self.workspace.additional_dirs.iter().cloned());
         web::View {
             status,
             entries: &self.entries,
             approval,
+            question,
             roots,
             artifact_dir: web::artifact_dir(&self.session_id),
         }
@@ -93,7 +98,10 @@ impl App {
     /// A prompt or slash command from the web UI, handled as if typed here.
     pub fn web_send(&mut self, text: String) {
         let text = text.trim().to_string();
-        if !text.is_empty() {
+        if self.question.is_some() && !text.is_empty() && !text.starts_with('/') {
+            // There's no picker there, so a message answers the agent's questions.
+            self.answer_questions_with(text);
+        } else if !text.is_empty() {
             self.plain_prompts = false;
             self.submit_text(text);
         }
@@ -102,7 +110,9 @@ impl App {
     /// The same from another terminal driving this session, which wants ordinary replies.
     pub fn terminal_send(&mut self, text: String) {
         let text = text.trim().to_string();
-        if !text.is_empty() {
+        if self.question.is_some() && !text.is_empty() && !text.starts_with('/') {
+            self.answer_questions_with(text);
+        } else if !text.is_empty() {
             self.plain_prompts = true;
             self.submit_text(text);
         }
@@ -185,6 +195,11 @@ impl App {
             Line::from(vec![
                 Span::from("● ").fg(Color::Yellow),
                 Span::from("Waiting for approval in the browser").fg(Color::Yellow),
+            ])
+        } else if self.question.is_some() {
+            Line::from(vec![
+                Span::from("● ").fg(Color::Yellow),
+                Span::from("The agent asked a question; reply in the browser").fg(Color::Yellow),
             ])
         } else if self.is_running() {
             let elapsed = self.busy_since.map_or(0, |s| s.elapsed().as_secs());
@@ -292,6 +307,11 @@ impl App {
 
     pub fn web_interrupt(&mut self) {
         self.interrupt();
+    }
+
+    /// Answers from the web UI or the iPhone app's question picker.
+    pub fn web_answer(&mut self, answers: Vec<crate::tools::ask::Answer>) {
+        self.answer_questions(answers);
     }
 
     pub fn web_approve(&mut self, choice: web::Choice, reason: Option<String>) {

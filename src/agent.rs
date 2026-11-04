@@ -49,6 +49,13 @@ pub enum AgentEvent {
         always: Vec<String>,
         reply: oneshot::Sender<Approval>,
     },
+    /// The model asked the user questions (the `ask_user` tool) and waits for the reply.
+    /// Dropping `reply` interrupts the question; the model is told it went unanswered.
+    Ask {
+        description: String,
+        questions: Vec<tools::ask::Question>,
+        reply: oneshot::Sender<tools::ask::Reply>,
+    },
     /// A request failed transiently and will be retried. Text streamed during the failed
     /// attempt should be discarded.
     Retry {
@@ -97,6 +104,9 @@ pub struct TurnCtx {
     /// Messages the user typed while the turn runs. They're delivered with the next tool
     /// result; whatever is left when the turn ends is sent as the next prompt.
     pub steering: Option<Steering>,
+    /// Whether someone is there to answer `ask_user` questions (not in `-p` runs, subagents
+    /// or the goal checker).
+    pub interactive: bool,
 }
 
 /// Messages queued by the user during a turn, shared between the UI and the running turn.
@@ -125,7 +135,14 @@ impl TurnCtx {
             checkpoint: checkpoint.map(|r| Arc::new(Mutex::new(r))),
             subagent: None,
             steering: None,
+            interactive: false,
         }
+    }
+
+    /// Lets the model ask the user questions.
+    pub fn interactive(mut self) -> Self {
+        self.interactive = true;
+        self
     }
 
     pub fn with_subagent(mut self, subagent: crate::backend::Subagent) -> Self {
@@ -210,6 +227,9 @@ the user how to proceed."
         if name == tools::AGENT {
             return self.run_subagent(args, workspace, tx).await;
         }
+        if name == tools::ASK_USER {
+            return self.ask_user(&args, tx).await;
+        }
         let result = match self.authorize(name, &args, tx).await {
             Err(denied) => Err(denied),
             Ok(()) => match self.before_execute(name, &args, workspace) {
@@ -248,8 +268,41 @@ the user how to proceed."
             checkpoint: self.checkpoint.clone(),
             subagent: None,
             steering: None,
+            interactive: false,
         };
         subagent.run(&args, ctx, workspace, tx).await
+    }
+
+    /// Runs the `ask_user` tool: shows the questions and waits for the user's answers.
+    async fn ask_user(&self, args: &Value, tx: &mpsc::UnboundedSender<AgentEvent>) -> (String, bool) {
+        if !self.interactive {
+            return (
+                "Error: no one can answer questions here (a non-interactive run or a \
+subagent). Make a reasonable assumption, say which one, and continue."
+                    .into(),
+                true,
+            );
+        }
+        let questions = match tools::ask::parse(args) {
+            Ok(questions) => questions,
+            Err(e) => return (format!("Error: {e:#}"), true),
+        };
+        if let Err(denied) = self.authorize(tools::ASK_USER, args, tx).await {
+            return (denied, true);
+        }
+        let (reply, answer) = oneshot::channel();
+        let _ = tx.send(AgentEvent::Ask {
+            description: tools::describe(tools::ASK_USER, args),
+            questions: questions.clone(),
+            reply,
+        });
+        match answer.await {
+            Ok(reply) => (tools::ask::format_reply(&questions, &reply), false),
+            Err(_) => (
+                "The user dismissed the questions without answering.".into(),
+                true,
+            ),
+        }
     }
 
     /// Snapshots files a call is about to change.

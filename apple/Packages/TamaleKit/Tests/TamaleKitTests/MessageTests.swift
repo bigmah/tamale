@@ -67,6 +67,13 @@ final class MessageTests: XCTestCase {
         XCTAssertEqual(approval.always, ["bash: rm *"])
         guard case .approval(nil) = try message("approval-none.json") else { return XCTFail() }
 
+        guard case .question(let question?) = try message("question.json") else { return XCTFail() }
+        XCTAssertEqual(question.description, "Ask how to fix login")
+        XCTAssertEqual(question.questions.map(\.header), ["Cookie", "Tests"])
+        XCTAssertEqual(question.questions[0].options[0].description, "Renew it on every request")
+        XCTAssertEqual(question.questions.map(\.multiSelect), [false, true])
+        guard case .question(nil) = try message("question-none.json") else { return XCTFail() }
+
         guard case .artifact(let artifact) = try message("artifact.json") else { return XCTFail() }
         XCTAssertTrue(artifact.html?.contains("Login flow") ?? false)
         XCTAssertEqual(artifact.hash?.count, 64)
@@ -89,6 +96,9 @@ final class MessageTests: XCTestCase {
         XCTAssertEqual(Outgoing.artifact(id: "ab").json, #"{"id":"ab","t":"artifact"}"#)
         XCTAssertEqual(Outgoing.artifacts(seq: 3).json, #"{"seq":3,"t":"artifacts"}"#)
         XCTAssertEqual(Outgoing.close.json, #"{"t":"close"}"#)
+        XCTAssertEqual(
+            Outgoing.answer([QuestionAnswer(chosen: ["Unit"]), QuestionAnswer(chosen: ["A", "B"], other: " more ")]).json,
+            #"{"answers":[{"chosen":["Unit"]},{"chosen":["A","B"],"other":"more"}],"t":"answer"}"#)
         XCTAssertEqual(Prompts.revise(title: "Plan"), "Revise the \"Plan\" artifact: ")
     }
 
@@ -119,6 +129,13 @@ final class MessageTests: XCTestCase {
         XCTAssertTrue(model.busy)
         model.apply(try message("approval.json"))
         XCTAssertNotNil(model.approval)
+        XCTAssertFalse(model.answer([QuestionAnswer(chosen: ["Unit"])]), "nothing to answer")
+        model.apply(try message("question.json"))
+        XCTAssertEqual(model.question?.questions.count, 2)
+        XCTAssertFalse(model.answer([QuestionAnswer(chosen: ["Unit"])]), "one answer per question")
+        XCTAssertFalse(model.answer([QuestionAnswer(chosen: ["Unit"]), QuestionAnswer()]), "each answered")
+        model.apply(try message("question-none.json"))
+        XCTAssertNil(model.question)
         var saved: [ArtifactReply] = []
         model.onArtifact = { saved.append($0) }
         model.apply(try message("artifact.json"))

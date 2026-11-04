@@ -160,6 +160,28 @@ fn messages(dir: &std::path::Path) -> Vec<(&'static str, Value)> {
         description: "Clean the build".into(),
         always: vec!["bash: rm *".into()],
     });
+    v.question = Some(Questions {
+        description: "Ask how to fix login".into(),
+        questions: crate::tools::ask::parse(&json!({
+            "questions": [
+                {
+                    "question": "How should the cookie be kept?",
+                    "header": "Cookie",
+                    "options": [
+                        { "label": "Refresh it (Recommended)", "description": "Renew it on every request" },
+                        { "label": "Longer expiry" }
+                    ]
+                },
+                {
+                    "question": "Which tests should I add?",
+                    "header": "Tests",
+                    "options": [{ "label": "Unit" }, { "label": "Integration" }],
+                    "multi_select": true
+                }
+            ]
+        }))
+        .unwrap(),
+    });
     let mut mirror = mirror;
     let sent = mirror.update(&v);
     let id = mirror.artifacts.lock().unwrap().pages.keys().next().unwrap().clone();
@@ -191,11 +213,14 @@ fn messages(dir: &std::path::Path) -> Vec<(&'static str, Value)> {
     let entries = fix(&sent[0]);
     let status = fix(&sent[1]);
     let approval = fix(&sent[2]);
+    let question = fix(&sent[3]);
     vec![
         ("entries.json", entries),
         ("status.json", status),
         ("approval.json", approval),
         ("approval-none.json", json!({ "t": "approval", "approval": null })),
+        ("question.json", question),
+        ("question-none.json", json!({ "t": "question", "question": null })),
         ("artifact.json", fix(&artifact_reply(&id, Some(&page), Some(&hash)).to_string())),
         ("artifact-missing.json", artifact_reply("ffff", None, None)),
         ("artifacts.json", gallery),
@@ -208,6 +233,7 @@ fn view(entries: &[Entry]) -> View<'_> {
         status: Status::default(),
         entries,
         approval: None,
+        question: None,
         roots: Vec::new(),
         artifact_dir: None,
     }

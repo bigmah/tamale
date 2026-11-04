@@ -40,7 +40,10 @@ don't wrap a one-sentence answer in headings or lists.\n\
 For long tasks, work in manageable steps and continue using tools after progress updates. \
 Do not stop at a plan, promise to act, or partial result. Stop only when done, interrupted, \
 or blocked on information or authorization only the user can provide; explain any blocker clearly.\n\
-- Don't take destructive actions (deleting files, force pushes) unless asked.\n\n\
+- Don't take destructive actions (deleting files, force pushes) unless asked.\n\
+- When you need a decision only the user can make (a preference, a choice between approaches, \
+missing requirements), ask with the ask_user tool, as multiple-choice questions, instead of \
+guessing or ending your reply with questions in prose. Don't ask what you can find out yourself.\n\n\
 Environment:\n- Working directory: {}\n- Platform: {}\n",
         workspace.cwd.display(),
         std::env::consts::OS

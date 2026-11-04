@@ -664,6 +664,84 @@ body.artifact-open .app::after { content: ""; position: fixed; inset: 0; z-index
 }
 .ap-reason input:focus { border-color: var(--accent-line); }
 
+.question {
+  border: 1px solid var(--accent-line);
+  background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--bg-1);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(60vh, 520px);
+  overflow: auto;
+  animation: risein 160ms var(--ease);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+.q-head { display: flex; align-items: baseline; gap: 8px; }
+.q-title { flex: 1; font-size: 13px; font-weight: 600; color: var(--accent); }
+.q-count { font-size: 12px; color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+.q-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.q-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.q-tab .q-mark { width: 7px; height: 7px; border-radius: 50%; border: 1px solid currentColor; }
+.q-tab.done { color: var(--added); }
+.q-tab.done .q-mark { background: currentColor; }
+.q-tab.current { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+.q-question { color: var(--fg-bright); font-size: 14px; font-weight: 500; white-space: pre-wrap; }
+.q-hint { color: var(--fg-faint); font-size: 12px; margin-top: -4px; }
+.q-opts { display: flex; flex-direction: column; gap: 5px; }
+.q-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--r);
+  border: 1px solid var(--border-soft);
+  background: var(--bg-2);
+  text-align: left;
+  color: var(--fg);
+  transition: all var(--quick) var(--ease);
+}
+.q-opt:hover { background: var(--bg-3); border-color: var(--line); }
+.q-opt.on { border-color: var(--accent-line); background: var(--accent-soft); }
+.q-box {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border-radius: 50%;
+  border: 1.5px solid var(--fg-faint);
+}
+.q-opt.multi .q-box { border-radius: 3px; }
+.q-opt.on .q-box { border-color: var(--accent); background: var(--accent); box-shadow: inset 0 0 0 2.5px var(--bg-2); }
+.q-opt.multi.on .q-box { box-shadow: none; background: var(--accent) url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="%23000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 8.5 3 3 6-7"/></svg>') center / 12px no-repeat; }
+.q-text { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.q-label { font-size: 13.5px; }
+.q-opt.on .q-label { font-weight: 600; color: var(--fg-bright); }
+.q-desc { font-size: 12px; color: var(--fg-dim); }
+.q-opt kbd { flex: none; align-self: center; background: transparent; }
+.q-other {
+  height: var(--ctl);
+  padding: 0 10px;
+  border-radius: var(--r);
+  border: 1px solid var(--line);
+  background: var(--bg);
+}
+.q-other:focus { border-color: var(--accent-line); }
+.q-actions { justify-content: flex-end; }
+.q-actions .btn:disabled { opacity: 0.45; pointer-events: none; }
+
 .composer {
   position: relative;
   background: var(--bg-1);
@@ -1047,7 +1125,8 @@ body.artifact-open .app::after { content: ""; position: fixed; inset: 0; z-index
   }
   .artifact.full .artifact-bar { height: calc(44px + var(--safe-t)); padding-top: var(--safe-t); }
 
-  .approval { padding: 12px; }
+  .approval, .question { padding: 12px; }
+  .q-opt kbd { display: none; }
   .ap-actions .btn { flex: 1 1 auto; justify-content: center; }
   .ap-reason { flex-wrap: wrap; }
 

@@ -12,6 +12,7 @@ mod goal;
 mod help;
 mod input;
 mod prompts;
+mod question;
 #[cfg(unix)]
 mod remote;
 mod rewind;
@@ -206,6 +207,8 @@ pub struct App {
     diff_open: bool,
     /// The tool call waiting for the user's approval.
     approval: Option<approval::Prompt>,
+    /// The model's `ask_user` questions, waiting for answers.
+    question: Option<question::Prompt>,
     /// Shared with running turns, so mode changes apply to the next tool call.
     permissions: permissions::Shared,
     /// Turns that can be undone, oldest first.
@@ -325,6 +328,7 @@ impl App {
             diff: None,
             diff_open: false,
             approval: None,
+            question: None,
             permissions,
             checkpoints: Vec::new(),
             session_id: session::new_id(),
@@ -385,6 +389,11 @@ impl App {
         self.task.is_some()
     }
 
+    /// Whether the turn waits for the user: a tool call to approve or questions to answer.
+    fn waiting_for_user(&self) -> bool {
+        self.approval.is_some() || self.question.is_some()
+    }
+
     #[cfg(unix)]
     pub fn set_detachable(&mut self) {
         self.detachable = true;
@@ -412,7 +421,7 @@ impl App {
         &self,
     ) -> (std::path::PathBuf, String, String, crate::background::State) {
         use crate::background::State;
-        let state = if self.approval.is_some() {
+        let state = if self.waiting_for_user() {
             State::NeedsApproval
         } else if self.is_running() {
             State::Running
@@ -556,6 +565,7 @@ impl App {
             config: self.settings.turn_config(0),
         })
         .with_steering(self.queued.clone())
+        .interactive()
     }
 
     fn compact(&mut self, instructions: Option<String>) {
@@ -601,6 +611,7 @@ impl App {
 
     fn interrupt(&mut self) {
         self.approval = None;
+        self.question = None;
         if let Some(task) = self.task.take() {
             task.abort();
             self.entries.push(Entry::Info("Interrupted.".into()));
@@ -780,6 +791,11 @@ impl App {
                     reply,
                 ))
             }
+            AgentEvent::Ask {
+                description,
+                questions,
+                reply,
+            } => self.question = Some(question::Prompt::new(description, questions, reply)),
             AgentEvent::Compacted {
                 usage,
                 before,
@@ -834,6 +850,7 @@ impl App {
             AgentEvent::Done => {
                 self.task = None;
                 self.approval = None;
+                self.question = None;
                 self.compacting = false;
                 self.save_session();
                 self.reload_diff();

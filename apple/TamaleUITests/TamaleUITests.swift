@@ -188,4 +188,47 @@ final class TamaleUITests: XCTestCase {
         wait(app.webViews.staticTexts["hello from the phone"], app, timeout: 10)
         app.buttons["Done"].tap()
     }
+
+    /// The agent's questions: options to tap, one or several, an answer of your own, and the
+    /// answers sent together.
+    func testAnswersTheAgentsQuestions() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let key = env["TAMALE_DEBUG_KEY"], let hub = env["TAMALE_DEBUG_HUB"] else {
+            throw XCTSkip("run apple/scripts/uitest.sh")
+        }
+        let app = XCUIApplication()
+        app.launchEnvironment = ["TAMALE_DEBUG_KEY": key, "TAMALE_DEBUG_HUB": hub]
+        app.launch()
+        let row = text(app, containing: "Show me the plan")
+        wait(row, app, timeout: 20)
+        row.tap()
+        wait(text(app, containing: "Here it is."), app, timeout: 20)
+        // Whatever approval an earlier test left.
+        let yes = app.buttons["Yes"]
+        if yes.waitForExistence(timeout: 3) { yes.tap() }
+
+        let field = app.textFields.firstMatch.exists ? app.textFields.firstMatch : app.textViews.firstMatch
+        wait(field, app, timeout: 5)
+        field.tap()
+        field.typeText("ask")
+        app.buttons["Send"].tap()
+
+        wait(text(app, containing: "Which channel should it go to?"), app, timeout: 15)
+        XCTAssertTrue(text(app, containing: "Testers first").exists)
+        XCTAssertFalse(app.keyboards.firstMatch.waitForExistence(timeout: 1))
+        let next = app.buttons["Next"]
+        XCTAssertFalse(next.isEnabled, "nothing picked yet")
+        app.buttons["Stable"].tap()
+        next.tap()
+
+        wait(text(app, containing: "What should the notes cover?"), app, timeout: 5)
+        app.buttons["Fixes"].tap()
+        app.buttons["Features"].tap()
+        let own = app.textFields["Your own answer"].exists ? app.textFields["Your own answer"] : app.textViews["Your own answer"]
+        own.tap()
+        own.typeText("docs")
+        app.buttons["Send answers"].tap()
+        wait(text(app, containing: "answered: Stable | Fixes + Features + docs"), app, timeout: 15)
+        XCTAssertFalse(app.buttons["Send answers"].exists)
+    }
 }

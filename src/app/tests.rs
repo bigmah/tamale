@@ -2271,3 +2271,136 @@ async fn sessions_tab_lists_both_kinds_and_drives_a_remote_one() {
     assert_eq!((picker.rows().len(), picker.selected), (1, 0));
     assert!(matches!(app.entries.last(), Some(Entry::Info(e)) if e.contains("“working”")));
 }
+
+#[tokio::test]
+async fn question_prompt_picks_toggles_types_and_submits() {
+    use crate::tools::ask::{self, Answer, Reply};
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
+    let questions = ask::parse(&serde_json::json!({
+        "questions": [
+            {
+                "question": "Which database?",
+                "header": "DB",
+                "options": [
+                    { "label": "Postgres", "description": "The safe choice" },
+                    { "label": "SQLite" }
+                ]
+            },
+            {
+                "question": "Which features?",
+                "header": "Features",
+                "options": [{ "label": "Auth" }, { "label": "Logs" }, { "label": "Metrics" }],
+                "multi_select": true
+            }
+        ]
+    }))
+    .unwrap();
+    let open = |app: &mut App, questions: Vec<ask::Question>, ready: bool| {
+        let (reply, answer) = tokio::sync::oneshot::channel();
+        let mut prompt = question::Prompt::new("Ask about the setup".into(), questions, reply);
+        if ready {
+            prompt.shown -= std::time::Duration::from_secs(1);
+        }
+        app.question = Some(prompt);
+        answer
+    };
+
+    // Keys typed right as the questions open don't answer them.
+    let mut answer = open(&mut app, questions.clone(), false);
+    app.on_event(key(KeyCode::Char('1')));
+    assert!(app.question.as_ref().unwrap().answers[0].is_empty());
+    assert!(answer.try_recv().is_err());
+
+    let mut answer = open(&mut app, questions.clone(), true);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
+    let screen =
+        |app: &mut App, terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>| {
+            terminal.draw(|frame| app.draw(frame)).unwrap();
+            terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|c| c.symbol())
+                .collect::<String>()
+        };
+    let text = screen(&mut app, &mut terminal);
+    assert!(text.contains("Which database?") && text.contains("The safe choice"), "{text}");
+    assert!(text.contains("Type something else") && text.contains("Submit"));
+    assert!(text.contains("answer the agent's questions"));
+
+    // A single choice moves on to the next question.
+    app.on_event(key(KeyCode::Down));
+    app.on_event(key(KeyCode::Enter));
+    assert_eq!(app.question.as_ref().unwrap().current, 1);
+    // Multiple choice: toggle two, untoggle one, and type something else too.
+    app.on_event(key(KeyCode::Char(' ')));
+    app.on_event(key(KeyCode::Char('3')));
+    app.on_event(key(KeyCode::Char('2')));
+    app.on_event(key(KeyCode::Char('2')));
+    app.on_event(key(KeyCode::Char('4')));
+    assert!(app.question.as_ref().unwrap().typing);
+    app.on_event(Event::Paste("rate ".into()));
+    for c in "limits".chars() {
+        app.on_event(key(KeyCode::Char(c)));
+    }
+    assert!(app.input.is_empty());
+    app.on_event(key(KeyCode::Enter));
+    // The review page lists the answers; Enter sends them.
+    let text = screen(&mut app, &mut terminal);
+    assert!(text.contains("Review your answers") && text.contains("Auth, Metrics"), "{text}");
+    app.on_event(key(KeyCode::Enter));
+    assert!(app.question.is_none());
+    assert_eq!(
+        answer.try_recv().unwrap(),
+        Reply::Answers(vec![
+            Answer { chosen: vec!["SQLite".into()], other: None },
+            Answer {
+                chosen: vec!["Auth".into(), "Metrics".into()],
+                other: Some("rate limits".into()),
+            },
+        ])
+    );
+
+    // A single question is sent as soon as it's answered, here in the user's own words.
+    let mut answer = open(&mut app, questions[..1].to_vec(), true);
+    app.on_event(key(KeyCode::Char('3')));
+    for c in "MySQL".chars() {
+        app.on_event(key(KeyCode::Char(c)));
+    }
+    app.on_event(key(KeyCode::Enter));
+    assert_eq!(
+        answer.try_recv().unwrap(),
+        Reply::Answers(vec![Answer { chosen: vec![], other: Some("MySQL".into()) }])
+    );
+
+    // A message from the web UI answers in words; slash commands don't.
+    let mut answer = open(&mut app, questions.clone(), true);
+    app.web_send("/help".into());
+    assert!(app.question.is_some());
+    app.web_send("whatever is simplest".into());
+    assert_eq!(answer.try_recv().unwrap(), Reply::Text("whatever is simplest".into()));
+
+    // The iPhone app's picker sends one answer per question, each saying something.
+    let mut answer = open(&mut app, questions.clone(), true);
+    let view = app.web_view();
+    assert_eq!(view.question.as_ref().unwrap().questions, questions);
+    let unit = |label: &str| Answer { chosen: vec![label.into()], other: None };
+    app.web_answer(vec![unit("SQLite")]);
+    app.web_answer(vec![unit("SQLite"), Answer::default()]);
+    assert!(app.question.is_some());
+    app.web_answer(vec![unit("SQLite"), unit("Auth")]);
+    assert_eq!(answer.try_recv().unwrap(), Reply::Answers(vec![unit("SQLite"), unit("Auth")]));
+
+    // Esc dismisses the questions (and interrupts the turn).
+    let mut answer = open(&mut app, questions, true);
+    app.on_event(key(KeyCode::Esc));
+    assert!(app.question.is_none());
+    assert!(answer.try_recv().is_err());
+}
