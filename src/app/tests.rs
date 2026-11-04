@@ -1967,6 +1967,54 @@ async fn ctrl_c_interrupts_a_running_turn_in_the_foreground() {
     assert!(matches!(app.entries.last(), Some(Entry::Error(_))));
 }
 
+#[test]
+fn startup_mentions_only_sessions_there_are_to_go_back_to() {
+    use crate::background::{State, Status};
+    let status = |id, cwd: &str, title: &str, attached| Status {
+        id,
+        cwd: cwd.into(),
+        session_id: format!("s{id}"),
+        title: title.into(),
+        state: State::Idle,
+        attached,
+        since: 0,
+        sid: String::new(),
+    };
+    let note = |sessions: &[Status]| {
+        background::open_sessions_note(sessions, std::path::Path::new("/project"))
+    };
+    let elsewhere = status(1, "/other", "elsewhere", false);
+    let attached = status(2, "/project", "attached", true);
+    let empty = status(3, "/project", "", false);
+    assert_eq!(note(&[elsewhere, attached, empty]), None);
+
+    let waiting = status(4, "/project", "fix the bug", false);
+    let one = note(std::slice::from_ref(&waiting)).unwrap();
+    assert!(one.contains("(idle)") && one.contains("fix the bug") && one.contains("/sessions"));
+
+    let many = note(&[waiting, status(5, "/project", "another", false)]).unwrap();
+    assert!(many.starts_with("2 other sessions") && many.contains("/sessions"));
+}
+
+#[tokio::test]
+async fn the_startup_note_stays_out_of_saves_but_rewinding_still_lines_up() {
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    let before = app.entries.len();
+    app.entries.push(Entry::Info("1 open".into()));
+    app.open_sessions_note = Some("1 open".into());
+    app.begin_turn_as("hi".into(), "hi".into());
+    let (entries, checkpoints) = app.entries_to_save();
+    assert_eq!(entries.len(), app.entries.len() - 1);
+    assert!(!entries.iter().any(|e| matches!(e, Entry::Info(t) if t == "1 open")));
+    assert_eq!(checkpoints[0].entries_len, app.checkpoints[0].entries_len - 1);
+    assert!(before <= checkpoints[0].entries_len);
+}
+
 #[tokio::test]
 async fn sessions_picker_joins_stops_and_keeps_its_place() {
     use crate::background::{State, Status};

@@ -132,9 +132,7 @@ fn parses_background_subcommands() {
 }
 
 #[test]
-fn only_no_arguments_at_all_counts_as_plain() {
-    assert!(parse(&[]).unwrap().plain);
-    assert!(!parse(&["-m", "x"]).unwrap().plain);
+fn parses_foreground_and_server() {
     assert!(parse(&["--foreground"]).unwrap().foreground);
     assert!(parse(&["--server"]).unwrap().server);
 }

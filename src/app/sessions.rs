@@ -11,6 +11,7 @@ impl App {
             return;
         }
         let title = self.session_title();
+        let (entries, checkpoints) = self.entries_to_save();
         let saved = session::Session {
             id: self.session_id.clone(),
             cwd: self.workspace.cwd.clone(),
@@ -21,12 +22,31 @@ impl App {
             title,
             context_tokens: self.context_tokens,
             history: self.history.clone(),
-            entries: self.entries.clone(),
-            checkpoints: self.checkpoints.clone(),
+            entries,
+            checkpoints,
         };
         self.session_writer
             .get_or_insert_with(|| session::Writer::start(self.tx.clone()))
             .save(saved);
+    }
+
+    /// The transcript as it should be resumed: what the startup note said about other
+    /// sessions wouldn't be true by then. Rewinding counts entries, so its counts follow.
+    pub(super) fn entries_to_save(&self) -> (Vec<Entry>, Vec<super::checkpoint::Turn>) {
+        let mut entries = self.entries.clone();
+        let mut checkpoints = self.checkpoints.clone();
+        let note = self.open_sessions_note.as_ref().and_then(|note| {
+            entries
+                .iter()
+                .position(|e| matches!(e, Entry::Info(text) if text == note))
+        });
+        if let Some(note) = note {
+            entries.remove(note);
+            for checkpoint in checkpoints.iter_mut().filter(|c| c.entries_len > note) {
+                checkpoint.entries_len -= 1;
+            }
+        }
+        (entries, checkpoints)
     }
 
     /// The session's label: its first message.

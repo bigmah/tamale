@@ -32,9 +32,9 @@ window onto it. So work carries on when the terminal goes away, even if you clos
 - `Ctrl+C` during a turn detaches: tamale exits and the agent keeps going. `Esc` still
   interrupts. `Ctrl+C` while idle clears the input, then ends the session as it always has.
   `/detach` leaves at any time.
-- Running `tamale` with no arguments offers to go back to any open session in the current
-  directory that no terminal is showing. `tamale --continue` goes straight to the latest one, or
-  if there isn't one, resumes the latest saved session.
+- `tamale` always starts a new session, and mentions any open ones in the current directory that
+  no terminal is showing. `tamale --continue` goes straight to the latest one, or if there isn't
+  one, resumes the latest saved session.
 - `tamale ls` lists open sessions and what they're doing. `tamale attach [<id>]` goes back to one
   and `tamale kill <id>` ends one (it stays saved, so `--continue` can resume it).
 - `/sessions`, or the **Sessions** tab in the footer, lists the other open sessions inside the TUI.

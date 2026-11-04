@@ -1,7 +1,7 @@
 //! The client's side: `tamale attach` and friends. Paints the frames a server sends and
 //! forwards input, and knows nothing of what's going on in the session.
 
-use std::io::{IsTerminal, Write};
+use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
@@ -53,7 +53,7 @@ pub async fn run_command(command: &Command) -> Result<()> {
             let id = match servers.as_slice() {
                 [] => bail!("No sessions are running in the background."),
                 [only] => only.id,
-                several => match choose(several, false)? {
+                several => match choose(several)? {
                     Some(id) => id,
                     None => return Ok(()),
                 },
@@ -68,22 +68,14 @@ pub async fn run_command(command: &Command) -> Result<()> {
     }
 }
 
-/// Which running session to attach to instead of starting one, if any: `--continue` takes
-/// the latest from this directory, and a bare `tamale` asks about those nobody's using.
+/// The running session `--continue` attaches to instead of starting one: the latest from
+/// this directory.
 pub fn session_to_rejoin(cli: &Cli) -> Result<Option<u32>> {
+    if cli.resume != Some(Resume::Latest) {
+        return Ok(None);
+    }
     let cwd = crate::workspace::Workspace::current()?.cwd;
-    let here = list().into_iter().filter(|s| s.cwd == cwd);
-    if cli.resume == Some(Resume::Latest) {
-        return Ok(here.map(|s| s.id).next());
-    }
-    if !cli.plain || !std::io::stdin().is_terminal() {
-        return Ok(None);
-    }
-    let unattended: Vec<Status> = here.filter(|s| !s.attached).collect();
-    if unattended.is_empty() {
-        return Ok(None);
-    }
-    choose(&unattended, true)
+    Ok(list().into_iter().find(|s| s.cwd == cwd).map(|s| s.id))
 }
 
 /// The servers in this directory, or if there are none, all of them.
@@ -125,8 +117,8 @@ fn server_lines(servers: &[Status]) -> Vec<String> {
         .collect()
 }
 
-/// Asks which of these to attach to; `None` means a new session, or nothing, as asked.
-fn choose(servers: &[Status], offer_new: bool) -> Result<Option<u32>> {
+/// Asks which of these to attach to; `None` means cancel.
+fn choose(servers: &[Status]) -> Result<Option<u32>> {
     let count = servers.len();
     if count == 1 {
         println!("A session is still open:\n");
@@ -135,16 +127,11 @@ fn choose(servers: &[Status], offer_new: bool) -> Result<Option<u32>> {
     }
     print_servers(servers);
     println!();
-    let otherwise = if offer_new {
-        "for a new session"
-    } else {
-        "to cancel"
-    };
     if count == 1 {
-        print!("Enter to attach, n {otherwise}: ");
+        print!("Enter to attach, n to cancel: ");
     } else {
         print!(
-            "Session id to attach to (Enter for {}), n {otherwise}: ",
+            "Session id to attach to (Enter for {}), n to cancel: ",
             servers[0].id
         );
     }

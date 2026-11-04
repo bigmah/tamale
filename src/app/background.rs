@@ -94,6 +94,27 @@ impl SessionsPicker {
     }
 }
 
+/// What to say about the sessions that could be gone back to. One that never got a message
+/// has nothing to go back to.
+pub(super) fn open_sessions_note(sessions: &[Status], cwd: &std::path::Path) -> Option<String> {
+    let waiting: Vec<&Status> = sessions
+        .iter()
+        .filter(|s| s.cwd == cwd && !s.attached && !s.title.is_empty())
+        .collect();
+    match waiting.as_slice() {
+        [] => None,
+        [only] => Some(format!(
+            "A session is still open in this directory ({}): {}. /sessions to go back to it.",
+            only.state.label(),
+            only.title,
+        )),
+        several => Some(format!(
+            "{} other sessions are still open in this directory. /sessions to go back to one.",
+            several.len(),
+        )),
+    }
+}
+
 impl App {
     /// The other open sessions: those from this directory first, then the latest first.
     fn other_sessions(&self) -> Vec<Status> {
@@ -103,6 +124,15 @@ impl App {
             .collect();
         sessions.sort_by_key(|s| s.cwd != self.workspace.cwd);
         sessions
+    }
+
+    /// At startup: mentions the sessions from this directory that no terminal is showing.
+    pub fn mention_open_sessions(&mut self) {
+        let sessions = self.other_sessions();
+        if let Some(note) = open_sessions_note(&sessions, &self.workspace.cwd) {
+            self.entries.push(Entry::Info(note.clone()));
+            self.open_sessions_note = Some(note);
+        }
     }
 
     pub(super) fn open_sessions_picker(&mut self) {

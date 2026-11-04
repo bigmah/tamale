@@ -142,6 +142,8 @@ async fn start(cli: cli::Cli) -> Result<()> {
         Some(cli::Resume::Pick) => app.resume_command(None),
         None => {}
     }
+    #[cfg(unix)]
+    app.mention_open_sessions();
     if choose_backend {
         app.ask_for_backend();
     }

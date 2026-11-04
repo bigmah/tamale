@@ -55,8 +55,6 @@ pub enum Command {
 #[derive(Default, Debug)]
 pub struct Cli {
     pub command: Option<Command>,
-    /// No arguments at all: just `tamale`.
-    pub plain: bool,
     /// Keep the session in this process instead of starting a server for it.
     pub foreground: bool,
     /// Be the server a client started (see `background`).
@@ -79,7 +77,6 @@ impl Cli {
     pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Self> {
         let mut args = args.into_iter().peekable();
         let mut cli = Self {
-            plain: args.peek().is_none(),
             ..Self::default()
         };
         let session_id = |arg: &str| {

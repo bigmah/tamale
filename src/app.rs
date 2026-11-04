@@ -217,6 +217,8 @@ pub struct App {
     session_created: u64,
     /// Whether a save failure has been reported (to avoid repeating it on every save).
     save_error_shown: bool,
+    /// The startup note about other open sessions, true only then, so it's never saved.
+    open_sessions_note: Option<String>,
     history: Vec<Message>,
     entries: Vec<Entry>,
     transcript: transcript::Transcript,
@@ -332,6 +334,7 @@ impl App {
             session_id: session::new_id(),
             session_created: session::now(),
             save_error_shown: false,
+            open_sessions_note: None,
             history: Vec::new(),
             entries: vec![Entry::Info(
                 "Welcome! Type a request and press Enter. /help for commands.".into(),
