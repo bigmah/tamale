@@ -229,6 +229,10 @@ pub struct App {
     session_writer: Option<session::Writer>,
     input: String,
     cursor: usize,
+    /// Big pastes shown collapsed in the prompt: each placeholder and the text it stands for.
+    pastes: Vec<(String, String)>,
+    /// Pastes collapsed so far, so placeholders stay unique.
+    paste_count: usize,
     /// Messages typed while the agent runs, shared with the running turn (see `agent::Steering`).
     queued: agent::Steering,
     /// Earlier prompts for ↑/↓ recall, oldest first.
@@ -345,6 +349,8 @@ impl App {
             session_writer: None,
             input: String::new(),
             cursor: 0,
+            pastes: Vec::new(),
+            paste_count: 0,
             queued: agent::Steering::default(),
             prompts: prompts::Prompts::default(),
             scroll_back: 0,
@@ -455,12 +461,13 @@ impl App {
     }
 
     fn submit(&mut self) {
-        let text = self.input.trim().to_string();
+        let text = self.expand_pastes(self.input.trim());
         if text.is_empty() {
             return;
         }
         self.input.clear();
         self.cursor = 0;
+        self.prune_pastes();
         self.plain_prompts = false;
         self.submit_text(text);
     }

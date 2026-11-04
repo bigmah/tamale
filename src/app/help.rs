@@ -124,7 +124,7 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
                 "Ctrl+V / Shift+Insert",
                 "Paste clipboard text without sending",
             ),
-            ("Terminal paste (Cmd+V)", "Pastes multi-line text as-is"),
+            ("Terminal paste (Cmd+V)", "Pastes text; big pastes show collapsed"),
         ],
     ),
     (

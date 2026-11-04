@@ -45,7 +45,7 @@ pub(super) struct RemoteView {
     prompt: Option<Prompt>,
     scroll_back: usize,
     /// This session's draft, while the prompt belongs to the other one.
-    draft: (String, usize),
+    pub(super) draft: (String, usize),
 }
 
 impl App {
@@ -190,7 +190,7 @@ impl App {
     }
 
     fn send_to_remote(&mut self) {
-        let text = self.input.trim().to_string();
+        let text = self.expand_pastes(self.input.trim());
         if text.is_empty() {
             return;
         }
@@ -214,6 +214,7 @@ impl App {
         self.prompts.add(&text);
         self.input.clear();
         self.cursor = 0;
+        self.prune_pastes();
     }
 
     pub(super) fn draw_remote_view(&mut self, frame: &mut Frame) {

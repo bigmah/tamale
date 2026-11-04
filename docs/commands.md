@@ -19,7 +19,8 @@
   `Ctrl+Shift+C` on Linux). `/copy` copies the latest reply without selecting it.
 - Paste with your terminal's shortcut (`Cmd+V` on macOS, usually `Ctrl+Shift+V` on Linux),
   `Ctrl+V`, `Shift+Insert`, or `/paste`. Multi-line text is inserted without sending;
-  press Enter when ready.
+  press Enter when ready. A big paste (10+ lines or 1000+ characters) shows as
+  `[Pasted text #1 +42 lines]` and is sent in full; Backspace removes it whole.
 - `/copy` copies the latest assistant reply, preserving Markdown and code. `/copy all`
   copies all user and assistant messages. `Ctrl+Shift+C` also copies the latest reply
   if your terminal forwards that shortcut to the app.

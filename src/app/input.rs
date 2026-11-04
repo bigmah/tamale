@@ -4,6 +4,11 @@ use crossterm::event::{
 use ratatui::layout::Position;
 
 use super::{App, AppEvent, EFFORT_CHOICES, FooterTab, WHEEL_LINES};
+
+/// Pastes with at least this many lines show collapsed in the prompt.
+const PASTE_COLLAPSE_LINES: usize = 10;
+/// Pastes with at least this many characters show collapsed in the prompt.
+const PASTE_COLLAPSE_CHARS: usize = 1000;
 use crate::clipboard;
 use crate::session::Entry;
 
@@ -211,6 +216,7 @@ impl App {
                 } else if !self.input.is_empty() {
                     self.input.clear();
                     self.cursor = 0;
+                    self.prune_pastes();
                 } else {
                     self.should_quit = true;
                 }
@@ -250,13 +256,13 @@ impl App {
             KeyCode::Char(c) if !ctrl => self.insert_str(&c.to_string()),
             // Many terminals send ^H (Ctrl+H) for Backspace instead of DEL.
             KeyCode::Backspace | KeyCode::Char('h') => {
-                if let Some(prev) = self.prev_boundary() {
+                if let Some(prev) = self.paste_before_cursor().or_else(|| self.prev_boundary()) {
                     self.input.drain(prev..self.cursor);
                     self.cursor = prev;
                 }
             }
             KeyCode::Delete => {
-                if let Some(next) = self.next_boundary() {
+                if let Some(next) = self.paste_after_cursor().or_else(|| self.next_boundary()) {
                     self.input.drain(self.cursor..next);
                 }
             }
@@ -331,8 +337,65 @@ impl App {
             && self.rewind_picker.is_none()
             && !self.diff_open
         {
-            self.insert_str(&text);
+            self.insert_paste(text);
         }
+    }
+
+    /// Inserts pasted text, collapsing a big one to a placeholder that expands when it's sent.
+    fn insert_paste(&mut self, text: String) {
+        let lines = text.trim_end_matches('\n').matches('\n').count();
+        if lines < PASTE_COLLAPSE_LINES && text.chars().count() < PASTE_COLLAPSE_CHARS {
+            self.insert_str(&text);
+            return;
+        }
+        self.paste_count += 1;
+        let placeholder = if lines > 0 {
+            format!("[Pasted text #{} +{lines} lines]", self.paste_count)
+        } else {
+            format!("[Pasted text #{} {} chars]", self.paste_count, text.chars().count())
+        };
+        self.insert_str(&placeholder);
+        self.pastes.push((placeholder, text));
+    }
+
+    /// `input` with each paste placeholder replaced by the text it stands for.
+    pub(super) fn expand_pastes(&self, input: &str) -> String {
+        self.pastes
+            .iter()
+            .fold(input.to_string(), |text, (placeholder, paste)| {
+                text.replacen(placeholder, paste, 1)
+            })
+    }
+
+    /// Forgets pastes whose placeholder is no longer in the prompt (or a stashed draft).
+    pub(super) fn prune_pastes(&mut self) {
+        #[cfg(unix)]
+        let draft = self.remote_view.as_ref().map(|view| view.draft.0.clone());
+        #[cfg(not(unix))]
+        let draft: Option<String> = None;
+        let input = &self.input;
+        self.pastes.retain(|(placeholder, _)| {
+            input.contains(placeholder.as_str())
+                || draft.as_ref().is_some_and(|d| d.contains(placeholder.as_str()))
+        });
+    }
+
+    /// The placeholder ending at the cursor, if any, so Backspace removes it whole.
+    fn paste_before_cursor(&self) -> Option<usize> {
+        let before = &self.input[..self.cursor];
+        self.pastes
+            .iter()
+            .find(|(placeholder, _)| before.ends_with(placeholder.as_str()))
+            .map(|(placeholder, _)| self.cursor - placeholder.len())
+    }
+
+    /// The placeholder starting at the cursor, if any, so Delete removes it whole.
+    fn paste_after_cursor(&self) -> Option<usize> {
+        let after = &self.input[self.cursor..];
+        self.pastes
+            .iter()
+            .find(|(placeholder, _)| after.starts_with(placeholder.as_str()))
+            .map(|(placeholder, _)| self.cursor + placeholder.len())
     }
 
     pub(super) fn paste_clipboard(&self) {

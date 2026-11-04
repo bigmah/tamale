@@ -2404,3 +2404,47 @@ async fn question_prompt_picks_toggles_types_and_submits() {
     assert!(app.question.is_none());
     assert!(answer.try_recv().is_err());
 }
+
+#[tokio::test]
+async fn big_pastes_collapse_in_the_prompt_and_expand_when_sent() {
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    let wall: String = (1..=20).map(|i| format!("line {i}\n")).collect();
+    app.input = "look: ".into();
+    app.cursor = app.input.len();
+    app.on_event(Event::Paste(wall.clone()));
+    assert_eq!(app.input, "look: [Pasted text #1 +19 lines]");
+    assert_eq!(app.cursor, app.input.len());
+
+    // A long single line collapses too, with its length.
+    app.on_event(Event::Paste(" ".into()));
+    let long = "x".repeat(1500);
+    app.on_event(Event::Paste(long.clone()));
+    assert_eq!(
+        app.input,
+        "look: [Pasted text #1 +19 lines] [Pasted text #2 1500 chars]"
+    );
+
+    // Backspace removes a placeholder whole.
+    app.on_event(key(KeyCode::Backspace));
+    assert_eq!(app.input, "look: [Pasted text #1 +19 lines] ");
+    app.on_event(key(KeyCode::Backspace));
+    assert_eq!(app.expand_pastes(&app.input), format!("look: {wall}"));
+
+    // Small pastes go in as they are.
+    app.on_event(Event::Paste(" small\npaste".into()));
+    assert_eq!(app.input, "look: [Pasted text #1 +19 lines] small\npaste");
+
+    // Sending expands it; the prompt and stored pastes are cleared.
+    app.on_event(key(KeyCode::Enter));
+    assert!(app.input.is_empty());
+    assert!(app.pastes.is_empty());
+    assert_eq!(
+        app.prompts.prev(""),
+        Some(format!("look: {wall} small\npaste"))
+    );
+}
