@@ -65,6 +65,21 @@ back to the terminal, and `Ctrl+C` quits. Any number of tabs can be open.
   and the tree reload as the agent changes files. The browser reads only files inside
   the workspace (the working directory and `/add-dir` directories), and skips
   ignored files and `.git`.
+- **Changes.** `/diff`, the `±` button in the top bar (it counts the changed files and
+  lines) or the panel's **Changes** tab review your uncommitted changes the way the
+  terminal's [diff viewer](diff-viewer.md) does: a tree of changed files with their status
+  and `+added −removed`, and the selected file's diff with old and new line numbers, tinted
+  lines and the changed part of edited lines highlighted. Unchanged lines fold; click a
+  `↕ 25 unchanged lines` row to open more, or press `E` for the whole file. The chat steps
+  aside for the width (`f` brings it back, and it returns by itself when the agent needs an
+  answer). A **± diff** link on write and edit steps jumps to that file. The view reloads as
+  the agent works. It shows the working tree against `HEAD`; `/diff <args>` is
+  terminal-only.
+  Keys, with the panel focused: `j`/`k` move the cursor, `n`/`p` jump between changes (past
+  the last, to the next file), `]`/`[` move between files, `g`/`G`, `PgUp`/`PgDn`, `e` opens
+  folded lines, `o` opens the file, `r` refreshes, `q` or `Esc` closes. `v` starts a
+  selection (or drag the line numbers); `Enter` or `a` quotes it into the prompt, `y` copies
+  it. `n` stays with the viewer even while an approval is waiting.
 - **Artifacts.** During a web session replies are brief: a few sentences, or a list of at
   most 10 items. A longer answer (more than 10 items, or tables, diagrams or long code) comes
   as a sentence or three of summary followed by an HTML artifact that carries all of it: a
@@ -94,7 +109,7 @@ back to the terminal, and `Ctrl+C` quits. Any number of tabs can be open.
   points the model at its saved file. In the terminal, `/artifacts` lists this session's
   files.
 - Commands that open a picker in the terminal (`/model`, `/effort`, `/resume`,
-  `/backend` with no arguments, `/rewind`, `/diff`) explain their argument forms
+  `/backend` with no arguments, `/rewind`) explain their argument forms
   instead. `/login` still runs in the terminal.
 
 The address works the same way as `/browser`'s: the server listens only on 127.0.0.1

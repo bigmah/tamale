@@ -283,6 +283,25 @@ pub fn diff(roots: &[PathBuf]) -> Value {
     }
 }
 
+/// The size of the first root's uncommitted changes, for the page's Changes button: the
+/// counts alone, so keeping them current costs little on a slow connection.
+pub fn diff_stat(roots: &[PathBuf]) -> Value {
+    let files = roots
+        .first()
+        .and_then(|root| crate::diff::load(root, &crate::diff::Target::parse("")).ok())
+        .unwrap_or_default();
+    diff_stat_reply(&files)
+}
+
+fn diff_stat_reply(files: &[crate::diff::FileDiff]) -> Value {
+    json!({
+        "t": "diff_stat",
+        "files": files.len(),
+        "added": files.iter().map(|f| f.added).sum::<usize>(),
+        "removed": files.iter().map(|f| f.removed).sum::<usize>(),
+    })
+}
+
 /// `files` as the `diff` message sends them.
 pub(super) fn diff_reply(label: &str, files: &[crate::diff::FileDiff]) -> Value {
     let mut budget = MAX_DIFF_BYTES;
@@ -406,6 +425,18 @@ mod diff_tests {
             .iter()
             .map(|h| h["lines"].as_array().unwrap().len())
             .collect()
+    }
+
+    #[test]
+    fn the_stat_adds_up_every_file_without_sending_lines() {
+        let mut a = file(10, 5);
+        a.added = 3;
+        a.removed = 1;
+        let mut b = file(10, 5);
+        b.added = 4;
+        b.removed = 2;
+        let reply = diff_stat_reply(&[a, b]);
+        assert_eq!(reply, json!({ "t": "diff_stat", "files": 2, "added": 7, "removed": 3 }));
     }
 
     #[test]

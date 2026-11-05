@@ -1024,6 +1024,7 @@ fn handle(shared: &Arc<Shared>, id: u64, request: Value) {
             reply(Box::new(move |roots| files::grep(roots, &query)));
         }
         "diff" => reply(Box::new(files::diff)),
+        "diff_stat" => reply(Box::new(files::diff_stat)),
         "older" => {
             let before = request.get("before").and_then(Value::as_u64).unwrap_or(0);
             let _ = shared.events.send(WebEvent::Older {
@@ -1364,6 +1365,46 @@ mod tests {
         assert_eq!((server.remote_tabs(), server.web_remote_tabs()), (1, 0));
         handle(&server.shared, id, json!({ "t": "send", "text": "b" }));
         assert!(matches!(server.events.recv().await, Some(WebEvent::TerminalSend(t)) if t == "b"));
+    }
+
+    #[tokio::test]
+    async fn a_tab_asks_for_the_changes_and_for_just_their_counts() {
+        let repo = std::env::temp_dir().join(format!("tamale-web-diff-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(repo.join("a.txt"), "one\ntwo\n").unwrap();
+        let git = |args: &[&str]| {
+            let done = std::process::Command::new("git").arg("-C").arg(&repo).args(args).output().unwrap();
+            assert!(done.status.success(), "git {args:?}");
+        };
+        git(&["init", "-q"]);
+        git(&["add", "."]);
+        git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "first"]);
+        std::fs::write(repo.join("a.txt"), "one\nTWO\nthree\n").unwrap();
+
+        let server = Server::start(false).await.unwrap();
+        *server.shared.roots.lock().unwrap() = vec![repo.clone()];
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let id = server.shared.add_client(tx, false, None);
+        let mut reply = async |request: Value| -> Value {
+            handle(&server.shared, id, request);
+            loop {
+                if let Some(Out::Text(text)) = rx.recv().await
+                    && let Ok(value) = serde_json::from_str::<Value>(&text)
+                    && value.get("seq").is_some()
+                {
+                    return value;
+                }
+            }
+        };
+
+        let stat = reply(json!({ "t": "diff_stat", "seq": 1 })).await;
+        assert_eq!(stat["t"], "diff_stat");
+        assert_eq!((&stat["files"], &stat["added"], &stat["removed"]), (&json!(1), &json!(2), &json!(1)));
+        assert_eq!(stat["seq"], 1);
+        let diff = reply(json!({ "t": "diff", "seq": 2 })).await;
+        assert_eq!(diff["files"][0]["path"], "a.txt");
+        assert_eq!(diff["seq"], 2);
+        let _ = std::fs::remove_dir_all(repo);
     }
 
     #[tokio::test]

@@ -500,6 +500,10 @@ body.artifact-open .app::after { content: ""; position: fixed; inset: 0; z-index
 .tool-out .add { color: var(--added); }
 .tool-out .del { color: var(--deleted); }
 .tool-out .hunk { color: var(--accent); }
+.difflines { width: max-content; min-width: 100%; }
+.difflines span { display: block; }
+.difflines .add { background: var(--add-bg); }
+.difflines .del { background: var(--del-bg); }
 .tool-out .cut { display: block; color: var(--fg-faint); font-style: italic; margin-top: 6px; }
 .tool.error .tool-out pre:last-child { color: #f0a3aa; }
 
@@ -952,6 +956,86 @@ body.artifact-open .app::after { content: ""; position: fixed; inset: 0; z-index
 .cl.sel .ln { color: var(--accent); opacity: 1; }
 .cl.flash { animation: flash 1.4s var(--ease); }
 
+/* ---------- changes: the diff in the code panel ---------- */
+
+.diffbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--ctl);
+  padding: 0 7px;
+  border-radius: var(--r);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+.diffbtn:hover { background: var(--bg-3); color: var(--fg); }
+.diffbtn.on { background: var(--accent-soft); color: var(--accent); }
+.diffbtn-mark { font-size: 14px; }
+.main.diff-full .chat, .main.diff-full .splitter { display: none; }
+.code:focus { outline: none; }
+.code.changes .side-find, .code.changes .tabstrip { display: none; }
+.code:not(.changes) .diffonly { display: none; }
+.dsummary { padding: 8px 8px 8px 6px; font-size: 12px; color: var(--fg-dim); border-bottom: 1px solid var(--border-soft); margin-bottom: 4px; }
+.dsummary b { color: var(--fg); font-weight: 600; }
+.dsummary .dcount { margin-left: 8px; }
+.dlabel { color: var(--fg-faint); font-size: 11.5px; margin-top: 2px; }
+.dcount { font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+.row .dcount { margin-left: auto; padding-left: 6px; flex: none; }
+.dstatus { width: 12px; flex: none; text-align: center; font-family: var(--mono); font-size: 11px; font-weight: 600; }
+.st-A, .st-U { color: var(--added); }
+.st-M { color: var(--modified); }
+.st-D { color: var(--deleted); }
+.st-R { color: var(--violet); }
+.vmeta .dcount { font-size: 11.5px; }
+.diffview { padding-top: 0; }
+.dl { --row: transparent; display: flex; white-space: pre; background: var(--row); }
+.dl.add { --row: var(--add-bg); }
+.dl.del { --row: var(--del-bg); }
+.dl.nonl { color: var(--fg-faint); font-style: italic; }
+/* Stays put while long lines scroll sideways; opaque, so text passes under it. */
+.dg {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  flex: none;
+  background: linear-gradient(var(--row), var(--row)), var(--bg);
+  user-select: none;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.dn { width: 5.5ch; flex: none; text-align: right; color: var(--fg-faint); opacity: 0.75; }
+.ds { width: 3ch; flex: none; text-align: center; color: var(--fg-faint); }
+.dl.add .ds { color: var(--added); }
+.dl.del .ds { color: var(--deleted); }
+.dg:hover .dn { color: var(--accent); opacity: 1; }
+.dt { padding-right: 24px; }
+.dt mark { color: inherit; border-radius: 2px; }
+.dl.add .dt mark { background: rgba(79, 191, 122, 0.36); }
+.dl.del .dt mark { background: rgba(224, 108, 117, 0.38); }
+.dl.sel { --row: var(--accent-soft); }
+.dl.cur .dg, .dgap.cur, .dnote.cur { box-shadow: inset 2px 0 0 var(--accent); }
+.dl.cur { outline: 1px solid var(--border); outline-offset: -1px; }
+.dgap {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  width: 100%;
+  padding: 2px 0 2px 2ch;
+  background: var(--bg-1);
+  color: var(--fg-faint);
+  font: inherit;
+  text-align: left;
+  white-space: pre;
+}
+.dgap:hover { background: var(--bg-2); color: var(--fg-dim); }
+.dgap.sel { background: var(--accent-soft); }
+.dgapn { flex: none; color: var(--accent); }
+.dsec { overflow: hidden; text-overflow: ellipsis; max-width: 70ch; }
+.dnote { padding: 5px 2ch; color: var(--fg-faint); font-family: var(--sans); font-size: 12.5px; }
+
 /* ---------- picker and help ---------- */
 
 .pickmask {
@@ -1046,6 +1130,7 @@ body.artifact-open .app::after { content: ""; position: fixed; inset: 0; z-index
 @media (max-width: 980px) {
   .main.with-code .chat { display: none; }
   .main.with-code .splitter { display: none; }
+  #diff-full { display: none; }
   .meters .ctx, .meters .cost { display: none; }
   .side { width: 210px; }
 }

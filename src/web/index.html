@@ -34,6 +34,7 @@
     <button class="iconbtn" id="toggle-artifacts" title="Artifacts from this and earlier sessions  /artifacts">
       <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M2 5.5h12M5 8.5h6M5 10.75h3.5"/></svg>
     </button>
+    <button class="diffbtn" id="toggle-diff" title="Uncommitted changes  /diff"><span class="diffbtn-mark">±</span><span id="diff-count"></span></button>
     <button class="iconbtn" id="toggle-code" title="Browse code  /code  ⌘B">
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.6 4.2 1.8 8l3.8 3.8M10.4 4.2 14.2 8l-3.8 3.8"/></svg>
     </button>
@@ -87,12 +88,13 @@
 
     <div class="splitter" id="splitter" hidden></div>
 
-    <section class="code" id="code" hidden>
+    <section class="code" id="code" tabindex="-1" hidden>
       <aside class="side">
         <div class="side-hdr">
           <div class="seg" id="seg">
             <button data-mode="files" class="on">Files</button>
             <button data-mode="search">Search</button>
+            <button data-mode="changes">Changes</button>
           </div>
           <button class="iconbtn sm" id="code-refresh" title="Reload files">
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 6.3A5.3 5.3 0 1 0 13 10M13.5 2.8v3.7H9.8"/></svg>
@@ -108,6 +110,10 @@
           <div class="spacer"></div>
           <button class="askbtn" id="ask" hidden></button>
           <span class="vmeta" id="vmeta"></span>
+          <button class="iconbtn sm diffonly" id="diff-all" title="Show the whole file  E">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v12M5 4.5 8 1.5l3 3M5 11.5l3 3 3-3"/></svg>
+          </button>
+          <button class="iconbtn sm diffonly" id="diff-full"></button>
           <button class="iconbtn sm" id="copy-path" title="Copy path">
             <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5v-.75A1.25 1.25 0 0 0 9.25 1.5h-5.5A1.25 1.25 0 0 0 2.5 2.75v5.5A1.25 1.25 0 0 0 3.75 9.5h.75"/></svg>
           </button>
