@@ -61,6 +61,10 @@ const ARTIFACT_FRAME: &str = include_str!("web/artifact-frame.html");
 
 /// Tool output sent per call; the rest is cut.
 const MAX_TOOL_OUTPUT: usize = 24_000;
+/// Entries sent per `older` request.
+const OLDER_PAGE: usize = 100;
+/// The most entry JSON sent in one page of history, so one page stays quick on a phone.
+const MAX_PAGE_BYTES: usize = 512 * 1024;
 
 /// Added to every prompt during a web session: a reminder of the reply's shape. The design
 /// guide itself is in the system prompt (see [`artifact_guide`]).
@@ -180,8 +184,11 @@ impl Artifacts {
 
 /// What a tab asked for that the app has to handle.
 pub enum WebEvent {
-    /// A tab connected and needs the whole session; see [`Server::welcome`].
+    /// A tab connected and needs the session; see [`Server::welcome`].
     Connected(u64),
+    /// A tab that loads history as it scrolls wants the entries before `before`; see
+    /// [`Server::older`].
+    Older { id: u64, before: usize },
     Disconnected,
     /// How the connection to a tamale-hub went: `Ok` with news worth showing, `Err` with
     /// a problem. Either way the footer's hub indicator may have changed.
@@ -284,6 +291,9 @@ struct Client {
     /// Whether it's another terminal driving this session (see [`crate::remote`]), which
     /// shows an artifact as one line.
     terminal: bool,
+    /// How many of the latest entries it wants when it connects, and it asks for the rest as
+    /// it needs them. `None` for clients that want the whole session up front.
+    tail: Option<usize>,
 }
 
 struct Shared {
@@ -327,7 +337,7 @@ impl Shared {
     }
 
     /// Registers a tab, local or relayed, and asks the app to welcome it.
-    fn add_client(&self, tx: mpsc::UnboundedSender<Out>, remote: bool) -> u64 {
+    fn add_client(&self, tx: mpsc::UnboundedSender<Out>, remote: bool, tail: Option<usize>) -> u64 {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         self.clients.lock().unwrap().insert(
             id,
@@ -336,6 +346,7 @@ impl Shared {
                 welcomed: false,
                 remote,
                 terminal: false,
+                tail,
             },
         );
         let _ = self.events.send(WebEvent::Connected(id));
@@ -577,17 +588,23 @@ impl Server {
         }
     }
 
-    /// Sends a newly connected tab the whole session (call [`Self::sync`] first so it is
-    /// current); from then on it gets updates.
+    /// Sends a newly connected tab the session, or as much of its end as it asked for (call
+    /// [`Self::sync`] first so it is current); from then on it gets updates.
     pub fn welcome(&mut self, id: u64) {
         let mut clients = self.shared.clients.lock().unwrap();
         let Some(client) = clients.get_mut(&id) else {
             return;
         };
-        for message in self.mirror.full() {
+        for message in self.mirror.full(client.tail) {
             let _ = client.tx.send(Out::Text(message));
         }
         client.welcomed = true;
+    }
+
+    /// Sends a tab the page of entries before `before`. This runs between syncs, so it can't
+    /// overtake an update that changes those entries.
+    pub fn older(&self, id: u64, before: usize) {
+        self.shared.send_to(id, self.mirror.older(before));
     }
 }
 
@@ -706,28 +723,64 @@ impl Mirror {
         out
     }
 
-    fn full(&self) -> Vec<String> {
-        [
-            self.entries_message(0),
-            self.status.clone(),
-            self.approval.clone(),
-            self.question.clone(),
-        ]
-        .into_iter()
-        .filter(|m| !m.is_empty())
-        .collect()
+    /// All a new tab needs. With `tail`, only that many of the latest entries, after a
+    /// `loading` message saying how big they are so the tab can show its progress.
+    fn full(&self, tail: Option<usize>) -> Vec<String> {
+        let from = tail.map_or(0, |count| self.page_start(self.entries.len(), count));
+        let entries = self.entries_message(from);
+        let loading = tail.map(|_| json!({ "t": "loading", "bytes": entries.len() }).to_string());
+        loading
+            .into_iter()
+            .chain([
+                entries,
+                self.status.clone(),
+                self.approval.clone(),
+                self.question.clone(),
+            ])
+            .filter(|m| !m.is_empty())
+            .collect()
     }
 
     /// The entries from `from` on, replacing whatever the tab has from there.
     fn entries_message(&self, from: usize) -> String {
-        let items: Vec<&str> = self.entries[from..]
+        format!(
+            r#"{{"t":"entries","from":{from},"items":[{}]}}"#,
+            self.items(from, self.entries.len())
+        )
+    }
+
+    /// The page of entries before `before`, for a tab scrolling back. It says which `before`
+    /// it answers, since the tab's history may have been replaced in the meantime.
+    fn older(&self, before: usize) -> String {
+        let before = before.min(self.entries.len());
+        let from = self.page_start(before, OLDER_PAGE);
+        format!(
+            r#"{{"t":"older","before":{before},"from":{from},"items":[{}]}}"#,
+            self.items(from, before)
+        )
+    }
+
+    fn items(&self, from: usize, to: usize) -> String {
+        let items: Vec<&str> = self.entries[from..to]
             .iter()
             .map(|(_, j)| j.as_str())
             .collect();
-        format!(
-            r#"{{"t":"entries","from":{from},"items":[{}]}}"#,
-            items.join(",")
-        )
+        items.join(",")
+    }
+
+    /// Where a page ending at `end` starts: up to `count` entries, fewer if they'd pass
+    /// [`MAX_PAGE_BYTES`], but always at least one.
+    fn page_start(&self, end: usize, count: usize) -> usize {
+        let mut start = end;
+        let mut bytes = 0;
+        while start > 0 && end - start < count {
+            bytes += self.entries[start - 1].1.len();
+            if bytes > MAX_PAGE_BYTES && start < end {
+                break;
+            }
+            start -= 1;
+        }
+        start
     }
 }
 
@@ -887,7 +940,7 @@ async fn client(ws: WebSocket, shared: Arc<Shared>) {
         }
         let _ = sink.close().await;
     });
-    let id = shared.add_client(tx, false);
+    let id = shared.add_client(tx, false, None);
     while let Some(Ok(message)) = stream.next().await {
         let text = match message {
             Message::Text(text) => text,
@@ -969,6 +1022,14 @@ fn handle(shared: &Arc<Shared>, id: u64, request: Value) {
         "grep" => {
             let query = str_field("query");
             reply(Box::new(move |roots| files::grep(roots, &query)));
+        }
+        "diff" => reply(Box::new(files::diff)),
+        "older" => {
+            let before = request.get("before").and_then(Value::as_u64).unwrap_or(0);
+            let _ = shared.events.send(WebEvent::Older {
+                id,
+                before: before as usize,
+            });
         }
         // On an encrypted session the page can't fetch `/artifact/<id>`; it asks here.
         "artifact" => {
@@ -1113,9 +1174,62 @@ mod tests {
         entries.pop();
         assert_eq!(from(&mirror.update(&view(&entries))[0]), (1, 0));
 
-        let full = mirror.full();
+        let full = mirror.full(None);
         assert_eq!(from(&full[0]), (0, 1));
         assert!(full[1].contains("\"t\":\"status\""));
+    }
+
+    #[test]
+    fn a_tab_can_start_at_the_end_and_page_back() {
+        let mut mirror = Mirror::default();
+        let entries: Vec<Entry> = (0..250).map(|i| Entry::User(format!("m{i}"))).collect();
+        mirror.update(&view(&entries));
+
+        let full = mirror.full(Some(60));
+        let loading: Value = serde_json::from_str(&full[0]).unwrap();
+        assert_eq!(loading["t"], "loading");
+        assert_eq!(loading["bytes"], full[1].len(), "the size of what follows");
+        assert_eq!(from(&full[1]), (190, 60));
+
+        let page: Value = serde_json::from_str(&mirror.older(190)).unwrap();
+        assert_eq!(page["t"], "older");
+        assert_eq!((&page["before"], &page["from"]), (&190.into(), &90.into()));
+        assert_eq!(page["items"].as_array().unwrap().len(), 100);
+        assert_eq!(page["items"][99]["text"], "m189");
+
+        let page: Value = serde_json::from_str(&mirror.older(90)).unwrap();
+        assert_eq!(page["from"], 0, "the last page is short");
+        assert_eq!(page["items"].as_array().unwrap().len(), 90);
+
+        // From a tab that's behind a rewind, and from one with nothing left to get.
+        let page: Value = serde_json::from_str(&mirror.older(9_999)).unwrap();
+        assert_eq!((&page["before"], &page["from"]), (&250.into(), &150.into()));
+        let page: Value = serde_json::from_str(&mirror.older(0)).unwrap();
+        assert!(page["items"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_page_stops_at_its_size_limit_but_always_has_an_entry() {
+        let mut mirror = Mirror::default();
+        let big = "x".repeat(MAX_PAGE_BYTES / 2);
+        let entries = vec![
+            Entry::User(big.clone()),
+            Entry::User(big.clone()),
+            Entry::User(big.clone()),
+            Entry::User("y".repeat(MAX_PAGE_BYTES * 2)),
+        ];
+        mirror.update(&view(&entries));
+        assert_eq!(from(&mirror.full(Some(60))[1]), (3, 1), "one entry over the limit still goes");
+        let page: Value = serde_json::from_str(&mirror.older(3)).unwrap();
+        assert_eq!(page["from"], 2, "two would pass the limit with their JSON");
+    }
+
+    #[test]
+    fn a_tab_that_wants_it_all_is_sent_no_progress() {
+        let mut mirror = Mirror::default();
+        let entries = vec![Entry::User("hi".into())];
+        mirror.update(&view(&entries));
+        assert!(mirror.full(None)[0].contains("\"t\":\"entries\""));
     }
 
     #[test]
@@ -1240,7 +1354,7 @@ mod tests {
     async fn a_terminal_says_what_it_is_and_gets_ordinary_replies() {
         let mut server = Server::start(false).await.unwrap();
         let (tx, _rx) = mpsc::unbounded_channel();
-        let id = server.shared.add_client(tx, true);
+        let id = server.shared.add_client(tx, true, None);
         assert!(matches!(server.events.recv().await, Some(WebEvent::Connected(_))));
         assert_eq!((server.remote_tabs(), server.web_remote_tabs()), (1, 1));
         handle(&server.shared, id, json!({ "t": "send", "text": "a" }));
@@ -1756,13 +1870,45 @@ document.getElementById('m').innerHTML = html;
             .and_then(|s| s.parse().ok())
             .unwrap_or(120);
         let mut server = Server::start(false).await.unwrap();
+        // A repository with changes, for the diff viewer.
+        let repo = std::env::temp_dir().join(format!("tamale-fake-{}", crate::session::new_id()));
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        let body: Vec<String> = (1..=60).map(|i| format!("line {i}")).collect();
+        std::fs::write(repo.join("src/main.rs"), body.join("\n") + "\n").unwrap();
+        std::fs::write(repo.join("gone.txt"), "going\n").unwrap();
+        let git = |args: &[&str]| {
+            let done = std::process::Command::new("git").arg("-C").arg(&repo).args(args).output().unwrap();
+            assert!(done.status.success(), "git {args:?}");
+        };
+        git(&["init", "-q"]);
+        git(&["add", "."]);
+        git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "first"]);
+        let mut changed = body.clone();
+        changed[29] = "line thirty, changed".into();
+        std::fs::write(repo.join("src/main.rs"), changed.join("\n") + "\n").unwrap();
+        std::fs::remove_file(repo.join("gone.txt")).unwrap();
+        std::fs::write(repo.join("new.txt"), "brand new\n").unwrap();
+        let roots = vec![repo.clone()];
+        // TAMALE_FAKE_HISTORY turns in the middle, for loading a long session.
+        let history: usize = std::env::var("TAMALE_FAKE_HISTORY")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
         let mut entries = vec![
             Entry::Info("Welcome! A stand-in session for the iOS app's tests.".into()),
             Entry::User("Show me the plan".into()),
+        ];
+        entries.extend((0..history).flat_map(|i| {
+            [
+                Entry::Assistant(format!("Old answer {i}.\n\nWith a second paragraph to give it height.")),
+                Entry::User(format!("Old question {i}")),
+            ]
+        }));
+        entries.extend([
             Entry::Assistant(
                 "Here it is.\n\n```html artifact\n<!doctype html><title>The plan</title><h1>Plan</h1>\n```".into(),
             ),
-        ];
+        ]);
         let mut approval = Some(Approval {
             name: "bash".into(),
             summary: "rm -rf target".into(),
@@ -1775,6 +1921,7 @@ document.getElementById('m').innerHTML = html;
             let mut v = view(entries);
             v.approval = approval.clone();
             v.question = question.clone();
+            v.roots = roots.clone();
             server.sync(v);
         };
         sync(&mut server, &entries, &approval, &question);
@@ -1789,6 +1936,7 @@ document.getElementById('m').innerHTML = html;
         while let Ok(Some(event)) = tokio::time::timeout_at(deadline, server.events.recv()).await {
             match event {
                 WebEvent::Connected(id) => server.welcome(id),
+                WebEvent::Older { id, before } => server.older(id, before),
                 WebEvent::Send(text) if text == "ask" => {
                     entries.push(Entry::User(text));
                     question = Some(Questions {
@@ -1841,6 +1989,18 @@ document.getElementById('m').innerHTML = html;
                         always: Vec::new(),
                     });
                     entries.push(Entry::User(text.clone()));
+                    if text == "stream" {
+                        // A reply taller than the screen, coming in bit by bit.
+                        let mut reply = String::new();
+                        entries.push(Entry::Assistant(reply.clone()));
+                        for i in 0..60 {
+                            reply += &format!("Streamed paragraph {i}.\n\n");
+                            *entries.last_mut().unwrap() = Entry::Assistant(reply.clone());
+                            sync(&mut server, &entries, &approval, &question);
+                            tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+                        }
+                        continue;
+                    }
                     if text == "long" {
                         entries.push(Entry::Assistant(format!(
                             "A long one.\n\n```html artifact\n{LONG_ARTIFACT}\n```"

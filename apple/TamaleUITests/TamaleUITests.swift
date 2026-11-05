@@ -45,6 +45,158 @@ final class TamaleUITests: XCTestCase {
         wait(text(app, containing: "Here it is."), app, timeout: 20)
     }
 
+    /// Opens the stand-in session. Its approval stays up, for the tests that come after.
+    func openSession(_ app: XCUIApplication) throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let key = env["TAMALE_DEBUG_KEY"], let hub = env["TAMALE_DEBUG_HUB"] else {
+            throw XCTSkip("run apple/scripts/uitest.sh")
+        }
+        app.launchEnvironment = ["TAMALE_DEBUG_KEY": key, "TAMALE_DEBUG_HUB": hub]
+        app.launch()
+        let row = text(app, containing: "Show me the plan")
+        wait(row, app, timeout: 20)
+        row.tap()
+    }
+
+    /// A long conversation opens at its end with only that loaded, and scrolling up brings in
+    /// earlier pages without losing the place.
+    func testALongSessionStartsAtTheEndAndPagesBack() throws {
+        let app = XCUIApplication()
+        try openSession(app)
+        let end = text(app, containing: "Here it is.")
+        wait(end, app, timeout: 20)
+        XCTAssertTrue(end.isHittable, "it opens at the end")
+        XCTAssertFalse(text(app, containing: "Old question 150").exists, "not loaded, or scrolled to")
+        attach(app, "opened at the end")
+
+        // Only the last 60 entries came, so this one's from a page that had to be fetched.
+        let older = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Old question 26'")).firstMatch
+        let questions = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Old question'"))
+        func topQuestion() -> Int { Int(questions.firstMatch.label.split(separator: " ").last ?? "") ?? 0 }
+        var swipes = 0
+        var top = topQuestion()
+        while !older.exists && swipes < 40 {
+            app.scrollViews.firstMatch.swipeDown(velocity: .slow)
+            swipes += 1
+            // Steady steps, also as pages arrive: losing the place shows as a leap.
+            let now = topQuestion()
+            XCTAssertLessThan(top - now, 15, "swipe \(swipes) leapt from question \(top) to \(now)")
+            top = now
+        }
+        wait(older, app, timeout: 5)
+        XCTAssertGreaterThan(swipes, 2, "it took scrolling to get there")
+        attach(app, "paged back")
+
+        // Once the page has settled the view stays put: not thrown to the end or the top, and
+        // not fetching page after page by itself.
+        Thread.sleep(forTimeInterval: 1.5)
+        let label = older.label
+        let y = older.frame.minY
+        Thread.sleep(forTimeInterval: 2)
+        XCTAssertEqual(app.staticTexts[label].frame.minY, y, accuracy: 1)
+        XCTAssertFalse(app.staticTexts["Old question 0"].exists, "it hasn't run to the top")
+    }
+
+    /// A reply that grows past the screen stays in view, and scrolling away stops it pulling.
+    /// Named to run last: the tests share a session, and this buries the earlier entries and
+    /// answers the approval the others look for.
+    func testWhileAReplyStreamsTheViewFollowsUntilScrolledAway() throws {
+        let app = XCUIApplication()
+        try openSession(app)
+        let field = app.textFields.firstMatch.exists ? app.textFields.firstMatch : app.textViews.firstMatch
+        wait(field, app, timeout: 5)
+        field.tap()
+        field.typeText("stream")
+        app.buttons["Send"].tap()
+        let last = text(app, containing: "Streamed paragraph 59.")
+        wait(last, app, timeout: 15)
+        Thread.sleep(forTimeInterval: 0.5)
+        XCTAssertLessThan(last.frame.maxY, app.scrollViews.firstMatch.frame.maxY + 1, "the end is on screen")
+
+        // Scrolled up, a new entry doesn't take the view away.
+        for _ in 0..<3 { app.scrollViews.firstMatch.swipeDown(velocity: .slow) }
+        Thread.sleep(forTimeInterval: 1)
+        let reading = text(app, containing: "Streamed paragraph 2")
+        wait(reading, app, timeout: 5)
+        let y = reading.frame.minY
+        if app.buttons["Yes"].exists { app.buttons["Yes"].tap() }
+        Thread.sleep(forTimeInterval: 1)
+        XCTAssertTrue(reading.exists, "still reading the same part")
+        XCTAssertLessThan(abs(reading.frame.minY - y), 300, "not thrown to the end")
+    }
+
+    /// The Changes sheet lists the working tree's files; a file's diff folds what's unchanged,
+    /// and selected lines quote into the composer.
+    func testShowsTheChangesAndAsksAboutALine() throws {
+        let app = XCUIApplication()
+        try openSession(app)
+        let changes = app.buttons["Changes"]
+        wait(changes, app, timeout: 20)
+        wait(text(app, containing: "Here it is."), app, timeout: 20)
+        changes.tap()
+
+        let file = text(app, containing: "main.rs")
+        wait(file, app, timeout: 15)
+        XCTAssertTrue(text(app, containing: "gone.txt").exists)
+        XCTAssertTrue(text(app, containing: "new.txt").exists)
+        XCTAssertTrue(text(app, containing: "3 files").exists)
+        attach(app, "file tree")
+        file.tap()
+
+        let changed = text(app, containing: "line thirty, changed")
+        wait(changed, app, timeout: 5)
+        XCTAssertTrue(text(app, containing: "26 unchanged lines").exists, "folded above the change")
+        XCTAssertFalse(text(app, containing: "line 5").exists)
+        attach(app, "file diff")
+
+        text(app, containing: "26 unchanged lines").tap()
+        wait(text(app, containing: "line 20"), app, timeout: 5)
+        XCTAssertTrue(text(app, containing: "6 unchanged lines").exists, "opened next to the change")
+
+        // The tree's order: directories first.
+        app.buttons["Next File"].tap()
+        wait(text(app, containing: "going"), app, timeout: 5)
+        app.buttons["Next File"].tap()
+        wait(text(app, containing: "brand new"), app, timeout: 5)
+        app.buttons["Previous File"].tap()
+        app.buttons["Previous File"].tap()
+
+        wait(changed, app, timeout: 5)
+        changed.tap()
+        attach(app, "line selected")
+        wait(app.buttons["Ask"], app, timeout: 5)
+        app.buttons["Ask"].tap()
+
+        let field = app.textFields.firstMatch.exists ? app.textFields.firstMatch : app.textViews.firstMatch
+        let quoted = expectation(for: NSPredicate(format: "value CONTAINS 'src/main.rs'"), evaluatedWith: field)
+        wait(for: [quoted], timeout: 10)
+        XCTAssertTrue((field.value as? String)?.contains("+line thirty, changed") == true)
+    }
+
+    /// One tap asks for an artifact of what's being discussed.
+    func testTheArtifactButtonSendsItsPrompt() throws {
+        let app = XCUIApplication()
+        try openSession(app)
+        wait(text(app, containing: "Here it is."), app, timeout: 20)
+        let button = app.buttons["Generate an artifact"]
+        wait(button, app, timeout: 15)
+        attach(app, "composer")
+        button.tap()
+        wait(text(app, containing: "Can you generate an artifact for this?"), app, timeout: 10)
+        // It makes way while typing.
+        let field = app.textFields.firstMatch.exists ? app.textFields.firstMatch : app.textViews.firstMatch
+        field.tap()
+        field.typeText("x")
+        XCTAssertFalse(button.exists)
+    }
+
+    func attach(_ app: XCUIApplication, _ name: String) {
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = name
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
+
     /// The viewer gives the whole screen to the page, and its controls get out of the way.
     func testTheViewerFillsTheScreenAndItsControlsHideWhileReading() throws {
         let env = ProcessInfo.processInfo.environment

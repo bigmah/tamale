@@ -151,6 +151,9 @@ public struct NoiseTransport {
     /// Caps a whole message, across its pieces.
     public var maxMessage = 64 << 20
 
+    /// How much of a message that's still arriving in pieces has come.
+    public var partialBytes: Int { partial.count }
+
     /// Seals one message as one or more transport messages, in base64.
     public mutating func seal(_ message: String) -> [String] {
         let bytes = Data(message.utf8)

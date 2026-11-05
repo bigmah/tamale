@@ -272,6 +272,18 @@ struct Composer: View {
                     .lineLimit(2)
             }
             HStack(alignment: .bottom, spacing: 8) {
+                // A prompt typed often enough to get a button; out of the way while typing.
+                if empty {
+                    Button {
+                        model.send(Prompts.artifact)
+                    } label: {
+                        Image(systemName: "sparkles.rectangle.stack")
+                            .font(.system(size: 22))
+                            .frame(width: 32, height: 32)
+                    }
+                    .disabled(!model.connection.isLive)
+                    .accessibilityLabel("Generate an artifact")
+                }
                 TextField(model.question != nil ? "Or reply in your own words…" : model.busy ? "Queue a message…" : "Ask tamale…",
                           text: $draft, axis: .vertical)
                     .lineLimit(1...8)

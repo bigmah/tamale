@@ -659,7 +659,7 @@ fn render_file(index: usize, file: &FileDiff, reveal: Option<&Reveal>) -> Render
 
     let shown = shown_lines(&lines, reveal);
     let texts: Vec<String> = lines.iter().map(|l| clean(&l.text)).collect();
-    let emphasis = pair_changes(&lines, &texts);
+    let emphasis = diff::pair_changes(&lines, &texts);
     let hunk_style = Style::new().bg(HUNK_BG);
     let header_spans = |start: usize, shown: &[bool]| {
         let (header, section) = run_header(&lines, shown, start);
@@ -755,37 +755,6 @@ fn render_file(index: usize, file: &FileDiff, reveal: Option<&Reveal>) -> Render
         rendered.push(gutter, text_line, bg, RowKind::Line(i - 1));
     }
     rendered
-}
-
-/// For each line, the character range to emphasize: removed lines directly followed by
-/// added lines are paired in order, and their differing middles highlighted.
-fn pair_changes(lines: &[&diff::DiffLine], texts: &[String]) -> Vec<Option<(usize, usize)>> {
-    let mut out = vec![None; lines.len()];
-    let mut i = 0;
-    while i < lines.len() {
-        if lines[i].kind != Kind::Removed {
-            i += 1;
-            continue;
-        }
-        let removed_start = i;
-        while i < lines.len() && lines[i].kind == Kind::Removed {
-            i += 1;
-        }
-        let added_start = i;
-        while i < lines.len() && lines[i].kind == Kind::Added {
-            i += 1;
-        }
-        let pairs = (added_start - removed_start).min(i - added_start);
-        for k in 0..pairs {
-            let (old, new) = (removed_start + k, added_start + k);
-            if let Some((a, b)) = diff::inline_change(&texts[old], &texts[new]) {
-                // An empty range on one side (pure insertion) needs no emphasis.
-                out[old] = (a.0 < a.1).then_some(a);
-                out[new] = (b.0 < b.1).then_some(b);
-            }
-        }
-    }
-    out
 }
 
 /// Truncates to `max` columns, ending with `…` when shortened.

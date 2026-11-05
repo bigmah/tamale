@@ -303,6 +303,11 @@ public enum Incoming: Equatable, Sendable {
     case question(QuestionSet?)
     case artifact(ArtifactReply)
     case artifacts(Gallery)
+    /// The size of the entries about to arrive, in bytes.
+    case loading(bytes: Int)
+    /// A page of history from before `before`.
+    case older(before: Int, from: Int, items: [Entry])
+    case diff(DiffReply)
     case other(String)
 
     struct Head: Decodable { var t: String }
@@ -310,6 +315,8 @@ public enum Incoming: Equatable, Sendable {
     struct StatusBody: Decodable { var status: SessionStatus? }
     struct ApprovalBody: Decodable { var approval: Approval? }
     struct QuestionBody: Decodable { var question: QuestionSet? }
+    struct LoadingBody: Decodable { var bytes: Int }
+    struct OlderBody: Decodable { var before: Int; var from: Int; var items: [Entry] }
 
     public static func decode(_ text: String) throws -> Incoming {
         let data = Data(text.utf8)
@@ -324,6 +331,11 @@ public enum Incoming: Equatable, Sendable {
         case "question": return .question(try d.decode(QuestionBody.self, from: data).question)
         case "artifact": return .artifact(try d.decode(ArtifactReply.self, from: data))
         case "artifacts": return .artifacts(try d.decode(Gallery.self, from: data))
+        case "loading": return .loading(bytes: try d.decode(LoadingBody.self, from: data).bytes)
+        case "older":
+            let body = try d.decode(OlderBody.self, from: data)
+            return .older(before: body.before, from: body.from, items: body.items)
+        case "diff": return .diff(try d.decode(DiffReply.self, from: data))
         default: return .other(t)
         }
     }
@@ -341,6 +353,10 @@ public enum Outgoing: Equatable, Sendable {
     case answer([QuestionAnswer])
     case artifact(id: String)
     case artifacts(seq: Int)
+    /// Asks for the page of history before this entry.
+    case older(before: Int)
+    /// Asks for the session's uncommitted changes.
+    case diff(seq: Int)
     /// Ends the session, as `tamale kill` would on its machine; it stays saved there.
     case close
 
@@ -355,6 +371,8 @@ public enum Outgoing: Equatable, Sendable {
         case .answer(let answers): object = ["t": "answer", "answers": answers.map(\.object)]
         case .artifact(let id): object = ["t": "artifact", "id": id]
         case .artifacts(let seq): object = ["t": "artifacts", "seq": seq]
+        case .older(let before): object = ["t": "older", "before": before]
+        case .diff(let seq): object = ["t": "diff", "seq": seq]
         case .close: object = ["t": "close"]
         }
         let data = try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
@@ -365,6 +383,9 @@ public enum Outgoing: Equatable, Sendable {
 // MARK: - Prompts
 
 public enum Prompts {
+    /// What the composer's artifact button sends.
+    public static let artifact = "Can you generate an artifact for this?"
+
     /// What the web UI's Revise button starts the prompt with.
     public static func revise(title: String) -> String { "Revise the \"\(title)\" artifact: " }
 

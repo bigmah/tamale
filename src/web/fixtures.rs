@@ -17,6 +17,36 @@ const NONCE: &[u8; 16] = b"channel-nonce-16";
 /// Bigger than one Noise message's piece (65535 - 17 bytes), so it goes in two.
 const LONG_COUNT: usize = 32_800;
 const ARTIFACT_ID: &str = "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0";
+const SAMPLE_DIFF: &str = "\
+diff --git a/src/auth.rs b/src/auth.rs
+index 1111111..2222222 100644
+--- a/src/auth.rs
++++ b/src/auth.rs
+@@ -1,4 +1,5 @@
+ fn login() {
+-    drop(cookie);
++    keep(cookie);
++    log(cookie);
+ }
+ // end
+\\ No newline at end of file
+diff --git a/new.txt b/new.txt
+new file mode 100644
+index 0000000..3333333
+--- /dev/null
++++ b/new.txt
+@@ -0,0 +1 @@
++hello
+diff --git a/logo.png b/logo.png
+index 4444444..5555555 100644
+Binary files a/logo.png and b/logo.png differ
+diff --git a/old/name.rs b/new/name.rs
+similarity index 100%
+rename from old/name.rs
+rename to new/name.rs
+old mode 100644
+new mode 100755
+";
 
 fn root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("apple/Fixtures")
@@ -210,6 +240,12 @@ fn messages(dir: &std::path::Path) -> Vec<(&'static str, Value)> {
     gallery["seq"] = 7.into();
     let _ = gallery_id;
 
+    let older = {
+        let mut mirror = Mirror::default();
+        let history = [Entry::User("The first prompt".into()), Entry::Assistant("And its answer.".into()), Entry::User("Next".into())];
+        mirror.update(&view(&history));
+        mirror.older(2)
+    };
     let entries = fix(&sent[0]);
     let status = fix(&sent[1]);
     let approval = fix(&sent[2]);
@@ -225,6 +261,10 @@ fn messages(dir: &std::path::Path) -> Vec<(&'static str, Value)> {
         ("artifact-missing.json", artifact_reply("ffff", None, None)),
         ("artifacts.json", gallery),
         ("hs0.json", json!({ "t": "hs0", "n": STANDARD.encode(NONCE) })),
+        ("loading.json", json!({ "t": "loading", "bytes": 2048 })),
+        ("older.json", fix(&older)),
+        ("diff.json", files::diff_reply("working tree vs HEAD", &crate::diff::parse(SAMPLE_DIFF))),
+        ("diff-error.json", json!({ "t": "diff", "error": "/tmp is not inside a git repository" })),
     ]
 }
 

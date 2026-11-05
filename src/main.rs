@@ -575,6 +575,11 @@ async fn run(
                                 web.welcome(id);
                             }
                         }
+                        web::WebEvent::Older { id, before } => {
+                            if let Some(web) = &web {
+                                web.older(id, before);
+                            }
+                        }
                         web::WebEvent::Disconnected => {}
                         web::WebEvent::Hub(result) => app.on_web(result),
                         web::WebEvent::Send(text) => app.web_send(text),

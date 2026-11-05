@@ -173,13 +173,18 @@ impl Keys {
         let mut hs = builder.build_responder()?;
         let message = decode(hs1)?;
         let mut payload = vec![0u8; MAX_NOISE];
-        hs.read_message(&message, &mut payload)?;
+        let n = hs.read_message(&message, &mut payload)?;
+        let tail = serde_json::from_slice::<serde_json::Value>(&payload[..n])
+            .ok()
+            .and_then(|hello| hello.get("tail")?.as_u64())
+            .map(|tail| tail as usize);
         let mut out = vec![0u8; MAX_NOISE];
         let n = hs.write_message(br#"{"ok":true}"#, &mut out)?;
         Ok((
             Channel {
                 noise: hs.into_transport_mode()?,
                 partial: Vec::new(),
+                tail,
             },
             STANDARD.encode(&out[..n]),
         ))
@@ -220,6 +225,7 @@ impl Handshake {
         Ok(Channel {
             noise: self.hs.into_transport_mode()?,
             partial: Vec::new(),
+            tail: None,
         })
     }
 }
@@ -229,6 +235,9 @@ impl Handshake {
 pub struct Channel {
     noise: TransportState,
     partial: Vec<u8>,
+    /// How many of the latest entries the other side wants first, if it loads the rest as it
+    /// scrolls back (the handshake's first payload says). Older clients want them all.
+    pub tail: Option<usize>,
 }
 
 impl Channel {
@@ -303,6 +312,7 @@ pub mod testing {
             Ok(Channel {
                 noise: self.hs.into_transport_mode()?,
                 partial: Vec::new(),
+                tail: None,
             })
         }
     }

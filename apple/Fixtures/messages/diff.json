@@ -1,0 +1,113 @@
+{
+  "files": [
+    {
+      "added": 2,
+      "binary": false,
+      "hunks": [
+        {
+          "lines": [
+            {
+              "k": " ",
+              "n": 1,
+              "o": 1,
+              "t": "fn login() {"
+            },
+            {
+              "e": [
+                4,
+                7
+              ],
+              "k": "-",
+              "o": 2,
+              "t": "    drop(cookie);"
+            },
+            {
+              "e": [
+                4,
+                7
+              ],
+              "k": "+",
+              "n": 2,
+              "t": "    keep(cookie);"
+            },
+            {
+              "k": "+",
+              "n": 3,
+              "t": "    log(cookie);"
+            },
+            {
+              "k": " ",
+              "n": 4,
+              "o": 3,
+              "t": "}"
+            },
+            {
+              "k": " ",
+              "n": 5,
+              "o": 4,
+              "t": "// end"
+            },
+            {
+              "k": "\\",
+              "t": "\\ No newline at end of file"
+            }
+          ]
+        }
+      ],
+      "mode_change": null,
+      "old_path": null,
+      "omitted": false,
+      "path": "src/auth.rs",
+      "removed": 1,
+      "status": "M"
+    },
+    {
+      "added": 1,
+      "binary": false,
+      "hunks": [
+        {
+          "lines": [
+            {
+              "k": "+",
+              "n": 1,
+              "t": "hello"
+            }
+          ]
+        }
+      ],
+      "mode_change": null,
+      "old_path": null,
+      "omitted": false,
+      "path": "new.txt",
+      "removed": 0,
+      "status": "A"
+    },
+    {
+      "added": 0,
+      "binary": true,
+      "hunks": [],
+      "mode_change": null,
+      "old_path": null,
+      "omitted": false,
+      "path": "logo.png",
+      "removed": 0,
+      "status": "M"
+    },
+    {
+      "added": 0,
+      "binary": false,
+      "hunks": [],
+      "mode_change": [
+        "100644",
+        "100755"
+      ],
+      "old_path": "old/name.rs",
+      "omitted": false,
+      "path": "new/name.rs",
+      "removed": 0,
+      "status": "R"
+    }
+  ],
+  "label": "working tree vs HEAD",
+  "t": "diff"
+}

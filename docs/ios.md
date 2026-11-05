@@ -25,6 +25,20 @@ phone (below).
    menu. It ends on its machine as `tamale kill` would there, mid-turn if need be, and stays saved
    for `tamale --continue`.
 
+**Long sessions** open at the end, with a loading bar while the conversation comes in. Earlier
+messages load as you scroll up to them. This needs a current tamale on the session's machine; an
+older one sends the whole conversation up front.
+
+**Changes** (the ± button at the top of a session) shows the session's uncommitted work, like
+`/diff` in the terminal: a tree of the changed files, then each file's diff with the changed part
+of each line highlighted. Tap an **unchanged lines** row to open more of them, or use the menu to
+show the whole file or stop wrapping lines. The arrows step between files and changes. Tap a line
+to select it and another to stretch the selection, then **Ask** to quote those lines into the
+composer. This also needs a current tamale.
+
+The **artifact button** next to the composer sends "Can you generate an artifact for this?" with
+one tap. It hides while you're typing.
+
 **Artifacts** show inline at their own height; tap the title for full screen, where the page gets
 the whole display. The bar at the bottom hides as you scroll down and comes back when you scroll up
 or tap the handle left in its place; pull down from the top of the page to close. From the bar you

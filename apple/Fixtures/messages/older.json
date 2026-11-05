@@ -1,0 +1,17 @@
+{
+  "before": 2,
+  "from": 0,
+  "items": [
+    {
+      "kind": "user",
+      "text": "The first prompt"
+    },
+    {
+      "artifacts": [],
+      "html": "<p>And its answer.</p>",
+      "kind": "assistant",
+      "md": "And its answer."
+    }
+  ],
+  "t": "older"
+}

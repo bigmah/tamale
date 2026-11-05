@@ -31,6 +31,11 @@ public final class SessionChannel {
 
     public var onState: (ChannelState) -> Void = { _ in }
     public var onMessage: (Incoming) -> Void = { _ in }
+    /// Bytes in so far of a message that's still arriving in pieces.
+    public var onProgress: (Int) -> Void = { _ in }
+
+    /// Entries asked for on connecting. Older tamales ignore this and send them all.
+    static let tail = 60
 
     public private(set) var state: ChannelState = .idle {
         didSet { if state != oldValue { onState(state) } }
@@ -235,7 +240,8 @@ public final class SessionChannel {
             case "hs0" where handshake == nil && transport == nil:
                 guard let n = object["n"] as? String, let nonce = Data(lenientBase64: n) else { throw NoiseError.notBase64 }
                 var hs = NoiseHandshake(psk: hub.key.psk, sid: sid, nonce: nonce)
-                let first = hs.first(Data(#"{"v":1}"#.utf8))
+                // `tail`: start with the end of the session, and page back for the rest.
+                let first = hs.first(Data(#"{"v":1,"tail":\#(Self.tail)}"#.utf8))
                 handshake = hs
                 task.send(.string(Self.frame(["t": "hs1", "m": first.base64EncodedString()]))) { _ in }
             case "hs2" where handshake != nil:
@@ -247,6 +253,8 @@ public final class SessionChannel {
                 guard let m = object["m"] as? String else { throw NoiseError.notBase64 }
                 if let message = try transport!.open(m) {
                     deliver(message)
+                } else {
+                    onProgress(transport!.partialBytes)
                 }
             default:
                 guard handshake == nil, transport == nil else { throw NoiseError.badFlag }

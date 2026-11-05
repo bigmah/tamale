@@ -542,7 +542,8 @@ fn open_tab(
     out: &mpsc::UnboundedSender<ToHub>,
 ) -> u64 {
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let id = shared.add_client(tx, true);
+    let tail = cipher.as_ref().and_then(|cipher| cipher.lock().unwrap().tail);
+    let id = shared.add_client(tx, true, tail);
     let out = out.clone();
     tokio::spawn(async move {
         while let Some(message) = rx.recv().await {

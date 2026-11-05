@@ -139,12 +139,24 @@ uses the public hosts: `https://<hub>/api/...` and `wss://<sid>.<hub>/ws`.
 
 ### The /web messages
 
-The app reads `entries`, `status`, `approval`, `artifacts` and `artifact`, and sends `send`,
-`interrupt`, `approve`, `artifact`, `artifacts` and `close` (plus `tree`/`open`/`grep` later).
+The app reads `entries`, `status`, `approval`, `artifacts`, `artifact`, `loading`, `older` and
+`diff`, and sends `send`, `interrupt`, `approve`, `artifact`, `artifacts`, `older`, `diff` and
+`close` (plus `tree`/`open`/`grep` later).
 `close` ends the session as `tamale kill` would; tamale then tells the hub (`end`), which drops
 it from the list and closes its sockets with 4000.
 `entries {from, items}` replaces everything from `from` onward, so the model is just an array
 that gets spliced.
+
+**Long sessions.** The app's first handshake message says `{"v":1,"tail":60}`, because tamale
+welcomes a tab before any message could ask. tamale then sends `loading {bytes}` and only the last
+60 entries (at most 512 KB, and always at least one), so `from` is above 0. The model keeps that
+offset as `base`. Scrolling up sends `older {before}`, answered by `older {before, from, items}`,
+which the model drops if `before` isn't its `base` any more. Older tamales ignore the handshake
+field and send everything; the web page and terminal clients don't ask, so they're unchanged.
+
+**Diffs.** `diff {seq}` runs the same `diff::load` as the terminal's `/diff` and answers with whole
+files, which the app folds as the terminal does (`Diff.swift`). A file over 4,000 lines keeps only
+the lines near its changes, and files past 6 MB in total keep their counts but not their lines.
 
 Three gaps for a native client:
 

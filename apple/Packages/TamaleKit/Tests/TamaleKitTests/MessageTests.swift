@@ -115,6 +115,155 @@ final class MessageTests: XCTestCase {
         XCTAssertEqual(shown.label.cwd, "~/api")
     }
 
+    func testDiffDecodes() throws {
+        guard case .diff(let reply) = try message("diff.json") else { return XCTFail() }
+        XCTAssertEqual(reply.label, "working tree vs HEAD")
+        XCTAssertEqual(reply.files.map(\.status), ["M", "A", "M", "R"])
+        XCTAssertEqual(reply.added, 3)
+        XCTAssertEqual(reply.removed, 1)
+        let auth = reply.files[0]
+        XCTAssertEqual(auth.lines.map(\.kind), [.context, .removed, .added, .added, .context, .context, .noNewline])
+        XCTAssertEqual(auth.lines[1].old, 2)
+        XCTAssertNil(auth.lines[1].new)
+        XCTAssertEqual(auth.lines[1].parts.changed, "dro")
+        XCTAssertEqual(auth.lines[2].parts.before, "    ")
+        XCTAssertEqual(auth.lines[2].parts.after, "p(cookie);")
+        XCTAssertTrue(reply.files[2].binary)
+        XCTAssertEqual(reply.files[2].rows(), [.note("Binary file not shown")])
+        XCTAssertEqual(reply.files[3].oldPath, "old/name.rs")
+        XCTAssertEqual(reply.files[3].rows().count, 2, "renamed, and mode changed")
+        guard case .diff(let failed) = try message("diff-error.json") else { return XCTFail() }
+        XCTAssertNotNil(failed.error)
+    }
+
+    func file(lines count: Int, changedAt changes: Set<Int>) -> DiffFile {
+        DiffFile(path: "a.rs", lines: (1...count).map { n in
+            DiffLine(kind: changes.contains(n) ? .added : .context, old: changes.contains(n) ? nil : n, new: n, text: "line \(n)")
+        })
+    }
+
+    func testUnchangedLinesFoldAroundChanges() {
+        let file = file(lines: 100, changedAt: [50])
+        let rows = file.rows()
+        XCTAssertEqual(rows.first, .gap(start: 0, end: 46, section: "line 46"))
+        XCTAssertEqual(rows.dropFirst().prefix(7), (46...52).map { .line($0) }[...])
+        XCTAssertEqual(rows.last, .gap(start: 53, end: 100, section: ""))
+
+        // A long gap at the top opens next to the change, one at the bottom likewise.
+        var reveal = file.expanding(DiffReveal(), start: 0, end: 46)
+        XCTAssertEqual(file.rows(reveal).first, .gap(start: 0, end: 26, section: "line 26"))
+        reveal = file.expanding(reveal, start: 53, end: 100)
+        XCTAssertEqual(file.rows(reveal).last, .gap(start: 73, end: 100, section: ""))
+
+        // A small one opens fully, and `all` shows everything.
+        let short = self.file(lines: 15, changedAt: [10])
+        guard case .gap(let start, let end, _) = short.rows()[0] else { return XCTFail() }
+        XCTAssertFalse(short.rows(short.expanding(DiffReveal(), start: start, end: end)).contains { $0.isStop && $0.id == "g0" })
+        var all = DiffReveal()
+        all.all = true
+        XCTAssertEqual(file.rows(all).count, 100)
+
+        // One in the middle opens from both ends.
+        let two = self.file(lines: 200, changedAt: [10, 190])
+        let middle = two.expanding(DiffReveal(), start: 13, end: 186)
+        XCTAssertTrue(two.rows(middle).contains(.gap(start: 23, end: 176, section: "line 176")))
+    }
+
+    func testABigFilesRunsAreKeptApart() {
+        let lines = (1...4).map { DiffLine(kind: .added, new: $0, text: "x") }
+        let file = DiffFile(path: "big", lines: lines, breaks: [2])
+        XCTAssertEqual(file.rows(), [.line(0), .line(1), .cut(2), .line(2), .line(3)])
+    }
+
+    func testQuotingLinesForAPrompt() {
+        let file = DiffFile(path: "src/a.rs", lines: [
+            DiffLine(kind: .context, old: 1, new: 1, text: "keep"),
+            DiffLine(kind: .removed, old: 2, text: "old\r"),
+            DiffLine(kind: .added, new: 2, text: "new"),
+        ])
+        let rows = file.rows()
+        XCTAssertEqual(file.quote(rows: rows, first: 0, last: 2), "In `src/a.rs` (lines 1–2):\n```diff\n keep\n-old\n+new\n```\n\n")
+        XCTAssertEqual(file.quote(rows: rows, first: 1, last: 1), "In `src/a.rs` (removed line 2):\n```diff\n-old\n```\n\n")
+    }
+
+    func testTheFileTree() {
+        let files = ["src/app/diff.rs", "src/app/view.rs", "src/main.rs", "README.md", "docs/deep/er/a.md"]
+            .map { DiffFile(path: $0, lines: []) }
+        XCTAssertEqual(DiffTree.rows(files).map(\.name), ["docs/deep/er", "a.md", "src", "app", "diff.rs", "view.rs", "main.rs", "README.md"])
+        XCTAssertEqual(DiffTree.rows(files).map(\.depth), [0, 1, 0, 1, 2, 2, 1, 0])
+        XCTAssertEqual(DiffTree.rows(files, collapsed: ["src/app"]).map(\.name), ["docs/deep/er", "a.md", "src", "app", "main.rs", "README.md"])
+        XCTAssertEqual(DiffTree.order(files), [4, 0, 1, 2, 3])
+    }
+
+    func testEmphasisCountsCharactersNotBytes() {
+        let line = DiffLine(kind: .added, new: 1, text: "é\tb→c", emphasis: [3, 4])
+        XCTAssertEqual(line.parts.before, "é    b")
+        XCTAssertEqual(line.parts.changed, "→")
+        XCTAssertEqual(line.parts.after, "c")
+        // Numbers that don't fit the line show it plain.
+        XCTAssertEqual(DiffLine(kind: .added, text: "ab", emphasis: [1, 9]).parts.before, "ab")
+    }
+
+    func entries(_ range: Range<Int>) -> [Entry] {
+        range.map { Entry(kind: .user, text: "m\($0)") }
+    }
+
+    @MainActor
+    func testTheModelPagesBackFromTheEnd() throws {
+        let model = SessionModel(sid: String(repeating: "0", count: 32))
+        XCTAssertEqual(model.loadFraction, 0.25)
+        model.apply(.loading(bytes: 100))
+        model.apply(.entries(from: 190, items: entries(190..<250)))
+        XCTAssertEqual(model.base, 190)
+        XCTAssertEqual(model.entries.first?.text, "m190")
+        XCTAssertEqual(model.title, "", "the first prompt isn't here to name it")
+
+        // Streaming goes by the whole conversation's numbering.
+        model.apply(.entries(from: 249, items: [Entry(kind: .user, text: "new")]))
+        XCTAssertEqual(model.entries.count, 60)
+        XCTAssertEqual(model.entries.last?.text, "new")
+
+        model.apply(.older(before: 190, from: 90, items: entries(90..<190)))
+        XCTAssertEqual(model.base, 90)
+        XCTAssertEqual(model.entries.count, 160)
+        XCTAssertEqual(model.entries.first?.text, "m90")
+        XCTAssertEqual(model.entries[100].text, "m190")
+
+        // An answer for a history that's gone is dropped.
+        model.apply(.older(before: 190, from: 0, items: entries(0..<3)))
+        XCTAssertEqual(model.base, 90)
+
+        // A rewind past what's loaded replaces it all.
+        model.apply(.entries(from: 40, items: entries(40..<42)))
+        XCTAssertEqual(model.base, 40)
+        XCTAssertEqual(model.entries.count, 2)
+
+        // As does a gap: this far on, what's between isn't known.
+        model.apply(.entries(from: 300, items: entries(300..<301)))
+        XCTAssertEqual(model.base, 300)
+        XCTAssertEqual(model.entries.count, 1)
+
+        model.apply(.older(before: 300, from: 0, items: entries(0..<300)))
+        XCTAssertEqual(model.base, 0)
+        XCTAssertEqual(model.title, "m0")
+    }
+
+    @MainActor
+    func testTheModelKeepsADiffOnlyFromItsLatestRequest() throws {
+        let model = SessionModel(sid: String(repeating: "0", count: 32))
+        model.requestDiff()
+        XCTAssertTrue(model.loadingDiff)
+        guard case .diff(var reply) = try message("diff.json") else { return XCTFail() }
+        reply.seq = 99
+        model.apply(.diff(reply))
+        XCTAssertNil(model.diff)
+        XCTAssertTrue(model.loadingDiff)
+        reply.seq = 1
+        model.apply(.diff(reply))
+        XCTAssertEqual(model.diff?.files.count, 4)
+        XCTAssertFalse(model.loadingDiff)
+    }
+
     @MainActor
     func testTheModelSplicesEntries() throws {
         let model = SessionModel(sid: String(repeating: "0", count: 32))

@@ -492,3 +492,34 @@ pub fn inline_change(old: &str, new: &str) -> Option<((usize, usize), (usize, us
     }
     Some(((prefix, old.len() - suffix), (prefix, new.len() - suffix)))
 }
+
+/// For each line, the character range to emphasize: removed lines directly followed by
+/// added lines are paired in order, and their differing middles highlighted.
+pub fn pair_changes(lines: &[&DiffLine], texts: &[String]) -> Vec<Option<(usize, usize)>> {
+    let mut out = vec![None; lines.len()];
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].kind != Kind::Removed {
+            i += 1;
+            continue;
+        }
+        let removed_start = i;
+        while i < lines.len() && lines[i].kind == Kind::Removed {
+            i += 1;
+        }
+        let added_start = i;
+        while i < lines.len() && lines[i].kind == Kind::Added {
+            i += 1;
+        }
+        let pairs = (added_start - removed_start).min(i - added_start);
+        for k in 0..pairs {
+            let (old, new) = (removed_start + k, added_start + k);
+            if let Some((a, b)) = inline_change(&texts[old], &texts[new]) {
+                // An empty range on one side (pure insertion) needs no emphasis.
+                out[old] = (a.0 < a.1).then_some(a);
+                out[new] = (b.0 < b.1).then_some(b);
+            }
+        }
+    }
+    out
+}

@@ -4,6 +4,8 @@
 #   apple/scripts/uitest.sh ["iPhone 17 Pro"]
 set -eu
 device=${1:-iPhone 17 Pro}
+# A long conversation, so every test also shows it starts at the end and pages back.
+export TAMALE_FAKE_HISTORY=300
 . "$(dirname "$0")/local-hub.sh"
 
 cd apple
