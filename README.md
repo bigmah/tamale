@@ -1,23 +1,18 @@
 # tamale 🫔
 
-**A remote view wrapper for your agent harness.**
+**A coding agent you can drive from your terminal, browser or phone.**
 
-tamale is a front end (TUI + iOS + WASM) for your coding agent backend
-([Claude Code](https://docs.claude.com/en/docs/claude-code) or
-[Codex](https://github.com/openai/codex)), built for a holistic understanding of agent output
-instead of a stream of diffs.
+tamale is a full agent harness: tools, permission prompts, undo, sessions and compaction
+are built in. Inference comes from whichever backend you choose: an Anthropic API key, or
+your existing [Claude Code](https://docs.claude.com/en/docs/claude-code) or
+[Codex](https://github.com/openai/codex) sign-in.
 
-tamale lets you view the results of your agent's turns remotely, from a web front end or the
-iOS app. This works even on Claude Code subscriptions that have remote control disabled
-(Team/Enterprise).
+Start a session in the terminal, then pick it up from the web or the iOS app through an
+end-to-end encrypted relay. Longer answers arrive as HTML artifacts on web and iOS, and
+every UI has a diff viewer for reviewing what changed.
 
-Turn results show up as HTML artifacts on web and iOS, and as markdown in the TUI. The TUI
-isn't second class by any means: it has a file tree and a diff viewer too.
-
-Written entirely in Rust with [rig](https://rig.rs) and [ratatui](https://ratatui.rs) (outside
-of the iOS app, of course).
-
-![tamale's web UI showing an artifact](docs/images/web-artifact.png)
+Written entirely in Rust with [rig](https://rig.rs) and [ratatui](https://ratatui.rs)
+(outside of the iOS app, of course).
 
 ## Install
 
@@ -39,8 +34,6 @@ Then just run it. It's a single CLI with no arguments needed:
 ```sh
 tamale
 ```
-
-![Running tamale for the first time](docs/images/cli-install.png)
 
 ## Remote usage
 
