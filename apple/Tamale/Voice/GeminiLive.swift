@@ -1,6 +1,7 @@
 // A spoken conversation with Gemini over the Live API: a WebSocket to Google that takes the
 // microphone as 16 kHz PCM and answers with 24 kHz PCM, with transcripts of both sides. The
-// page being discussed goes in the system instruction. Voice processing (echo cancellation)
+// caller supplies the system instruction and, optionally, tools: functions Gemini can call
+// mid-conversation (the app runs them and answers), and events the app tells it about. Voice processing (echo cancellation)
 // stays on, so Gemini doesn't hear itself through the speaker and interrupt its own answer.
 
 import AVFoundation
@@ -16,7 +17,8 @@ final class GeminiLive {
     }
 
     struct Line: Identifiable {
-        enum Who { case you, gemini }
+        /// `action`: something the app did or saw for Gemini (a tool call, an event).
+        enum Who { case you, gemini, action }
         let id = UUID()
         var who: Who
         var text: String
@@ -37,7 +39,12 @@ final class GeminiLive {
         }
     }
 
+    /// Runs a function Gemini called, by name with its arguments, and returns its result.
+    @ObservationIgnored var onToolCall: ((String, [String: Any]) async -> [String: Any])?
+
     private var socket: URLSessionWebSocketTask?
+    /// Events waiting for Gemini to finish speaking.
+    private var pendingEvents: [String] = []
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private let pipe = MicPipe()
@@ -53,12 +60,14 @@ final class GeminiLive {
         }
     }
 
-    func start(apiKey: String, preferredModel: String?, voice: String?, title: String, pageText: String, html: String) async {
+    /// `tools`: Gemini function declarations (`{"name", "description", "parameters"}`).
+    func start(apiKey: String, preferredModel: String?, voice: String?, instruction: String, tools: [[String: Any]] = []) async {
         guard !active else { return }
         phase = .connecting
         lines = []
         notice = nil
         muted = false
+        pendingEvents = []
 
         guard await AVAudioApplication.requestRecordPermission() else {
             return end(GeminiError.microphone.localizedDescription)
@@ -73,13 +82,29 @@ final class GeminiLive {
             }
             self.model = model
             try startAudio()
-            connect(apiKey: apiKey, model: model, voice: voice, instruction: Self.instruction(title: title, text: pageText, html: html))
+            connect(apiKey: apiKey, model: model, voice: voice, instruction: instruction, tools: tools)
         } catch {
             end(error.localizedDescription)
         }
     }
 
     func stop() { end(nil) }
+
+    /// Tells Gemini something happened that it should act on or tell the user about, once it
+    /// has finished what it's saying. `shown` goes in the transcript.
+    func inform(_ text: String, shown: String) {
+        guard socket != nil else { return }
+        lines.append(Line(who: .action, text: shown, closed: true))
+        pendingEvents.append(text)
+        flushEvents()
+    }
+
+    private func flushEvents() {
+        guard phase == .listening, !pendingEvents.isEmpty else { return }
+        let text = pendingEvents.joined(separator: "\n\n")
+        pendingEvents = []
+        sendJSON(["realtimeInput": ["text": "[A message from the app, not the user]\n\(text)"]])
+    }
 
     /// Typed instead of spoken.
     func send(text: String) {
@@ -91,30 +116,9 @@ final class GeminiLive {
         sendJSON(["realtimeInput": ["text": text]])
     }
 
-    // MARK: Instruction
-
-    private static func instruction(title: String, text: String, html: String) -> String {
-        var out = """
-            You're talking with the user by voice about a page they have open in tamale, titled \
-            "\(title)". It was written by their coding agent. Its text is below, and its HTML too \
-            when it isn't too long (for numbers that are only in scripts or charts).
-
-            Answer from the page, the way you would in a spoken conversation: short and natural, \
-            no markdown, no reading out symbols, code or long lists unless asked. If the page \
-            doesn't say, tell them, then answer from what you know if you can.
-
-            === Page text ===
-            \(text.prefix(150_000))
-            """
-        if html.count <= 120_000 {
-            out += "\n\n=== Page HTML ===\n\(html)"
-        }
-        return out
-    }
-
     // MARK: Socket
 
-    private func connect(apiKey: String, model: String, voice: String?, instruction: String) {
+    private func connect(apiKey: String, model: String, voice: String?, instruction: String, tools: [[String: Any]]) {
         var parts = URLComponents()
         parts.scheme = "wss"
         parts.host = Gemini.host
@@ -130,7 +134,7 @@ final class GeminiLive {
         if let voice, !voice.isEmpty {
             generation["speechConfig"] = ["voiceConfig": ["prebuiltVoiceConfig": ["voiceName": voice]]]
         }
-        sendJSON(["setup": [
+        var setup: [String: Any] = [
             "model": "models/\(model)",
             "generationConfig": generation,
             "systemInstruction": ["parts": [["text": instruction]]],
@@ -138,7 +142,9 @@ final class GeminiLive {
             "outputAudioTranscription": [String: Any](),
             // Past the Live API's usual 15 minutes of audio, the oldest turns are dropped.
             "contextWindowCompression": ["slidingWindow": [String: Any]()],
-        ]])
+        ]
+        if !tools.isEmpty { setup["tools"] = [["functionDeclarations": tools]] }
+        sendJSON(["setup": setup])
         receive(socket)
     }
 
@@ -171,6 +177,10 @@ final class GeminiLive {
         if json["setupComplete"] != nil {
             phase = .listening
             pipe.ready = true
+            flushEvents()
+        }
+        if let call = json["toolCall"] as? [String: Any], let calls = call["functionCalls"] as? [[String: Any]] {
+            Task { await runTools(calls) }
         }
         if let away = json["goAway"] as? [String: Any] {
             notice = "Gemini will end this conversation soon\((away["timeLeft"] as? String).map { " (\($0))" } ?? "")."
@@ -199,7 +209,26 @@ final class GeminiLive {
         if content["turnComplete"] as? Bool == true {
             close(.you)
             close(.gemini)
+            if queued == 0 { flushEvents() }
         }
+    }
+
+    private func runTools(_ calls: [[String: Any]]) async {
+        var responses: [[String: Any]] = []
+        for call in calls {
+            let name = call["name"] as? String ?? ""
+            let args = call["args"] as? [String: Any] ?? [:]
+            let result = await onToolCall?(name, args) ?? ["error": "No such function."]
+            var response: [String: Any] = ["name": name, "response": result]
+            if let id = call["id"] { response["id"] = id }
+            responses.append(response)
+        }
+        sendJSON(["toolResponse": ["functionResponses": responses]])
+    }
+
+    /// A line in the transcript for something the app did.
+    func note(_ text: String) {
+        lines.append(Line(who: .action, text: text, closed: true))
     }
 
     private static func rate(_ mime: String?) -> Double? {
@@ -224,7 +253,7 @@ final class GeminiLive {
     }
 
     private func close(_ who: Line.Who) {
-        if let i = lines.indices.last, lines[i].who == who { lines[i].closed = true }
+        if let i = lines.lastIndex(where: { $0.who == who }) { lines[i].closed = true }
     }
 
     // MARK: Audio
@@ -297,7 +326,10 @@ final class GeminiLive {
             Task { @MainActor in
                 guard let self, self.playGeneration == generation else { return }
                 self.queued -= 1
-                if self.queued == 0, self.phase == .speaking { self.phase = .listening }
+                if self.queued == 0, self.phase == .speaking {
+                    self.phase = .listening
+                    self.flushEvents()
+                }
             }
         }
         if !player.isPlaying { player.play() }

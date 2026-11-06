@@ -1,18 +1,21 @@
-// Talking to Gemini about the artifact on screen: the conversation starts when the sheet
-// opens and ends when it closes. What both sides said shows as it's said.
+// A voice conversation with Gemini in a sheet: it starts when the sheet opens and ends when it
+// closes. What both sides said shows as it's said, with what the app did in between. Callers
+// own the `GeminiLive` and say what it's about (`ArtifactVoiceView`, `SessionVoiceView`).
 
 import SwiftUI
+import TamaleKit
 
-struct VoiceChatView: View {
+struct VoiceChatView<Accessory: View>: View {
+    var live: GeminiLive
     var title: String
-    var html: String
-    /// The page's text as rendered, which is what Gemini is told about.
-    var pageText: String
+    /// Shown before anyone has spoken, once connected.
+    var prompt: String
+    /// Starts the conversation, with the key from the Keychain.
+    var connect: (String) async -> Void
+    /// Above the controls: cards that need an answer, say.
+    @ViewBuilder var accessory: () -> Accessory
 
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("geminiModel") private var preferredModel = ""
-    @AppStorage("geminiVoice") private var voice = ""
-    @State private var live = GeminiLive()
     @State private var typed = ""
     @State private var typing = false
 
@@ -20,6 +23,7 @@ struct VoiceChatView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 transcript
+                accessory()
                 controls
             }
             .background(Theme.background)
@@ -38,7 +42,7 @@ struct VoiceChatView: View {
 
     private func begin() async {
         guard let key = Gemini.apiKey else { return }
-        await live.start(apiKey: key, preferredModel: preferredModel, voice: voice, title: title, pageText: pageText, html: html)
+        await connect(key)
     }
 
     private var transcript: some View {
@@ -54,6 +58,16 @@ struct VoiceChatView: View {
                             .padding(.top, 40)
                     }
                     ForEach(live.lines) { line in
+                        if line.who == .action {
+                            Label(line.text, systemImage: "terminal")
+                                .font(.footnote)
+                                .foregroundStyle(Theme.dim)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Theme.surface2, in: RoundedRectangle(cornerRadius: 8))
+                                .id(line.id)
+                        } else {
                         VStack(alignment: line.who == .you ? .trailing : .leading, spacing: 3) {
                             Text(line.who == .you ? "You" : "Gemini")
                                 .font(.caption.weight(.semibold))
@@ -66,6 +80,7 @@ struct VoiceChatView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: line.who == .you ? .trailing : .leading)
                         .id(line.id)
+                        }
                     }
                     if let notice = live.notice {
                         Text(notice).font(.footnote).foregroundStyle(Theme.warning)
@@ -79,6 +94,9 @@ struct VoiceChatView: View {
             .onChange(of: live.lines.last?.text) {
                 if let id = live.lines.last?.id { withAnimation { scroll.scrollTo(id, anchor: .bottom) } }
             }
+            .onChange(of: live.lines.count) {
+                if let id = live.lines.last?.id { withAnimation { scroll.scrollTo(id, anchor: .bottom) } }
+            }
         }
     }
 
@@ -86,7 +104,7 @@ struct VoiceChatView: View {
         if Gemini.apiKey == nil { return "Add a Gemini API key in Keys to talk about this page." }
         switch live.phase {
         case .idle, .connecting: return "Connecting to Gemini…"
-        case .listening: return "Ask anything about “\(title)”."
+        case .listening: return prompt
         case .speaking: return ""
         case .ended: return ""
         }
@@ -196,5 +214,43 @@ struct VoiceChatView: View {
     private func sendTyped() {
         live.send(text: typed)
         typed = ""
+    }
+}
+
+/// Talking about one artifact: Gemini gets the page's text and, if it's not long, its HTML.
+struct ArtifactVoiceView: View {
+    var title: String
+    var html: String
+    /// The page's text as rendered.
+    var pageText: String
+    @AppStorage("geminiModel") private var preferredModel = ""
+    @AppStorage("geminiVoice") private var voice = ""
+    @State private var live = GeminiLive()
+
+    var body: some View {
+        VoiceChatView(live: live, title: title, prompt: "Ask anything about “\(title)”.") { key in
+            await live.start(apiKey: key, preferredModel: preferredModel, voice: voice, instruction: instruction)
+        } accessory: {
+            EmptyView()
+        }
+    }
+
+    private var instruction: String {
+        var out = """
+            You're talking with the user by voice about a page they have open in tamale, titled \
+            "\(title)". It was written by their coding agent. Its text is below, and its HTML too \
+            when it isn't too long (for numbers that are only in scripts or charts).
+
+            Answer from the page, the way you would in a spoken conversation: short and natural, \
+            no markdown, no reading out symbols, code or long lists unless asked. If the page \
+            doesn't say, tell them, then answer from what you know if you can.
+
+            === Page text ===
+            \(pageText.prefix(150_000))
+            """
+        if html.count <= 120_000 {
+            out += "\n\n=== Page HTML ===\n\(html)"
+        }
+        return out
     }
 }

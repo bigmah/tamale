@@ -62,12 +62,21 @@ when it's not too long), hears you, and answers aloud. Talk over it to interrupt
 or type a question instead. Both sides are transcribed as you go. By default the app uses the
 newest conversational Live model your key can use; you can pick a model and a voice in Keys.
 
+**Talking to a session.** With a Gemini key saved, a session's toolbar has the same waveform
+button. Gemini can then drive that session for you: ask "is there a compilation error?" and it
+sends tamale a prompt, tells you it has, and when tamale's turn ends it tells you how it went. It
+can read the conversation, check the status, look at the uncommitted changes, interrupt, and
+answer tamale's questions. When tamale asks permission, Gemini reads the request out and answers
+only after you say yes or no. It never picks "always"; that's on the card, for you to tap. The
+conversation keeps going with the screen locked.
+
 ## What it keeps, and where
 
 - **Keys**: only in the Keychain, readable on this device while it's unlocked, never backed up or
   synced. The hub only ever sees the auth value derived from a key, as with the web page.
-- **Gemini key**: in the Keychain the same way. It goes only to Google. So does the text of an
-  artifact you talk about, and your voice while a conversation is open.
+- **Gemini key**: in the Keychain the same way. It goes only to Google. So does your voice while
+  a conversation is open, the text of an artifact you talk about, and, when you talk to a
+  session, what Gemini reads of it (the conversation, status and changes, decrypted on the phone).
 - **Artifacts**: in the app's container, encrypted while the phone is locked (data protection
   `complete`).
 - Artifacts run like the web UI's sandboxed frames: each in its own web view with no storage,

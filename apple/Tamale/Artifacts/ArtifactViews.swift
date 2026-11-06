@@ -242,7 +242,7 @@ struct ArtifactViewer: View {
             ShareSheet(items: [file])
         }
         .sheet(item: $talking) { topic in
-            VoiceChatView(title: source.title, html: source.html, pageText: topic.text)
+            ArtifactVoiceView(title: source.title, html: source.html, pageText: topic.text)
                 .presentationDetents([.medium, .large])
                 .presentationBackgroundInteraction(.enabled(upThrough: .medium))
         }

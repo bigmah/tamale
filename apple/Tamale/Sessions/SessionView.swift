@@ -29,6 +29,8 @@ struct SessionView: View {
     @State private var showingDiff = false
     @State private var showingStatus = false
     @State private var confirmingClose: SessionRow?
+    @State private var talking = false
+    @State private var canTalk = false
     /// Revise asked for the composer, which can't take focus until the cover over it has gone.
     @State private var focusAfterCover = false
     @FocusState private var composing: Bool
@@ -83,6 +85,11 @@ struct SessionView: View {
                 }
                 .onTapGesture { showingStatus = true }
             }
+            if canTalk {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Talk with Gemini", systemImage: "waveform") { talking = true }
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button("Changes", systemImage: "plus.forwardslash.minus") { showingDiff = true }
             }
@@ -105,7 +112,10 @@ struct SessionView: View {
                 }
             }
         }
-        .onAppear { model.start() }
+        .onAppear {
+            model.start()
+            canTalk = Gemini.apiKey != nil
+        }
         .onDisappear {
             // Covers and sheets hide this view too; only leaving the session disconnects.
             if !app.path.contains(.session(row.id)) { model.stop() }
@@ -123,6 +133,11 @@ struct SessionView: View {
             DiffScreen(model: model, ask: askAbout)
         }
         .closeSessionDialog(row: $confirmingClose)
+        .sheet(isPresented: $talking) {
+            SessionVoiceView(row: row, model: model)
+                .presentationDetents([.medium, .large])
+                .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+        }
         .sheet(isPresented: $showingStatus) {
             StatusSheet(row: row, model: model)
                 .presentationDetents([.medium, .large])

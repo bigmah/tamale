@@ -13,7 +13,7 @@ apple/
     Sessions/            session list, conversation, composer, approvals, markdown
     Artifacts/           sandboxed artifact web views, viewer, gallery, library
     Onboarding/          adding keys (QR scan or paste), managing them
-    Voice/               talking about an artifact with Gemini (Live API over a WebSocket)
+    Voice/               talking with Gemini about an artifact, or to drive a session (Live API)
   TamaleUITests/         drives the app in the simulator against a local hub
   Packages/TamaleKit/    no UI: keys, Noise, sealed labels, hub client, session channel, messages
   Fixtures/              test vectors and message samples, written by Rust tests
