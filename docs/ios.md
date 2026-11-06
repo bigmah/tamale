@@ -54,10 +54,20 @@ links set up (below), the iPhone camera opens it in the app directly.
 the hub's site to revoke it everywhere. **Require Face ID** asks for Face ID or the passcode
 whenever the app opens.
 
+**Talking with Gemini about an artifact.** Paste your own `GEMINI_API_KEY` (from
+[AI Studio](https://aistudio.google.com/apikey)) under **Keys › Gemini**; `GEMINI_API_KEY=…` as
+copied from a `.env` file works too. Then the artifact viewer's bar has a waveform button that
+starts a voice conversation through Gemini's Live API. Gemini gets the page's text (and its HTML
+when it's not too long), hears you, and answers aloud. Talk over it to interrupt, mute the mic,
+or type a question instead. Both sides are transcribed as you go. By default the app uses the
+newest conversational Live model your key can use; you can pick a model and a voice in Keys.
+
 ## What it keeps, and where
 
 - **Keys**: only in the Keychain, readable on this device while it's unlocked, never backed up or
   synced. The hub only ever sees the auth value derived from a key, as with the web page.
+- **Gemini key**: in the Keychain the same way. It goes only to Google. So does the text of an
+  artifact you talk about, and your voice while a conversation is open.
 - **Artifacts**: in the app's container, encrypted while the phone is locked (data protection
   `complete`).
 - Artifacts run like the web UI's sandboxed frames: each in its own web view with no storage,

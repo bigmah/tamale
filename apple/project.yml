@@ -50,6 +50,7 @@ targets:
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         NSCameraUsageDescription: tamale scans the QR code on your hub's site to add a key, or a terminal's code to open a session.
+        NSMicrophoneUsageDescription: tamale listens while you talk with Gemini about an artifact.
         NSFaceIDUsageDescription: tamale can ask for Face ID before showing your sessions.
         ITSAppUsesNonExemptEncryption: false
         # Self-hosted hubs on a local network may be plain http (`--insecure`), and the

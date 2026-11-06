@@ -54,6 +54,8 @@
 	<string>tamale scans the QR code on your hub's site to add a key, or a terminal's code to open a session.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>tamale can ask for Face ID before showing your sessions.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>tamale listens while you talk with Gemini about an artifact.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

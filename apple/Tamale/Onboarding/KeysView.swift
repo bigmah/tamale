@@ -1,4 +1,4 @@
-// The keys on this iPhone: rename, remove, and the Face ID setting.
+// The keys on this iPhone: rename, remove, the Gemini key, and the Face ID setting.
 
 import SwiftUI
 import TamaleKit
@@ -44,6 +44,7 @@ struct KeysView: View {
             } footer: {
                 Text("Removing a key only forgets it here. To revoke it everywhere, rotate or delete it on the hub's site.")
             }
+            GeminiSection()
             Section {
                 Toggle("Require Face ID", isOn: $requireFaceID)
             } footer: {
@@ -74,5 +75,80 @@ struct KeysView: View {
         } message: {
             Text("You'll need to scan or paste it again to see its sessions.")
         }
+    }
+}
+
+/// Your own Gemini API key, for talking about artifacts by voice.
+struct GeminiSection: View {
+    @AppStorage("geminiModel") private var model = ""
+    @AppStorage("geminiVoice") private var voice = ""
+    @State private var saved = Gemini.apiKey != nil
+    @State private var pasted = ""
+    @State private var models: [String] = []
+    @State private var problem: String?
+    @State private var checking = false
+
+    var body: some View {
+        Section {
+            if saved {
+                LabeledContent("API key", value: "Saved")
+                Picker("Model", selection: $model) {
+                    Text(models.first.map { "Automatic (\($0))" } ?? "Automatic").tag("")
+                    ForEach(models, id: \.self) { Text($0).tag($0) }
+                    if !model.isEmpty && !models.contains(model) { Text(model).tag(model) }
+                }
+                Picker("Voice", selection: $voice) {
+                    Text("Gemini's choice").tag("")
+                    ForEach(Gemini.voices, id: \.self) { Text($0).tag($0) }
+                }
+                Button("Remove Gemini key", role: .destructive) {
+                    Gemini.removeKey()
+                    saved = false
+                    models = []
+                    model = ""
+                }
+            } else {
+                SecureField("Paste GEMINI_API_KEY", text: $pasted)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .accessibilityIdentifier("gemini-key")
+                Button {
+                    Task { await save() }
+                } label: {
+                    if checking { ProgressView() } else { Text("Save") }
+                }
+                .disabled(Gemini.clean(pasted).isEmpty || checking)
+            }
+            if let problem {
+                Text(problem).font(.footnote).foregroundStyle(Theme.warning)
+            }
+        } header: {
+            Text("Gemini")
+        } footer: {
+            Text("With your own key from aistudio.google.com, the waveform button on an artifact starts a voice conversation with Gemini about it. The key stays on this iPhone and goes only to Google.")
+        }
+        .task { if saved { await loadModels() } }
+    }
+
+    private func save() async {
+        let key = Gemini.clean(pasted)
+        checking = true
+        defer { checking = false }
+        problem = nil
+        do {
+            let found = try await Gemini.liveModels(apiKey: key)
+            try Gemini.save(apiKey: key)
+            models = found
+            pasted = ""
+            saved = true
+            if found.isEmpty { problem = GeminiError.noModel.localizedDescription }
+        } catch {
+            problem = error.localizedDescription
+        }
+    }
+
+    private func loadModels() async {
+        guard let key = Gemini.apiKey else { return }
+        do { models = try await Gemini.liveModels(apiKey: key) } catch { problem = error.localizedDescription }
     }
 }

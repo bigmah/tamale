@@ -48,6 +48,16 @@ public enum HTMLText {
         return (s.trimmingCharacters(in: .whitespacesAndNewlines), artifacts)
     }
 
+    /// Any page's readable text: no scripts, styles or tags, blank runs squeezed.
+    public static func plain(_ html: String) -> String {
+        var s = replace(html, #"<(script|style|head)\b[^>]*>.*?</\1>"#) { _ in "" }
+        s = replace(s, #"<(br|/p|/div|/li|/h[1-6]|/tr)[^>]*>"#) { _ in "\n" }
+        s = decodeEntities(stripTags(s))
+        s = replace(s, #"[ \t]+"#) { _ in " " }
+        s = replace(s, #"\s*\n\s*"#) { _ in "\n" }
+        return s.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     static func stripTags(_ s: String) -> String {
         replace(s, #"<[^>]+>"#) { _ in "" }
     }

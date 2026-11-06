@@ -181,6 +181,8 @@ struct ArtifactViewer: View {
     @State private var loaded = false
     @State private var controls = true
     @State private var pageColor: Color?
+    @State private var canTalk = false
+    @State private var talking: VoiceTopic?
 
     /// Height of the bar and the gap under it, kept clear below the end of the page.
     private static let barSpace: CGFloat = 68
@@ -230,6 +232,7 @@ struct ArtifactViewer: View {
         .statusBarHidden()
         .persistentSystemOverlays(controls ? .automatic : .hidden)
         .task {
+            canTalk = Gemini.apiKey != nil
             htmlFile = writeHTMLFile()
             // A script that never finishes loading still leaves a page to see.
             try? await Task.sleep(for: .seconds(3))
@@ -238,7 +241,26 @@ struct ArtifactViewer: View {
         .sheet(item: $exported) { file in
             ShareSheet(items: [file])
         }
+        .sheet(item: $talking) { topic in
+            VoiceChatView(title: source.title, html: source.html, pageText: topic.text)
+                .presentationDetents([.medium, .large])
+                .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+        }
         .confirmsLinks($link)
+    }
+
+    /// Opens the voice conversation with the page's text as it's shown (scripts may have drawn
+    /// some of it), or its HTML stripped of tags if the page won't say.
+    private func talk() {
+        let fallback = HTMLText.plain(source.html)
+        guard let webView else {
+            talking = VoiceTopic(text: fallback)
+            return
+        }
+        webView.evaluateJavaScript("document.body ? document.body.innerText : ''") { result, _ in
+            let text = (result as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            talking = VoiceTopic(text: text.isEmpty ? fallback : text)
+        }
     }
 
     private func scrolled(_ event: ArtifactScroll) {
@@ -269,6 +291,9 @@ struct ArtifactViewer: View {
             .buttonStyle(.plain)
             .accessibilityHint("Scrolls to the top")
             .accessibilityIdentifier("artifact-title")
+            if canTalk {
+                barButton("Talk with Gemini", systemImage: "waveform") { talk() }
+            }
             shareMenu
             if let revise {
                 barButton("Revise", systemImage: "pencil.line") {
@@ -370,6 +395,11 @@ struct ArtifactViewer: View {
             }
         }
     }
+}
+
+struct VoiceTopic: Identifiable {
+    let id = UUID()
+    var text: String
 }
 
 extension URL: @retroactive Identifiable {
