@@ -129,5 +129,3 @@ say "    ${BOLD}tamale${RESET}                        ${DIM}# with ANTHROPIC_API
 say "    ${BOLD}tamale --backend claude-code${RESET}  ${DIM}# or your Claude Code sign-in${RESET}"
 say "    ${BOLD}tamale --backend codex${RESET}        ${DIM}# or your Codex sign-in${RESET}"
 say ""
-say "  ${TAMALE}${DIM}buen provecho!${RESET}"
-say ""

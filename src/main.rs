@@ -317,7 +317,9 @@ async fn web_request(app: &mut App, web: &mut Option<web::Server>, request: WebR
         WebRequest::Remote { on: true } => {
             // Before anything opens: without a key there's nothing to connect with.
             if let Err(message) = app.settings_hub().key_bytes() {
-                app.on_web(Err(message));
+                app.on_web(Err(format!(
+                    "{message}, or paste one here with /remote <key> to keep this session."
+                )));
                 return;
             }
             if web.is_none() {

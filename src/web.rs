@@ -2022,6 +2022,23 @@ document.getElementById('m').innerHTML = html;
                         .collect();
                     entries.push(Entry::Info(format!("answered: {}", shown.join(" | "))));
                 }
+                WebEvent::Send(text) if text == "Can you generate an artifact for this?" => {
+                    // As a model writes one: a little prose, then the page line by line.
+                    entries.push(Entry::User(text));
+                    let mut reply = "Sure, here's a page for it.\n\n```html artifact\n".to_string();
+                    entries.push(Entry::Assistant(reply.clone()));
+                    // Named apart from "long"'s page, which other tests look for.
+                    let page = LONG_ARTIFACT.replace("Launch checklist", "Release plan");
+                    for line in page.lines() {
+                        reply += line;
+                        reply += "\n";
+                        *entries.last_mut().unwrap() = Entry::Assistant(reply.clone());
+                        sync(&mut server, &entries, &approval, &question);
+                        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    }
+                    reply += "```\n\nOpen it to see every step.";
+                    *entries.last_mut().unwrap() = Entry::Assistant(reply);
+                }
                 WebEvent::Send(text) => {
                     approval.get_or_insert_with(|| Approval {
                         name: "bash".into(),

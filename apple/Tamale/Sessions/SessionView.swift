@@ -291,6 +291,8 @@ struct Conversation: View {
     @State private var atBottom = true
     /// Going to the end, if a pin is still settling.
     @State private var pinning: Task<Void, Never>?
+    /// How tall the conversation's part of the screen is, which artifact cards stay inside.
+    @State private var height: CGFloat = 0
     /// Artifact cards run past this to the screen's edges.
     static let sidePadding: CGFloat = 14
     /// How near the start of what's loaded a row coming on screen fetches the page before it.
@@ -395,7 +397,11 @@ struct Conversation: View {
                 }
                 .padding(.horizontal, Self.sidePadding)
                 .padding(.vertical, 12)
+                .environment(\.conversationHeight, height)
+                // A card growing as its page loads moves the end, which isn't an entry changing.
+                .environment(\.conversationResized, { pin(proxy) })
             }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
             // What moves the end: entries changing, and the view's own size (the keyboard, an
@@ -415,6 +421,13 @@ struct Conversation: View {
             .modifier(TracksEnd(near: Self.nearEnd, atBottom: $atBottom) { pin(proxy) })
         }
     }
+}
+
+extension EnvironmentValues {
+    /// The height of the conversation on screen, or 0 outside one.
+    @Entry var conversationHeight: CGFloat = 0
+    /// Something in the conversation changed its height by itself; follows the end if it was there.
+    @Entry var conversationResized: () -> Void = {}
 }
 
 /// Keeps `atBottom` up to date, where the system can say how far off the end is (see

@@ -251,6 +251,7 @@ fn footer_tabs_open_by_click_or_by_down_arrows_enter() {
         test_settings("claude-sonnet-4-6"),
         Workspace::current().unwrap(),
     );
+    app.settings.hub.key = Some(tamale_hub_protocol::encode_key(&[1; 32]));
     let lines = screen_lines(&mut app, 100, 30);
     let footer = &lines[28];
     assert!(footer.starts_with(" ≡ Sessions  ⇄ Remote off │ ◉ Web "), "{footer}");
@@ -359,6 +360,23 @@ fn footer_tabs_open_by_click_or_by_down_arrows_enter() {
         app.take_web_request(),
         Some(WebRequest::Remote { on: false })
     ));
+    // A key given here is used for this run, and connects, keeping the conversation.
+    let key = tamale_hub_protocol::encode_key(&[7; 32]);
+    app.command(&format!("/remote {key}"));
+    assert_eq!(app.settings.hub.key_bytes(), Ok([7; 32]));
+    assert!(matches!(
+        app.take_web_request(),
+        Some(WebRequest::Remote { on: true })
+    ));
+    app.command("/remote thk_nope");
+    assert!(app.take_web_request().is_none());
+    assert_eq!(app.settings.hub.key_bytes(), Ok([7; 32]));
+    // Not while connected with another one.
+    app.set_hub_viewers(Some(0));
+    app.command(&format!("/remote {}", tamale_hub_protocol::encode_key(&[8; 32])));
+    assert!(app.take_web_request().is_none());
+    assert_eq!(app.settings.hub.key_bytes(), Ok([7; 32]));
+    app.set_hub_viewers(None);
     // Keys come from the hub's site, so `pair` and `rekey` went with the pairing key.
     for command in ["/remote nonsense", "/remote pair", "/remote rekey", "/web remote"] {
         app.command(command);
@@ -377,6 +395,9 @@ fn the_remote_tab_says_whether_the_hub_is_connected_and_stays_clickable() {
         Workspace::current().unwrap(),
     );
     let footer = |app: &mut App| screen_lines(app, 100, 30)[28].clone();
+    // Without a key, it says so before anyone counts on reaching the session.
+    assert!(footer(&mut app).contains("⇄ Remote no key"));
+    app.settings.hub.key = Some(tamale_hub_protocol::encode_key(&[1; 32]));
     assert!(footer(&mut app).contains("⇄ Remote off"));
     // Still being tried isn't reachable yet.
     app.set_hub_viewers(Some(0));
@@ -993,6 +1014,7 @@ fn status_shows_where_inference_comes_from_even_with_a_long_cwd() {
     let mut workspace = Workspace::current().unwrap();
     workspace.cwd = std::path::PathBuf::from(format!("/{}", "deep/".repeat(40)));
     let (mut app, _rx) = App::new_with_channel(client, test_settings("test-model"), workspace);
+    app.settings.hub.key = Some(tamale_hub_protocol::encode_key(&[1; 32]));
     let backend = ratatui::backend::TestBackend::new(80, 12);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
     terminal.draw(|f| app.draw(f)).unwrap();

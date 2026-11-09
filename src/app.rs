@@ -474,7 +474,12 @@ impl App {
 
     /// Sends a prompt or runs a slash command, typed here or in the web UI.
     fn submit_text(&mut self, text: String) {
-        self.prompts.add(&text);
+        // Recall is saved to disk, which a hub key mustn't be.
+        if text.starts_with("/remote thk_") {
+            self.prompts.add("/remote");
+        } else {
+            self.prompts.add(&text);
+        }
         self.scroll_back = 0;
 
         if text.starts_with('/') {

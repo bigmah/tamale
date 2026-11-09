@@ -464,9 +464,10 @@ impl App {
             "/remote" => match cmd.split_whitespace().nth(1) {
                 None | Some("on") => self.open_remote(),
                 Some("off") => self.web_request = Some(WebRequest::Remote { on: false }),
+                Some(key) if key.starts_with("thk_") => self.set_hub_key(key),
                 Some(_) => self
                     .entries
-                    .push(Entry::Error("Usage: /remote [off]".into())),
+                    .push(Entry::Error("Usage: /remote [off|<key>]".into())),
             },
             other => self.entries.push(Entry::Error(format!(
                 "Unknown command: {other} (type /help to see all commands)"

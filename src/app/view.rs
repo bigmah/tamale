@@ -504,6 +504,9 @@ impl App {
                 FooterTab::Remote if self.hub_viewers.is_some() => {
                     "enter show QR code · ←/→ choose · ↑ back"
                 }
+                FooterTab::Remote if !self.hub_key_set() => {
+                    "no hub key: set TAMALE_HUB_KEY, or /remote <key> · ←/→ choose · ↑ back"
+                }
                 FooterTab::Remote => "enter connect · ←/→ choose · ↑ back",
                 FooterTab::Web => "enter open in browser · ←/→ choose · ↑ back",
                 FooterTab::Diff => "enter open · ←/→ choose · ↑ back",
@@ -611,7 +614,13 @@ impl App {
         };
         let primary = Color::White;
         let secondary = Color::DarkGray;
-        let remote_color = if self.remote_on() { Color::Green } else { primary };
+        let remote_color = if self.remote_on() {
+            Color::Green
+        } else if self.hub_viewers.is_none() && !self.hub_key_set() {
+            Color::Yellow
+        } else {
+            primary
+        };
 
         let mut spans = Vec::new();
         let mut areas = Vec::new();
@@ -677,6 +686,7 @@ impl App {
     /// The hub connection as the Remote tab words it.
     fn remote_label(&self) -> String {
         match self.hub_viewers {
+            None if !self.hub_key_set() => "no key".into(),
             None => "off".into(),
             Some(_) if !self.hub_live => "connecting".into(),
             Some(0) => "on".into(),

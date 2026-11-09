@@ -41,8 +41,10 @@ final class TamaleUITests: XCTestCase {
         keyField.tap()
         keyField.typeText(key)
         app.navigationBars["Add a key"].buttons["Add"].tap()
-        // Straight into the session, once the sheet has gone.
-        wait(text(app, containing: "Here it is."), app, timeout: 20)
+        // Straight into the session, once the sheet has gone. (Its end depends on what the
+        // tests before this one sent, so this looks for the session's toolbar.)
+        wait(app.buttons["Changes"], app, timeout: 20)
+        wait(text(app, containing: "fake-host"), app, timeout: 20)
     }
 
     /// Opens the stand-in session. Its approval stays up, for the tests that come after.
@@ -188,6 +190,44 @@ final class TamaleUITests: XCTestCase {
         field.tap()
         field.typeText("x")
         XCTAssertFalse(button.exists)
+    }
+
+    /// While an artifact is written and once it's done, the conversation stays in sight: the
+    /// card leaves room for the prompt it answers and the reply's end, rather than filling the
+    /// screen. Named to run last, after the stream test: its tall card would bury the end the
+    /// others look for.
+    func testWhileAnArtifactIsWrittenTheConversationStaysInSight() throws {
+        let app = XCUIApplication()
+        try openSession(app)
+        let button = app.buttons["Generate an artifact"]
+        wait(button, app, timeout: 15)
+        // The artifact button's test asked before; this is about the newest of each.
+        func newest(_ label: String) -> XCUIElement {
+            let all = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", label))
+            return all.element(boundBy: max(all.count - 1, 0))
+        }
+        let before = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Open it to see every step.")).count
+        button.tap()
+        let scroll = app.scrollViews.firstMatch
+        func inSight(_ element: XCUIElement) -> Bool {
+            element.exists && element.frame.minY >= scroll.frame.minY - 1 && element.frame.maxY <= scroll.frame.maxY + 1
+        }
+        let building = text(app, containing: "Building Release plan")
+        wait(building, app, timeout: 10)
+        XCTAssertTrue(inSight(building), "the card being built is in sight")
+
+        let ended = NSPredicate { _, _ in
+            app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Open it to see every step.")).count > before
+                || (before > 0 && inSight(newest("Open it to see every step.")) && !building.exists)
+        }
+        wait(for: [expectation(for: ended, evaluatedWith: nil)], timeout: 20)
+        // The page loads and the card grows to it.
+        let grown = NSPredicate { _, _ in app.webViews.allElementsBoundByIndex.contains { $0.frame.height > 200 } }
+        wait(for: [expectation(for: grown, evaluatedWith: nil)], timeout: 15)
+        Thread.sleep(forTimeInterval: 2)
+        attach(app, "artifact done")
+        XCTAssertTrue(inSight(newest("Open it to see every step.")), "the end of the reply is in sight")
+        XCTAssertTrue(inSight(newest("Can you generate an artifact for this?")), "and so is the prompt it answers")
     }
 
     func attach(_ app: XCUIApplication, _ name: String) {

@@ -22,6 +22,8 @@ struct ArtifactCard: View {
     var bleeds = false
     @Query private var stored: [StoredArtifact]
     @Environment(\.verticalSizeClass) private var verticalSize
+    @Environment(\.conversationHeight) private var conversationHeight
+    @Environment(\.conversationResized) private var resized
     @State private var contentHeight: CGFloat = 120
     @State private var loaded = false
     @State private var link: URL?
@@ -51,8 +53,14 @@ struct ArtifactCard: View {
         return page.html == nil && stored.isEmpty
     }
 
-    /// The most of a page shown inline. Less on its side, where the screen is short.
-    private var tallest: CGFloat { verticalSize == .compact ? 280 : 520 }
+    /// The most of a page shown inline. Less on its side, where the screen is short, and never
+    /// so much of the conversation that the messages around it go out of sight (the keyboard
+    /// leaves little of it).
+    private var tallest: CGFloat {
+        let most: CGFloat = verticalSize == .compact ? 280 : 520
+        guard conversationHeight > 0 else { return most }
+        return max(min(most, conversationHeight * 0.55), 120)
+    }
     private var clipped: Bool { contentHeight > tallest }
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: bleeds ? 0 : 10) }
 
@@ -130,6 +138,7 @@ struct ArtifactCard: View {
         .clipShape(shape)
         .padding(.horizontal, bleeds ? -Conversation.sidePadding : 0)
         .onAppear(perform: request)
+        .onChange(of: source == nil ? 0 : min(contentHeight, tallest)) { resized() }
         .onChange(of: block.id) { request() }
         .onChange(of: model.connection) { request() }
         .confirmsLinks($link)

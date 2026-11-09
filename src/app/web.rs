@@ -27,6 +27,37 @@ impl App {
         self.web_request = Some(WebRequest::Remote { on: true });
     }
 
+    /// `/remote <key>`: uses a key from the hub's site for this run, for when tamale was
+    /// started without `TAMALE_HUB_KEY`, then connects. The conversation carries on.
+    pub(super) fn set_hub_key(&mut self, key: &str) {
+        if self.hub_viewers.is_some() {
+            self.entries.push(Entry::Error(
+                "Already connected to the hub; /remote off first to use another key.".into(),
+            ));
+            return;
+        }
+        if tamale_hub_protocol::decode_key(key).is_none() {
+            self.entries.push(Entry::Error(format!(
+                "That isn't a key (thk_…). Make one at {}",
+                self.settings.hub.site()
+            )));
+            return;
+        }
+        self.settings.hub.key = Some(key.to_string());
+        self.settings.hub.old_token = false;
+        self.entries.push(Entry::Info(
+            "Using that hub key for this session. Set TAMALE_HUB_KEY in your shell profile to \
+have it next time."
+                .into(),
+        ));
+        self.open_remote();
+    }
+
+    /// Whether there's a hub key to connect with.
+    pub(super) fn hub_key_set(&self) -> bool {
+        self.settings.hub.key_bytes().is_ok()
+    }
+
     /// Reports the outcome of a `/web` or `/remote` request.
     pub fn on_web(&mut self, result: Result<String, String>) {
         self.entries.push(match result {

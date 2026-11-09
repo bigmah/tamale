@@ -88,8 +88,8 @@ const COMMANDS: &[(&str, &str)] = &[
         "Open a chat-first web UI on your Wi-Fi with a code browser (/code there); /web local keeps it to this machine, /web off stops it (ctrl+o or the Web tab opens it too)",
     ),
     (
-        "/remote [off]",
-        "Make the session reachable anywhere through tamale-hub.com (set TAMALE_HUB_KEY to a key made on the site; encrypted so the hub can't read it); esc on its screen goes back to the TUI and stays connected, /remote shows the screen again, /remote off or x there disconnects (the Remote tab shows on/off and does the same as /remote)",
+        "/remote [off|<key>]",
+        "Make the session reachable anywhere through tamale-hub.com (set TAMALE_HUB_KEY to a key made on the site, or give it as /remote thk_… to use it for this run; encrypted so the hub can't read it); esc on its screen goes back to the TUI and stays connected, /remote shows the screen again, /remote off or x there disconnects (the Remote tab shows on/off and does the same as /remote)",
     ),
     (
         "/artifacts",
