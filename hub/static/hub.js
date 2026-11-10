@@ -196,15 +196,33 @@ function ordered(sessions) {
   });
 }
 
+/** A small inline icon, drawn with stroke like the rest of the page's. */
+function icon(path) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('aria-hidden', 'true');
+  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  p.setAttribute('d', path);
+  svg.append(p);
+  return svg;
+}
+const POWER = 'M8 2.25v5.5M4.4 4.6a5 5 0 1 0 7.2 0';
+const CROSS = 'm4.5 4.5 7 7M11.5 4.5l-7 7';
+
+/** The chef's on/off pill. */
+const chefPill = (on) => el('span', `switch ${on ? 'on' : 'off'}`, on ? 'On' : 'Off');
+
 function sessionItem(s, showKey) {
   const state = stateOf(s);
+  const closing = ending.has(s.sid);
   const link = el('a', `session ${state === 'offline' ? 'offline' : ''}${s.chef ? ' chef' : ''}`);
   link.href = s.open;
   link.dataset.sid = s.sid;
   link.append(s.chef ? el('span', 'chef-mark', '🫔') : el('span', `dot ${state}`), el('span', 'title', titleOf(s)));
-  link.append(el('span', 'when', state === 'idle' ? ago(s.idle) : ''));
+  link.append(s.chef ? chefPill(s.online && !closing) : el('span', 'when', state === 'idle' ? ago(s.idle) : ''));
   const meta = el('span', `meta ${state}`);
-  if (s.chef) meta.textContent = state === 'busy' ? 'Asking around…' : `Looks after every session · ${s.host}`;
+  if (closing) meta.textContent = s.chef ? 'Stopping…' : 'Closing…';
+  else if (s.chef) meta.textContent = state === 'offline' ? `Offline · ${s.host}` : state === 'busy' ? 'Asking around…' : `Looks after every session · ${s.host}`;
   else if (state === 'approval') meta.textContent = 'Needs approval';
   else if (state === 'busy') meta.textContent = `Working · ${shortPath(s.cwd)}`;
   else if (state === 'offline') meta.textContent = `Offline · ${shortPath(s.cwd)}`;
@@ -215,7 +233,35 @@ function sessionItem(s, showKey) {
   if (s.viewers) details.push(`${s.viewers} viewing`);
   if (showKey) details.push(`key: ${s.key}`);
   link.title = details.filter(Boolean).join('\n');
-  return link;
+  const row = el('div', `session-row${s.chef ? ' chef' : ''}`);
+  row.append(link);
+  // What a session's own page does with its ⏻ button, from here: it's asked first.
+  if (s.online) {
+    const end = el('button', `row-end${s.chef ? ' labelled' : ''}`);
+    end.type = 'button';
+    end.dataset.end = s.sid;
+    end.disabled = closing;
+    const what = s.chef ? 'Stop the chef' : 'Close this session';
+    end.title = what;
+    end.setAttribute('aria-label', `${what}: ${titleOf(s)}`);
+    end.append(icon(s.chef ? POWER : CROSS));
+    if (s.chef) end.append(el('span', '', closing ? 'Stopping' : 'Stop'));
+    row.append(end);
+  }
+  return row;
+}
+
+/** Where the chef goes when none is running: it's off, and how to turn it on. */
+function chefOff() {
+  const row = el('div', 'session-row chef off');
+  const item = el('div', 'session chef chef-off');
+  item.append(el('span', 'chef-mark', '🫔'), el('span', 'title', 'tamale chef'), chefPill(false));
+  const meta = el('span', 'meta');
+  meta.append('Start it with ', el('code', '', 'tamale chef'), ' or ', el('code', '', '/chef'), ' in any session');
+  item.append(meta);
+  item.title = 'The chef looks after every session on your keys. It runs on one of your machines.';
+  row.append(item);
+  return row;
 }
 
 function made(when) {
@@ -245,6 +291,10 @@ function keyItem(entry, sessions, held) {
 }
 
 let busy = false;
+/** Whether the list says which key each session is under (with more than one key). */
+let listShowsKey = false;
+/** Sessions being closed from the list, by sid, with when that started. */
+const ending = new Map();
 /** What the list shows, in order; `null` until the hub has answered. */
 let sessions = null;
 let hasKeys = false;
@@ -257,9 +307,12 @@ function setView(view) {
   document.body.dataset.view = view;
 }
 
-function drawList(showKey) {
+function drawList(showKey = listShowsKey) {
+  listShowsKey = showKey;
   const hosts = new Set(sessions.filter((s) => !s.chef).map((s) => s.host));
   const nodes = [];
+  // The chef is a switch: listed first, on or off.
+  if (sessions.length && !sessions.some((s) => s.chef)) nodes.push(chefOff());
   let host = null;
   for (const s of sessions) {
     // A chef stands above the machines, so it starts no group.
@@ -280,7 +333,7 @@ function drawList(showKey) {
 
 /** Marks the session showing, and says what the window title and phone's bar should. */
 function drawCurrent() {
-  for (const row of $('sessions').querySelectorAll('.session')) {
+  for (const row of $('sessions').querySelectorAll('a.session')) {
     row.classList.toggle('active', row.dataset.sid === current);
   }
   const showing = sessions?.find((s) => s.sid === current);
@@ -331,8 +384,8 @@ async function refresh() {
 const MAX_FRAMES = 4;
 /** Open frames by sid, the most recently shown last. */
 const frames = new Map();
-/** Sessions whose ticket is on its way, so a double click doesn't spend two. */
-const opening = new Set();
+/** Frames whose ticket is on its way, by sid, so a double click doesn't spend two. */
+const opening = new Map();
 /** When a frame last asked to be opened again, to stop if the ticket isn't taking. */
 const reopened = new Map();
 
@@ -388,26 +441,86 @@ async function showSession(sid) {
   setView('session');
   drawCurrent();
   showFrame(sid);
-  if (frames.has(sid) || opening.has(sid)) return;
-  opening.add(sid);
-  try {
+  if (frames.has(sid)) return;
+  const frame = await openFrame(sid);
+  if (!(frame instanceof HTMLIFrameElement)) {
+    if (current === sid) cantOpen(frame.problem);
+    return;
+  }
+  if (current === sid) showFrame(sid);
+}
+
+/** `sid`'s frame, loading it (out of sight) if it isn't open; or `{ problem }`. */
+async function openFrame(sid) {
+  if (frames.has(sid)) return frames.get(sid);
+  if (opening.has(sid)) return opening.get(sid);
+  const load = (async () => {
     const url = await ticketUrl(sid);
-    if (typeof url !== 'string') {
-      if (current === sid) cantOpen(url.problem);
-      return;
-    }
+    if (typeof url !== 'string') return url;
     const frame = el('iframe');
     frame.title = 'Session';
     frame.allow = 'clipboard-read; clipboard-write';
     frame.src = url;
+    frame.inert = true;
     frames.set(sid, frame);
     $('frames').append(frame);
-    for (const old of [...frames.keys()].slice(0, Math.max(0, frames.size - MAX_FRAMES))) closeFrame(old);
-    if (current === sid) showFrame(sid);
-    else frame.inert = true;
+    // The oldest go, but not one that's being closed: it's what does the closing.
+    const spare = [...frames.keys()].filter((s) => s !== sid && !ending.has(s));
+    for (const old of spare.slice(0, Math.max(0, frames.size - MAX_FRAMES))) closeFrame(old);
+    return frame;
+  })();
+  opening.set(sid, load);
+  try {
+    return await load;
   } finally {
     opening.delete(sid);
   }
+}
+
+// ---- closing a session from the list. Its page does it, over its own encrypted channel, so
+// the session's frame is opened out of sight if it isn't open, and asked to.
+
+/** How long to wait for a session to go before saying it didn't. */
+const END_TIMEOUT = 30000;
+
+async function endSession(sid) {
+  const s = sessions?.find((x) => x.sid === sid);
+  if (!s || ending.has(sid)) return;
+  const where = s.host ? ` on ${s.host}` : '';
+  const busyNote = s.busy || s.approval ? ' It\'s working, and stops mid-turn.' : '';
+  const question = s.chef
+    ? `Stop the tamale chef${where}?${busyNote} It stays saved, and your other sessions keep running. tamale chef or /chef starts it again.`
+    : `Close “${titleOf(s)}”${where}?${busyNote} tamale ends it there, where it stays saved: tamale --continue picks it back up.`;
+  if (!confirm(question)) return;
+  if (framesOff) {
+    alert('This browser opens sessions as whole pages, so close it from its own page: open it and use its close button.');
+    return;
+  }
+  ending.set(sid, Date.now());
+  drawn = '';
+  drawList();
+  const frame = await openFrame(sid);
+  let timer;
+  const done = (problem) => {
+    clearInterval(timer);
+    ending.delete(sid);
+    drawn = '';
+    if (sessions) drawList();
+    if (problem) alert(problem);
+  };
+  if (!(frame instanceof HTMLIFrameElement)) return done(frame.problem);
+  const origin = new URL(frame.src).origin;
+  // Over and over until it's gone: the page may still be loading, and acts on the first.
+  const tell = () => frame.contentWindow?.postMessage({ tamaleClose: true }, origin);
+  frame.addEventListener('load', tell);
+  tell();
+  timer = setInterval(() => {
+    if (sessions && !sessions.some((x) => x.sid === sid)) return done();
+    if (Date.now() - ending.get(sid) > END_TIMEOUT) {
+      return done(`${s.chef ? 'The chef' : 'That session'} didn't close in time. Open it to see why.`);
+    }
+    tell();
+  }, 1000);
 }
 
 /** The address that lets this browser into `sid`, or `{ problem }`. */
@@ -496,6 +609,13 @@ addEventListener('message', (ev) => {
   if (move === undefined) return;
   if (![...frames.values()].some((f) => f.contentWindow === ev.source)) return;
   if (move === 'up' || move === 'down' || (Number.isInteger(move) && move >= 1 && move <= 9)) switchBy(move);
+});
+
+document.addEventListener('click', (ev) => {
+  const end = ev.target.closest('button[data-end]');
+  if (!end) return;
+  ev.preventDefault();
+  endSession(end.dataset.end);
 });
 
 document.addEventListener('click', (ev) => {

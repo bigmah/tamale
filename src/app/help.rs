@@ -101,8 +101,8 @@ const COMMANDS: &[(&str, &str)] = &[
         "See the other sessions on this machine, to join or stop, and on other machines through the hub, to drive from here (the Sessions tab opens it too)",
     ),
     (
-        "/chef",
-        "Talk to the tamale chef, an agent that looks after every session on your hub key: what each is doing, side questions they answer without it touching their conversation, and messages into them (the Chef tab and `tamale chef` do the same)",
+        "/chef [on|off]",
+        "Talk to the tamale chef, an agent that looks after every session on your hub key: what each is doing, side questions they answer without it touching their conversation, and messages into them (the Chef tab and `tamale chef` do the same); /chef off stops it wherever it runs (it stays saved), as x on the Chef tab and `tamale chef off` do. The Chef tab shows on/off",
     ),
     (
         "/detach",
@@ -142,7 +142,7 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
             ),
             (
                 "↓ (below the prompt)",
-                "Focus the tabs: ←/→ pick Sessions (like /sessions), Remote (like /remote), Web (like /web) or Diff, Enter opens it; ↑ or Esc back",
+                "Focus the tabs: ←/→ pick Sessions (like /sessions), Remote (like /remote), Web (like /web), Diff or Chef, Enter opens it (x on Chef stops the chef when it's on); ↑ or Esc back",
             ),
             ("Ctrl+O / click Web", "Open the web UI on your Wi-Fi, like /web"),
             ("Click Remote", "Connect to the hub or show its QR code, like /remote"),

@@ -2590,3 +2590,51 @@ async fn the_chef_elsewhere_opens_here_and_leaving_it_leaves_tamale() {
     assert!(app.should_quit);
     assert!(app.exit_error.as_deref().unwrap().contains("browser"));
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn the_chef_tab_is_a_switch_that_says_on_or_off() {
+    let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    app.set_detachable();
+    let footer = |app: &mut App| screen_lines(app, 120, 30)[28].clone();
+    let first = footer(&mut app);
+    assert!(first.contains("Chef ") && !first.contains("Chef o"), "before the first look: {first:?}");
+
+    app.on_app_event(AppEvent::ChefRunning(false));
+    assert!(footer(&mut app).contains("Chef off"));
+    // Off, x on the tab does nothing but go back to the prompt.
+    app.tab_focus = Some(super::FooterTab::Chef);
+    app.on_event(key(KeyCode::Char('x')));
+    assert!(!app.chef_stopping && app.tab_focus.is_none());
+
+    app.on_app_event(AppEvent::ChefRunning(true));
+    assert!(footer(&mut app).contains("Chef on"));
+    app.tab_focus = Some(super::FooterTab::Chef);
+    app.on_event(key(KeyCode::Char('x')));
+    assert!(app.chef_stopping);
+    assert!(footer(&mut app).contains("Chef stopping"));
+
+    app.on_app_event(AppEvent::ChefStopped(Ok(Some("Stopped the tamale chef on this machine.".into()))));
+    assert!(!app.chef_stopping);
+    assert!(footer(&mut app).contains("Chef off"));
+    assert!(matches!(app.entries.last(), Some(Entry::Info(m)) if m.contains("/chef starts it again")));
+}
+
+#[tokio::test]
+async fn chef_off_in_the_chef_ends_it() {
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    app.set_chef();
+    app.command("/chef off");
+    assert!(app.should_quit);
+}

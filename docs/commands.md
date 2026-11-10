@@ -60,8 +60,9 @@
 - `/backend` opens a backend picker; `/backend api|claude-code|codex` switches directly, keeping the conversation
 - `/login` signs in to Claude Code or Codex (with their backends; see [Backends](backends.md))
 - `/add-dir [path]` adds a directory to the agent's scope, or lists the current scope
-- `/chef` goes to the tamale chef, which looks after all your sessions (see [The chef](chef.md));
-  the footer's **Chef** tab does the same
+- `/chef` goes to the tamale chef, which looks after all your sessions (see [The chef](chef.md)),
+  starting it if it's off; `/chef off` stops it wherever it runs. The footer's **Chef** tab says
+  **on** or **off**: `Enter` goes to it, and `x` on it stops it
 - `/resume [n|id]` continues a saved session (see [Sessions](sessions.md#sessions))
 - `/undo` and `/rewind` restore files and rewind the conversation (see [Checkpoints](sessions.md#checkpoints-and-undo))
 - `/diff [args]` opens the diff viewer (see [Diff viewer](diff-viewer.md))
@@ -69,7 +70,8 @@
 - `/web [off]` opens a chat-first web UI with a code browser (see [Web UI](web.md#web-ui))
 - `/remote [off]` makes the session reachable through a tamale-hub (see [Remote access](remote-access.md))
 - `/permissions [mode]` shows the mode and rules, or sets `ask`, `accept-edits` or `auto`
-- `/clear` resets the conversation, `/quit` (or `/exit`) quits
+- `/clear` resets the conversation, `/quit` (or `/exit`) quits. In the web UI, `/quit` and the
+  ⏻ button in the top bar close the session, after asking
 
 Direct clipboard commands use `pbcopy`/`pbpaste` on macOS, PowerShell on Windows,
 or `wl-copy`/`wl-paste`, `xclip`, or `xsel` on Linux (install one of those on Linux).

@@ -24,6 +24,8 @@ phone (below).
 5. **Close** a session by swiping it left in the list, long-pressing it, or from the session's
    menu. It ends on its machine as `tamale kill` would there, mid-turn if need be, and stays saved
    for `tamale --continue`.
+6. The **Chef** section at the top says whether the [tamale chef](chef.md) is **ON** or **OFF**.
+   **Stop** on its row (or the ⏻ button in its bar) stops it; it stays saved.
 
 **Long sessions** open at the end, with a loading bar while the conversation comes in. Earlier
 messages load as you scroll up to them. This needs a current tamale on the session's machine; an

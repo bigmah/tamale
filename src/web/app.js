@@ -269,6 +269,11 @@ if (window.parent !== window) {
   addEventListener('focus', () => {
     if (matchMedia('(pointer: fine)').matches) $('input')?.focus();
   });
+  // The hub's list closing this session (it asked first): as soon as it's connected.
+  addEventListener('message', (ev) => {
+    if (ev.source !== window.parent || ev.origin !== hub || ev.data?.tamaleClose !== true) return;
+    endSession();
+  });
 }
 
 const NEEDS_KEY = "Scan this session's key on the hub's page, or paste it there.";
@@ -303,6 +308,7 @@ async function sealedFrame(link, data) {
 /** The connection is up and, if it's to be, encrypted. */
 function ready() {
   retry = 0;
+  if (ending.due) return endSession();
   setConn('live', e2e ? 'Connected to tamale, end-to-end encrypted' : 'Connected to tamale');
   request('tree');
   for (const id of artifactsDue.keys()) send({ t: 'artifact', id });
@@ -1024,6 +1030,62 @@ $('mode').onclick = () => {
 };
 $('model').onclick = () => setInput('/model ');
 
+// ---------------------------------------------------------------- closing the session
+//
+// Ends the session on its machine, as `tamale kill` would there: it stays saved, so
+// `tamale --continue` picks it back up. In the chef, this is how it's stopped.
+
+const ending = { due: false, sent: false };
+
+const connected = () => ws?.readyState === WebSocket.OPEN && (!e2e || !!channel);
+
+/** Sends the close, now if connected, or as soon as it is. */
+function endSession() {
+  if (ending.sent) return;
+  if (!connected()) {
+    ending.due = true;
+    return;
+  }
+  ending.due = false;
+  ending.sent = true;
+  send({ t: 'close' });
+  $('end-session').disabled = true;
+  setConn('down', 'Closing…');
+  toast(state.status?.chef ? 'Stopping the chef…' : 'Closing the session…', 1e9);
+}
+
+function openEndDialog() {
+  if (ending.sent) return;
+  const s = state.status;
+  const chef = !!s?.chef;
+  $('end-title').textContent = chef ? 'Stop the tamale chef?' : 'Close this session?';
+  const busy = s?.running ? (chef ? 'It\'s asking around, and stops mid-turn. ' : 'It\'s working, and stops mid-turn. ') : '';
+  $('end-text').innerHTML = esc(busy) + (chef
+    ? 'It stays saved, and your other sessions keep running. <code>tamale chef</code> or <code>/chef</code> starts it again.'
+    : 'tamale ends it on its machine, where it stays saved: <code>tamale --continue</code> picks it back up.');
+  $('end-go').textContent = chef ? 'Stop chef' : busy ? 'Stop and close' : 'Close session';
+  $('ending').hidden = false;
+  $('end-go').focus();
+}
+
+function closeEndDialog() {
+  $('ending').hidden = true;
+}
+
+$('end-session').onclick = openEndDialog;
+$('end-cancel').onclick = closeEndDialog;
+$('end-go').onclick = () => {
+  closeEndDialog();
+  endSession();
+};
+$('ending').addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape') {
+    ev.preventDefault();
+    ev.stopPropagation();
+    closeEndDialog();
+  }
+});
+
 // ---------------------------------------------------------------- chef
 //
 // A tamale chef (src/chef.rs) looks after the other sessions. Its page is this one in amber,
@@ -1059,6 +1121,8 @@ function setUpChef() {
   document.body.classList.add('chef');
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#1f1a12');
   document.querySelector('.brand-name').innerHTML = 'tamale <span class="brand-chef">chef</span>';
+  $('end-session').title = 'Stop the chef  /quit';
+  $('end-session').setAttribute('aria-label', 'Stop the chef');
   $('kitchen').hidden = narrow.matches;
   $('toggle-kitchen').hidden = false;
   input.placeholder = promptPlaceholder();
@@ -1564,6 +1628,7 @@ const COMMANDS = [
   { name: '/artifacts', desc: 'Browse artifacts from this and earlier sessions', local: true },
   { name: '/clear', desc: 'Clear the conversation and start fresh' },
   { name: '/web off', desc: 'Stop serving this page' },
+  { name: '/quit', desc: 'Close this session (it stays saved); in the chef, stop it', local: true },
 ];
 
 /** Commands that open a picker or screen in the terminal when given no arguments. */
@@ -1611,6 +1676,10 @@ function runLocal(text) {
       return true;
     case '/help':
       openHelp();
+      return true;
+    case '/quit':
+    case '/exit':
+      openEndDialog();
       return true;
     case '/artifacts':
       openArtifacts();
@@ -3279,6 +3348,7 @@ addEventListener('keydown', (ev) => {
     return askAboutSelection();
   }
   if (ev.key === 'Escape') {
+    if (!$('ending').hidden) return closeEndDialog();
     if (!$('help').hidden) return ($('help').hidden = true);
     if (!$('artifacts').hidden) return closeArtifacts();
     if (!$('picker').hidden) return closePicker();
@@ -3300,7 +3370,7 @@ addEventListener('keydown', (ev) => {
   // Typing anywhere that isn't a field goes to the prompt.
   const t = ev.target;
   if (t.matches?.('input, textarea') || mod || ev.altKey || ev.key.length !== 1) return;
-  if (!$('picker').hidden || !$('help').hidden || !$('artifacts').hidden || diffIsFull()) return;
+  if (!$('picker').hidden || !$('help').hidden || !$('artifacts').hidden || !$('ending').hidden || diffIsFull()) return;
   input.focus();
 });
 

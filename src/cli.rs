@@ -12,11 +12,12 @@ use crate::config::Settings;
 mod tests;
 
 pub const HELP: &str = "usage: tamale [--backend <kind>] [--add-dir <path>] [--config <path>] [--model <id>] [--effort <level>] [--thinking <mode>] [-c | -r] [--foreground] [-p <prompt> [--yes]]
-       tamale chef
+       tamale chef [off]
        tamale ls | attach [<id>] | kill <id>
 
 chef              Talk to the tamale chef, which looks after all your sessions, on every
                   machine with your hub key (or go back to it if it's running).
+chef off          Stop the chef, wherever it runs (it stays saved).
 ls                List the sessions running in the background.
 attach [<id>]     Go back to a session running in the background.
 kill <id>         End a session running in the background.
@@ -68,6 +69,8 @@ pub struct Cli {
     pub resume: Option<Resume>,
     /// Be (or go back to) the tamale chef rather than a session in a project.
     pub chef: bool,
+    /// `tamale chef off`: stop the chef, wherever it runs.
+    pub chef_off: bool,
     /// Approve every call that would prompt in `-p` mode (deny rules still apply).
     pub yes: bool,
     pub help: bool,
@@ -105,7 +108,12 @@ impl Cli {
             }
             Some("chef") => {
                 args.next();
-                cli.chef = true;
+                if matches!(args.peek().map(String::as_str), Some("off" | "stop")) {
+                    args.next();
+                    cli.chef_off = true;
+                } else {
+                    cli.chef = true;
+                }
             }
             _ => {}
         }

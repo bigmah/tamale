@@ -14,6 +14,21 @@ the footer's **🫔 Chef** tab does the same, leaving that session running behin
 background session like any other: `ctrl+c` detaches, `/sessions` goes back to a session, and
 `tamale chef` comes back to it.
 
+### On and off
+
+The chef is a switch, like **Remote**, and every place you can reach it says whether it's on:
+
+| Where | Shows | Stops it |
+| --- | --- | --- |
+| Terminal | The footer's tab: **🫔 Chef on** (amber) or **off**, checked every 15 seconds | `x` on the tab, `/chef off`, or `tamale chef off` |
+| Inside the chef | **Chef on** | `/chef off`, `/quit`, or `x` on the tab |
+| tamale-hub.com | The chef first in the list with an **On** pill, or a dashed **Off** row saying how to start it | **Stop** on its row, or **Stop chef** in its top bar |
+| iPhone app | A **Chef** section with **ON**/**OFF** | **Stop** on its row, a swipe, or the ⏻ button in its bar |
+
+Stopping it ends it on whichever machine runs it. It stays saved, and nothing happens to your other
+sessions. `tamale chef` or `/chef` starts it again. Starting it needs a machine, so the web and the
+phone say how but can't start it themselves.
+
 ### One chef
 
 A hub key has **one chef**, wherever it runs:

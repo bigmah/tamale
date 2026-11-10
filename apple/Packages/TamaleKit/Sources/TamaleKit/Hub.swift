@@ -32,11 +32,14 @@ public struct HubSession: Decodable, Equatable, Identifiable, Sendable {
     public var viewers: Int
     /// Seconds since anything happened.
     public var idle: Double
+    /// Whether the session says it's the tamale chef, in the clear. A sealed label's `chef`
+    /// is what to go by when there is one (see `shown(with:)`).
+    public var chef: Bool
 
     public var id: String { sid }
 
     enum CodingKeys: String, CodingKey {
-        case sid, key, host, cwd, model, title, mid, e2e, busy, approval, online, viewers, idle
+        case sid, key, host, cwd, model, title, mid, e2e, busy, approval, online, viewers, idle, chef
         case sealedLabel = "sealed_label", sealedStatus = "sealed_status"
     }
 
@@ -60,11 +63,13 @@ public struct HubSession: Decodable, Equatable, Identifiable, Sendable {
         online = get(.online, false)
         viewers = get(.viewers, 0)
         idle = get(.idle, 0)
+        chef = get(.chef, false)
     }
 
     /// The label and title, opened with `key` when they're sealed.
     public func shown(with key: TamaleKey) -> (label: SessionLabel, title: String, model: String) {
-        var label = SessionLabel(host: host, cwd: cwd, model: model)
+        // Unsealed, there's only the hub's word for it.
+        var label = SessionLabel(host: host, cwd: cwd, model: model, chef: sealedLabel == nil && chef)
         var title = self.title
         var model = self.model
         if let sealed = sealedLabel, let open = try? Sealed.label(sealed, key: key, sid: sid) {

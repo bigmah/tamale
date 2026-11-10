@@ -201,6 +201,12 @@ impl App {
                 KeyCode::Left => self.tab_focus = Some(tabs[at.saturating_sub(1)]),
                 KeyCode::Right => self.tab_focus = Some(tabs[(at + 1).min(tabs.len() - 1)]),
                 KeyCode::Enter => self.open_tab(tab),
+                // The Chef tab is a switch, as Remote is: x turns it off.
+                KeyCode::Char('x') | KeyCode::Delete
+                    if tab == FooterTab::Chef && self.chef_on() == Some(true) =>
+                {
+                    self.stop_chef()
+                }
                 KeyCode::Up | KeyCode::Esc => self.tab_focus = None,
                 KeyCode::Down => {}
                 // Anything else goes back to the prompt and acts there.

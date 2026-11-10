@@ -53,11 +53,33 @@ fn main() -> Result<()> {
         .block_on(start(cli))
 }
 
+/// `tamale chef off`: stops the chef on this machine, or through the hub wherever it runs.
+#[cfg(unix)]
+async fn stop_chef(cli: &cli::Cli) -> Result<()> {
+    let workspace = workspace::Workspace::current()?;
+    let mut settings = config::Settings::load(&workspace.cwd, cli.config.as_deref())?;
+    settings.apply_env(|name| std::env::var(name).ok())?;
+    match chef::stop(&settings.hub).await {
+        Ok(Some(stopped)) => {
+            println!("{stopped} `tamale chef` starts it again.");
+            Ok(())
+        }
+        Ok(None) => {
+            println!("No tamale chef is running.");
+            Ok(())
+        }
+        Err(e) => bail!(e),
+    }
+}
+
 async fn start(cli: cli::Cli) -> Result<()> {
     #[cfg(unix)]
     let (host, chef_lock) = {
         if let Some(command) = &cli.command {
             return background::client::run_command(command).await;
+        }
+        if cli.chef_off {
+            return stop_chef(&cli).await;
         }
         let in_background = !cli.server && !cli.foreground && cli.print_prompt.is_none();
         if in_background && let Some(id) = background::client::session_to_rejoin(&cli)? {
@@ -73,7 +95,7 @@ async fn start(cli: cli::Cli) -> Result<()> {
         (host, chef_lock)
     };
     #[cfg(not(unix))]
-    if cli.command.is_some() {
+    if cli.command.is_some() || cli.chef_off {
         bail!("Background sessions aren't available on this platform.");
     }
     let mut workspace = workspace::Workspace::current()?;

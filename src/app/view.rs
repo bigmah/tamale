@@ -525,7 +525,11 @@ impl App {
                 FooterTab::Remote => "enter connect · ←/→ choose · ↑ back",
                 FooterTab::Web => "enter open in browser · ←/→ choose · ↑ back",
                 FooterTab::Diff => "enter open · ←/→ choose · ↑ back",
-                FooterTab::Chef => "enter talk to the chef, who knows every session · ←/→ choose · ↑ back",
+                FooterTab::Chef if self.is_chef() => "you're in the chef · x stop it · ←/→ choose · ↑ back",
+                FooterTab::Chef if self.chef_on() == Some(true) => {
+                    "enter open the chef · x stop it · ←/→ choose · ↑ back"
+                }
+                FooterTab::Chef => "enter start the chef, who knows every session · ←/→ choose · ↑ back",
             }
         } else if self.is_running() && self.detachable {
             "esc to interrupt · ctrl+c to detach"
@@ -666,7 +670,12 @@ impl App {
         }
         if self.shows_chef_tab() {
             spans.push(Span::from(SEPARATOR).fg(Color::DarkGray));
-            add(&mut spans, FooterTab::Chef, " 🫔 Chef ".into(), style(FooterTab::Chef, super::chef::CHEF));
+            let (label, color) = match self.chef_label() {
+                "" => (" 🫔 Chef ".to_string(), secondary),
+                state @ "on" => (format!(" 🫔 Chef {state} "), super::chef::CHEF),
+                state => (format!(" 🫔 Chef {state} "), secondary),
+            };
+            add(&mut spans, FooterTab::Chef, label, style(FooterTab::Chef, color).bold());
         }
         self.tab_areas = areas;
         let tabs_width: usize = spans.iter().map(|s| s.content.width()).sum();

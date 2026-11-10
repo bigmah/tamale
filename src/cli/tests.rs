@@ -136,3 +136,13 @@ fn parses_foreground_and_server() {
     assert!(parse(&["--foreground"]).unwrap().foreground);
     assert!(parse(&["--server"]).unwrap().server);
 }
+
+#[test]
+fn parses_chef_and_chef_off() {
+    let chef = parse(&["chef"]).unwrap();
+    assert!(chef.chef && !chef.chef_off);
+    for word in ["off", "stop"] {
+        let off = parse(&["chef", word]).unwrap();
+        assert!(off.chef_off && !off.chef, "{word}");
+    }
+}

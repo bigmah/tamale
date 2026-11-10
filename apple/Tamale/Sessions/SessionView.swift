@@ -69,12 +69,12 @@ struct SessionView: View {
             if !none { composing = false }
         }
         .background(Theme.background)
-        .navigationTitle(model.title.isEmpty ? row.shownTitle : model.title)
+        .navigationTitle(model.title.isEmpty || row.isChef ? row.shownTitle : model.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 0) {
-                    Text(model.title.isEmpty ? row.shownTitle : model.title)
+                    Text(model.title.isEmpty || row.isChef ? row.shownTitle : model.title)
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
                     Text(row.place)
@@ -90,8 +90,21 @@ struct SessionView: View {
                     Button("Talk with Gemini", systemImage: "waveform") { talking = true }
                 }
             }
-            ToolbarItem(placement: .primaryAction) {
-                Button("Changes", systemImage: "plus.forwardslash.minus") { showingDiff = true }
+            if row.isChef {
+                // The chef is a switch: stopping it is one tap away, not in the menu.
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Stop Chef", systemImage: "power") {
+                        var current = row
+                        current.session.busy = model.busy
+                        confirmingClose = current
+                    }
+                    .tint(Theme.chef)
+                    .disabled(app.closing.contains(row.id))
+                }
+            } else {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Changes", systemImage: "plus.forwardslash.minus") { showingDiff = true }
+                }
             }
             ToolbarItem(placement: .primaryAction) {
                 Menu {
@@ -101,7 +114,8 @@ struct SessionView: View {
                         Button("Interrupt", systemImage: "stop.circle", role: .destructive) { model.interrupt() }
                     }
                     Divider()
-                    Button("Close Session", systemImage: "xmark.circle", role: .destructive) {
+                    Button(row.isChef ? "Stop Chef" : "Close Session",
+                           systemImage: row.isChef ? "power" : "xmark.circle", role: .destructive) {
                         var current = row
                         current.session.busy = model.busy
                         confirmingClose = current

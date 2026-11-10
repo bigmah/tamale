@@ -44,6 +44,33 @@ struct SessionListView: View {
         }
     }
 
+    private var chefs: [SessionRow] { app.rows.filter(\.isChef) }
+
+    private func sessionLink(_ row: SessionRow) -> some View {
+        NavigationLink(value: Route.session(row.id)) {
+            SessionRowView(row: row, showKey: app.accounts.count > 1,
+                           closing: app.closing.contains(row.id),
+                           stop: row.isChef && row.session.online && row.session.e2e
+                               ? { confirmingClose = row } : nil)
+        }
+        .listRowBackground(Theme.surface)
+        .swipeActions(edge: .trailing) {
+            if row.session.online && row.session.e2e {
+                Button(row.isChef ? "Stop" : "Close",
+                       systemImage: row.isChef ? "power" : "xmark.circle") { confirmingClose = row }
+                    .tint(Theme.error)
+            }
+        }
+        .contextMenu {
+            if row.session.online && row.session.e2e {
+                Button(row.isChef ? "Stop Chef" : "Close Session",
+                       systemImage: row.isChef ? "power" : "xmark.circle", role: .destructive) {
+                    confirmingClose = row
+                }
+            }
+        }
+    }
+
     private var list: some View {
         List {
             ForEach(app.accounts) { account in
@@ -66,25 +93,24 @@ struct SessionListView: View {
                     Text("Start tamale and type /remote to make a session reachable from here.")
                 }
                 .listRowBackground(Color.clear)
-            }
-            ForEach(app.rows) { row in
-                NavigationLink(value: Route.session(row.id)) {
-                    SessionRowView(row: row, showKey: app.accounts.count > 1,
-                                   closing: app.closing.contains(row.id))
-                }
-                .listRowBackground(Theme.surface)
-                .swipeActions(edge: .trailing) {
-                    if row.session.online && row.session.e2e {
-                        Button("Close", systemImage: "xmark.circle") { confirmingClose = row }
-                            .tint(Theme.error)
+            } else {
+                // The chef is a switch, as on the hub's page: on with a way to stop it, or off.
+                Section {
+                    if chefs.isEmpty {
+                        ChefOffRow().listRowBackground(Theme.surface)
                     }
-                }
-                .contextMenu {
-                    if row.session.online && row.session.e2e {
-                        Button("Close Session", systemImage: "xmark.circle", role: .destructive) {
-                            confirmingClose = row
-                        }
+                    ForEach(chefs) { row in
+                        sessionLink(row)
                     }
+                } header: {
+                    Text("Chef")
+                }
+                Section {
+                    ForEach(app.rows.filter { !$0.isChef }) { row in
+                        sessionLink(row)
+                    }
+                } header: {
+                    Text("Sessions")
                 }
             }
         }
@@ -108,16 +134,19 @@ struct CloseSessionDialog: ViewModifier {
     func body(content: Content) -> some View {
         content
             .confirmationDialog(
-                "Close this session?",
+                row?.isChef == true ? "Stop the tamale chef?" : "Close this session?",
                 isPresented: Binding(get: { row != nil }, set: { if !$0 { row = nil } }),
                 titleVisibility: .visible,
                 presenting: row
             ) { row in
-                Button(row.session.busy ? "Stop and Close" : "Close Session", role: .destructive) {
+                Button(row.isChef ? "Stop Chef" : row.session.busy ? "Stop and Close" : "Close Session",
+                       role: .destructive) {
                     Task { await app.close(row) }
                 }
             } message: { row in
-                Text(row.session.busy
+                Text(row.isChef
+                     ? "It stays saved on \(row.label.host.isEmpty ? "its machine" : row.label.host), and your other sessions keep running. tamale chef or /chef starts it again."
+                     : row.session.busy
                      ? "It's working, and stops mid-turn. tamale ends it on \(row.label.host.isEmpty ? "its machine" : row.label.host), where it stays saved: tamale --continue picks it back up."
                      : "tamale ends it on \(row.label.host.isEmpty ? "its machine" : row.label.host), where it stays saved: tamale --continue picks it back up.")
             }
@@ -128,11 +157,17 @@ struct SessionRowView: View {
     var row: SessionRow
     var showKey: Bool
     var closing = false
+    /// The chef's Stop button, when it can be stopped from here.
+    var stop: (() -> Void)?
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            StatusDot(session: row.session)
-                .padding(.top, 6)
+            if row.isChef {
+                Text("🫔").font(.body).padding(.top, 1)
+            } else {
+                StatusDot(session: row.session)
+                    .padding(.top, 6)
+            }
             VStack(alignment: .leading, spacing: 3) {
                 Text(row.shownTitle)
                     .font(.body.weight(.medium))
@@ -144,8 +179,11 @@ struct SessionRowView: View {
                     .lineLimit(1)
                     .truncationMode(.head)
                 HStack(spacing: 6) {
+                    if row.isChef {
+                        ChefSwitch(on: row.session.online && !closing)
+                    }
                     if closing {
-                        Badge(text: "Closing…", color: Theme.faint)
+                        Badge(text: row.isChef ? "Stopping…" : "Closing…", color: Theme.faint)
                     } else if row.session.approval {
                         Badge(text: "Needs approval", color: Theme.warning)
                     } else if row.session.busy {
@@ -165,8 +203,53 @@ struct SessionRowView: View {
                 .font(.caption)
                 .foregroundStyle(Theme.faint)
             }
+            if let stop {
+                Button(closing ? "Stopping" : "Stop", systemImage: "power", action: stop)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(Theme.chef)
+                    .disabled(closing)
+                    .padding(.top, 2)
+            }
         }
         .padding(.vertical, 4)
+    }
+}
+
+/// The chef's on/off state, the same capsule as the hub's page.
+struct ChefSwitch: View {
+    var on: Bool
+
+    var body: some View {
+        Text(on ? "ON" : "OFF")
+            .font(.caption2.weight(.bold))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .foregroundStyle(on ? Color(hex: 0x1F1A12) : Theme.dim)
+            .background(on ? Theme.chef : Theme.surface3, in: Capsule())
+            .accessibilityLabel(on ? "Chef on" : "Chef off")
+    }
+}
+
+/// Where the chef goes when none is running: off, and how to turn it on.
+struct ChefOffRow: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text("🫔").font(.body).grayscale(1).opacity(0.7).padding(.top, 1)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Text("tamale chef")
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(Theme.dim)
+                    ChefSwitch(on: false)
+                }
+                Text("Start it on one of your machines with tamale chef, or /chef in any session. It looks after every session on your key.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.faint)
+            }
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
     }
 }
 

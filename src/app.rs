@@ -85,6 +85,15 @@ pub enum AppEvent {
     /// A chef online on another machine, which `/chef` opens instead of starting one.
     #[cfg(unix)]
     ChefElsewhere(Option<crate::remote::HubSession>),
+    /// Time to look again at whether the chef is running, for the footer's Chef tab.
+    #[cfg(unix)]
+    ChefTick,
+    /// Whether the chef is running, from that look.
+    #[cfg(unix)]
+    ChefRunning(bool),
+    /// `/chef off` finished: what stopped (`None` if no chef was running), or why it couldn't.
+    #[cfg(unix)]
+    ChefStopped(Result<Option<String>, String>),
 }
 
 /// What `/browser` and `/web` ask the event loop to do.
@@ -301,6 +310,12 @@ pub struct App {
     chef: Option<chef::ChefState>,
     /// Whether `/chef` is starting one, or looking for one first.
     chef_starting: bool,
+    /// Whether the key's chef is running (here or elsewhere), as last looked; `None` until
+    /// the first look. What the footer's Chef tab says.
+    chef_running: Option<bool>,
+    /// Whether a look for the chef, or a stop, is under way.
+    chef_checking: bool,
+    chef_stopping: bool,
     /// Only here to show a session on another machine (`tamale chef` when the chef runs
     /// elsewhere): leaving it leaves tamale.
     remote_only: bool,
@@ -407,6 +422,9 @@ impl App {
             detach_requested: false,
             chef: None,
             chef_starting: false,
+            chef_running: None,
+            chef_checking: false,
+            chef_stopping: false,
             remote_only: false,
             exit_error: None,
         }
@@ -438,6 +456,9 @@ impl App {
     #[cfg(unix)]
     pub fn set_detachable(&mut self) {
         self.detachable = true;
+        if !self.is_chef() {
+            self.watch_chef();
+        }
     }
 
     /// Whether the terminal should be let go of, since the last time this was asked.
@@ -707,6 +728,15 @@ impl App {
             AppEvent::ChefStarted(result) => self.on_chef_started(result),
             #[cfg(unix)]
             AppEvent::ChefElsewhere(chef) => self.on_chef_elsewhere(chef),
+            #[cfg(unix)]
+            AppEvent::ChefTick => self.check_chef(),
+            #[cfg(unix)]
+            AppEvent::ChefRunning(running) => {
+                self.chef_checking = false;
+                self.chef_running = Some(running);
+            }
+            #[cfg(unix)]
+            AppEvent::ChefStopped(result) => self.on_chef_stopped(result),
             AppEvent::ClipboardPasted(Ok(text)) => self.on_paste(&text),
             AppEvent::ClipboardCopied(Ok(())) => self
                 .entries

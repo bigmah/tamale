@@ -48,7 +48,10 @@ struct SessionRow: Identifiable {
         }
     }
 
-    var shownTitle: String { title.isEmpty ? "New session" : title }
+    var shownTitle: String { isChef ? "tamale chef" : title.isEmpty ? "New session" : title }
+
+    /// The tamale chef, which looks after the key's other sessions (see docs/chef.md).
+    var isChef: Bool { label.chef }
 }
 
 enum Route: Hashable {

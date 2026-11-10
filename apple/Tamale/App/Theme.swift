@@ -17,6 +17,8 @@ enum Theme {
     static let warning = Color(hex: 0xE2B34C)
     static let error = Color(hex: 0xE06C75)
     static let violet = Color(hex: 0xA78BFA)
+    /// The tamale chef's amber, as on the web.
+    static let chef = Color(hex: 0xF2A93B)
 }
 
 extension Color {

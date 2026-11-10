@@ -27,6 +27,9 @@ use crate::web::{Kitchen, KitchenSession};
 
 /// How often the kitchen is looked at again.
 const KITCHEN_REFRESH: Duration = Duration::from_secs(8);
+/// How often other sessions look at whether the chef is running, for the Chef tab.
+#[cfg(unix)]
+const CHEF_WATCH: Duration = Duration::from_secs(15);
 /// The kitchen panel's width, and the narrowest terminal that has room for it.
 const PANEL_WIDTH: u16 = 36;
 const PANEL_MIN_TERMINAL: u16 = 100;
@@ -66,9 +69,118 @@ impl App {
         self.chef.is_some()
     }
 
-    /// Whether the footer offers the chef: in a session that can switch to it.
+    /// Whether the footer offers the chef: in a session that can switch to it, and in the
+    /// chef itself, where it says it's on and can stop it.
     pub(super) fn shows_chef_tab(&self) -> bool {
-        cfg!(unix) && self.chef.is_none() && self.detachable
+        cfg!(unix) && (self.chef.is_some() || self.detachable)
+    }
+
+    /// Whether the key's chef is running, here or anywhere, as far as is known: `None`
+    /// before the first look.
+    pub(super) fn chef_on(&self) -> Option<bool> {
+        if self.is_chef() {
+            Some(true)
+        } else {
+            self.chef_running
+        }
+    }
+
+    /// The Chef tab's state: `on`, `off`, or nothing before the first look.
+    pub(super) fn chef_label(&self) -> &'static str {
+        if self.chef_stopping {
+            "stopping"
+        } else if self.chef_starting {
+            "starting"
+        } else {
+            match self.chef_on() {
+                Some(true) => "on",
+                Some(false) => "off",
+                None => "",
+            }
+        }
+    }
+
+    /// Looks every so often at whether the chef is running, for the Chef tab.
+    #[cfg(unix)]
+    pub(super) fn watch_chef(&mut self) {
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            let mut every = tokio::time::interval(CHEF_WATCH);
+            loop {
+                every.tick().await;
+                if tx.send(AppEvent::ChefTick).is_err() {
+                    return;
+                }
+            }
+        });
+    }
+
+    #[cfg(not(unix))]
+    pub(super) fn watch_chef(&mut self) {}
+
+    /// Looks at whether the chef is running, unless a look is under way.
+    #[cfg(unix)]
+    pub(super) fn check_chef(&mut self) {
+        if self.is_chef() || self.chef_checking || self.chef_stopping {
+            return;
+        }
+        self.chef_checking = true;
+        let hub = self.settings.hub.clone();
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            let running = chef::find_running(&hub).await.is_some();
+            let _ = tx.send(AppEvent::ChefRunning(running));
+        });
+    }
+
+    /// `/chef off`, or `x` on the Chef tab: stops the chef wherever it runs. It stays saved.
+    pub(super) fn stop_chef(&mut self) {
+        if self.is_chef() {
+            self.entries
+                .push(Entry::Info("🫔 Stopping the tamale chef…".into()));
+            self.should_quit = true;
+            return;
+        }
+        #[cfg(unix)]
+        {
+            if self.chef_stopping {
+                return;
+            }
+            self.chef_stopping = true;
+            self.entries
+                .push(Entry::Info("🫔 Stopping the tamale chef…".into()));
+            let hub = self.settings.hub.clone();
+            let tx = self.tx.clone();
+            tokio::spawn(async move {
+                let _ = tx.send(AppEvent::ChefStopped(chef::stop(&hub).await));
+            });
+        }
+        #[cfg(not(unix))]
+        self.entries.push(Entry::Error(
+            "The chef needs background sessions, which this platform doesn't have.".into(),
+        ));
+    }
+
+    #[cfg(unix)]
+    pub(super) fn on_chef_stopped(&mut self, result: Result<Option<String>, String>) {
+        self.chef_stopping = false;
+        match result {
+            Ok(Some(stopped)) => {
+                self.chef_running = Some(false);
+                self.entries.push(Entry::Info(format!(
+                    "🫔 {stopped} /chef starts it again."
+                )));
+            }
+            Ok(None) => {
+                self.chef_running = Some(false);
+                self.entries
+                    .push(Entry::Info("No tamale chef is running.".into()));
+            }
+            Err(e) => {
+                self.entries.push(Entry::Error(e));
+                self.check_chef();
+            }
+        }
     }
 
     /// What the chef's tools reach sessions with, as the settings are now (a key set with
@@ -225,6 +337,7 @@ impl App {
         match chef {
             Some(session) => {
                 self.chef_starting = false;
+                self.chef_running = Some(true);
                 self.entries.push(Entry::Info(format!(
                     "🫔 The chef is running on {}; it opens here. Esc comes back.",
                     super::remote::session_name(&session)
@@ -268,7 +381,10 @@ impl App {
     pub(super) fn on_chef_started(&mut self, started: Result<u32, String>) {
         self.chef_starting = false;
         match started {
-            Ok(id) => self.switch_request = Some(id),
+            Ok(id) => {
+                self.chef_running = Some(true);
+                self.switch_request = Some(id);
+            }
             Err(e) => self.entries.push(Entry::Error(e)),
         }
     }

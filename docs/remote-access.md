@@ -61,7 +61,10 @@ working, and otherwise comes back; `ctrl+c` always comes back, leaving it runnin
 list stops it, as `tamale kill` would on its machine (twice if it's mid-turn): it stays saved there,
 for `tamale --continue`.
 
-A session that ends (closed from a terminal or the iPhone app, `/quit`, `tamale kill`) tells the
+A session can also be closed from the web: the ⏻ button in its top bar (or `/quit` there), or the
+× beside it in the site's list. Each asks first.
+
+A session that ends (closed from a terminal, the web or the iPhone app, `/quit`, `tamale kill`) tells the
 hub, which drops it from the list straight away. One that just loses its connection is listed as
 offline for ten minutes, in case it comes back.
 

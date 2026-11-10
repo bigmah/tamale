@@ -15,11 +15,15 @@ public struct SessionLabel: Codable, Equatable, Sendable {
     public var host: String
     public var cwd: String
     public var model: String
+    /// Whether it's the tamale chef, which looks after the key's other sessions. The hub
+    /// says so in the clear too, but only this can't be forged.
+    public var chef: Bool
 
-    public init(host: String = "", cwd: String = "", model: String = "") {
+    public init(host: String = "", cwd: String = "", model: String = "", chef: Bool = false) {
         self.host = host
         self.cwd = cwd
         self.model = model
+        self.chef = chef
     }
 
     public init(from decoder: Decoder) throws {
@@ -27,6 +31,7 @@ public struct SessionLabel: Codable, Equatable, Sendable {
         host = try c.decodeIfPresent(String.self, forKey: .host) ?? ""
         cwd = try c.decodeIfPresent(String.self, forKey: .cwd) ?? ""
         model = try c.decodeIfPresent(String.self, forKey: .model) ?? ""
+        chef = (try? c.decodeIfPresent(Bool.self, forKey: .chef)) ?? false
     }
 }
 

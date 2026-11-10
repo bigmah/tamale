@@ -41,6 +41,9 @@
     <button class="kitchen-toggle" id="toggle-kitchen" title="Your sessions" hidden>
       <span class="kt-mark">🫔</span><span class="kt-count" id="kitchen-count"></span>
     </button>
+    <button class="iconbtn endbtn" id="end-session" title="Close this session  /quit" aria-label="Close this session">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.25v5.5M4.4 4.6a5 5 0 1 0 7.2 0"/></svg><span class="end-label">Stop chef</span>
+    </button>
     <span class="conn" id="conn" title="Connecting…"></span>
   </header>
 
@@ -173,6 +176,17 @@
       <div class="art-body">
         <div class="art-list" id="art-list"></div>
         <div class="art-view" id="art-view"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pickmask" id="ending" hidden>
+    <div class="pickbox endbox" role="alertdialog" aria-modal="true" aria-labelledby="end-title" aria-describedby="end-text">
+      <h2 id="end-title">Close this session?</h2>
+      <p id="end-text"></p>
+      <div class="end-actions">
+        <button class="btn" id="end-cancel">Cancel</button>
+        <button class="btn end-go" id="end-go">Close session</button>
       </div>
     </div>
   </div>

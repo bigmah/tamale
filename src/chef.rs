@@ -313,6 +313,52 @@ pub async fn running_elsewhere(hub: &HubSettings) -> Option<crate::remote::HubSe
         .find(|s| s.chef && s.online && s.sid != own)
 }
 
+/// Where the key's chef runs, when one does (other than this session).
+#[cfg(unix)]
+#[derive(Clone, Debug)]
+pub enum Running {
+    /// A background session on this machine, by its server's id.
+    Here(u32),
+    /// Online through the hub, on another machine.
+    Elsewhere(crate::remote::HubSession),
+}
+
+/// The chef, if one runs: this machine's first, then the hub's (with a key).
+#[cfg(unix)]
+pub async fn find_running(hub: &HubSettings) -> Option<Running> {
+    if let Some(id) = crate::background::running_chef() {
+        return Some(Running::Here(id));
+    }
+    if hub.key_bytes().is_err() {
+        return None;
+    }
+    running_elsewhere(hub).await.map(Running::Elsewhere)
+}
+
+/// Stops the chef wherever it runs; it stays saved there. Says what stopped, or `None` when
+/// no chef was running.
+#[cfg(unix)]
+pub async fn stop(hub: &HubSettings) -> Result<Option<String>, String> {
+    match find_running(hub).await {
+        None => Ok(None),
+        Some(Running::Here(id)) => crate::background::client::stop(id)
+            .await
+            .map(|()| Some("Stopped the tamale chef on this machine.".to_string()))
+            .map_err(|e| format!("Couldn't stop the chef: {e:#}")),
+        Some(Running::Elsewhere(session)) => {
+            let host = if session.host.is_empty() {
+                "its machine".to_string()
+            } else {
+                session.host.clone()
+            };
+            crate::remote::close(hub, &session.sid)
+                .await
+                .map(|()| Some(format!("Stopped the tamale chef on {host}.")))
+                .map_err(|e| format!("Couldn't stop the chef on {host}: {e}"))
+        }
+    }
+}
+
 /// Where a session runs, as `host:cwd`.
 pub fn place(host: &str, cwd: &str) -> String {
     match (host.is_empty(), cwd.is_empty()) {

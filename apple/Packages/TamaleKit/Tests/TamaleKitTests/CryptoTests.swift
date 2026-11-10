@@ -134,6 +134,12 @@ final class CryptoTests: XCTestCase {
         let status = try Sealed.status(v.sealed[1].sealed, key: key, sid: v.sid)
         XCTAssertEqual(status.title, "Fix the login bug")
 
+        // The chef says so in its sealed label, which is what the app goes by.
+        let chefLabel = try Sealed.seal(
+            Data(#"{"host":"mini","cwd":"~","model":"opus","chef":true}"#.utf8), key: key, sid: v.sid, kind: "label")
+        XCTAssertTrue(try Sealed.label(chefLabel, key: key, sid: v.sid).chef)
+        XCTAssertFalse(label.chef)
+
         let other = TamaleKey(bytes: Data(repeating: 9, count: 32))
         XCTAssertThrowsError(try Sealed.open(v.sealed[0].sealed, key: other, sid: v.sid, kind: "label"))
         let resealed = try Sealed.seal(Data("x".utf8), key: key, sid: v.sid, kind: "label")
