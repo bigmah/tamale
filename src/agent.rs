@@ -24,7 +24,7 @@ use crate::{config::AgentSettings, tools};
 pub use models::{context_size, cost};
 pub(crate) use prompt::COMPACT_PROMPT;
 pub(crate) use prompt::system_prompt;
-pub use reasoning::{Effort, Reasoning, Thinking};
+pub use reasoning::{Dialect, Effort, Reasoning, Thinking};
 use request::request;
 
 pub enum AgentEvent {

@@ -341,7 +341,7 @@ impl App {
     ) -> Self {
         let permissions = Policy::new(&settings.permissions, workspace.cwd.clone()).shared();
         let logins = match &backend {
-            Backend::Api(_) | Backend::Unset => Vec::new(),
+            Backend::Api(_) | Backend::Compat(_) | Backend::Unset => Vec::new(),
             login => vec![login.clone()],
         };
         Self {

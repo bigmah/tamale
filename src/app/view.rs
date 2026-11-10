@@ -179,6 +179,21 @@ impl App {
                         "Anthropic API · ANTHROPIC_API_KEY not set".to_string(),
                         true,
                     ),
+                    Choice::Provider(n) => {
+                        let name = self.provider_name(n).unwrap_or_default();
+                        let provider = &self.settings.backend.providers[name];
+                        let label = if provider.label.is_empty() {
+                            name
+                        } else {
+                            &provider.label
+                        };
+                        let key = match provider.api_key_env.as_str() {
+                            "" => "no key".to_string(),
+                            var if provider.key_set() => var.to_string(),
+                            var => format!("{var} not set"),
+                        };
+                        (name, format!("{label} · {key}"), !provider.key_set())
+                    }
                     Choice::Login(n) => {
                         let login = &self.logins[n];
                         let mut detail = login.label_with_account();

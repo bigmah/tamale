@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, bail};
 
 use crate::agent::{Effort, Thinking};
-use crate::backend;
 use crate::config::Settings;
 
 #[cfg(test)]
@@ -24,11 +23,13 @@ attach [<id>]     Go back to a session running in the background.
 kill <id>         End a session running in the background.
 update            Install the latest release of tamale, if this one is older.
 
--b, --backend      api (ANTHROPIC_API_KEY), claude-code (your Claude Code sign-in) or
-                   codex (your Codex sign-in).
+-b, --backend      api (ANTHROPIC_API_KEY), claude-code (your Claude Code sign-in),
+                   codex (your Codex sign-in), or an OpenAI-compatible provider with its
+                   own key: deepseek, kimi, gemini, openrouter, xai, groq, mistral, zai,
+                   openai, ollama, or one you add under [backend.providers].
 --add-dir <path>   Include another directory in the agent's scope (repeatable).
 --config <path>    Add a TOML settings file after user and project settings.
--m, --model <id>  Model ID (Anthropic, or a Codex model on the codex backend).
+-m, --model <id>  Model ID (Anthropic, a Codex model on codex, or the provider's).
 -e, --effort      low, medium, high, xhigh, max, or default (API decides).
 --thinking        adaptive (on) or off.
 -c, --continue    Go back to the most recent session in this directory, running or saved.
@@ -80,7 +81,7 @@ pub struct Cli {
     pub yes: bool,
     pub help: bool,
     pub version: bool,
-    backend: Option<backend::Kind>,
+    backend: Option<String>,
     model: Option<String>,
     // Outer None means no flag; Some(None) explicitly resets the API default.
     effort: Option<Option<Effort>>,
@@ -141,9 +142,7 @@ impl Cli {
                     cli.config = Some(args.next().context("--config needs a path")?.into())
                 }
                 "-b" | "--backend" => {
-                    cli.backend = Some(backend::Kind::parse_setting(
-                        &args.next().context("--backend needs a value")?,
-                    )?)
+                    cli.backend = Some(args.next().context("--backend needs a value")?)
                 }
                 "-m" | "--model" => cli.model = Some(args.next().context("--model needs a value")?),
                 "-e" | "--effort" => {
@@ -178,9 +177,9 @@ impl Cli {
         Ok(cli)
     }
 
-    pub fn apply(&self, settings: &mut Settings) {
-        if let Some(kind) = self.backend {
-            settings.backend.kind = kind;
+    pub fn apply(&self, settings: &mut Settings) -> Result<()> {
+        if let Some(backend) = &self.backend {
+            settings.backend.select(backend).context("--backend")?;
         }
         if let Some(model) = &self.model {
             settings.model.name = model.clone();
@@ -191,5 +190,6 @@ impl Cli {
         if let Some(thinking) = self.thinking {
             settings.model.thinking = thinking;
         }
+        Ok(())
     }
 }

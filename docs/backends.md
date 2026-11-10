@@ -10,6 +10,7 @@ identically, and the footer shows the backend next to the working directory
 | `api` (default) | `kind = "api"`, `--backend api`, `TAMALE_BACKEND` | `ANTHROPIC_API_KEY` |
 | `claude-code` | `kind = "claude-code"`, `--backend claude-code`, `TAMALE_BACKEND` | The Claude Code CLI's sign-in (Claude subscription or Console account) |
 | `codex` | `kind = "codex"`, `--backend codex`, `TAMALE_BACKEND` | The Codex CLI's sign-in (ChatGPT plan or OpenAI API key) |
+| a provider, e.g. `deepseek` | `kind = "deepseek"`, `--backend deepseek`, `TAMALE_BACKEND` | The provider's API key, e.g. `DEEPSEEK_API_KEY` (see [below](#openai-compatible-providers)) |
 
 `/backend` opens a picker to switch mid-session (↑/↓ or j/k to move, 1–9 to jump, Enter to
 switch, Esc to cancel; the current backend is marked with ●). `/backend api`,
@@ -97,3 +98,63 @@ The `codex` backend runs `codex exec --json` headlessly for each turn, so it nee
   size from Codex's session file for the context meter. Codex compacts its own thread,
   so tamale doesn't auto-compact before Codex turns (`/compact` still works). Costs
   aren't estimated for OpenAI models.
+
+## OpenAI-compatible providers
+
+Most providers serve OpenAI's **Chat Completions** API (`POST {base_url}/chat/completions`),
+so one backend covers them all. They run through the same agent loop as the Anthropic API.
+These are built in, keyed by the environment variable shown:
+
+| Name | Provider | Key | Default model |
+| --- | --- | --- | --- |
+| `deepseek` | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-chat` |
+| `kimi` | Kimi (Moonshot) | `MOONSHOT_API_KEY` | `kimi-k2.5` |
+| `gemini` | Gemini | `GEMINI_API_KEY` | `gemini-2.5-pro` |
+| `openrouter` | OpenRouter | `OPENROUTER_API_KEY` | `moonshotai/kimi-k2` |
+| `xai` | xAI | `XAI_API_KEY` | `grok-4` |
+| `groq` | Groq | `GROQ_API_KEY` | `openai/gpt-oss-120b` |
+| `mistral` | Mistral | `MISTRAL_API_KEY` | `mistral-large-latest` |
+| `zai` | Z.ai (GLM) | `ZAI_API_KEY` | `glm-4.6` |
+| `openai` | OpenAI API | `OPENAI_API_KEY` | `gpt-5` |
+| `ollama` | Ollama on localhost | none | `qwen3-coder` |
+
+Select one with `--backend kimi`, `TAMALE_BACKEND=kimi`, `kind = "kimi"` or `/backend kimi`.
+The `/backend` picker lists every provider whose key is set, plus keyless ones like
+`ollama`. If the configured provider's key is missing, tamale opens the picker instead
+(`-p` runs exit with an error).
+
+- **Models**: while `model.name` is a Claude model, a provider uses its default model, and
+  switching to a provider switches to its default (switching back to an Anthropic backend
+  returns to the default Claude model). `/model` lists the provider's models from its
+  `/models` endpoint; `--model` or `TAMALE_MODEL` pick one at startup.
+- **Settings**: `--effort`/`/effort` is sent as `reasoning_effort` (`xhigh` and `max` as
+  `high`), and only when set, since not every provider accepts it. `/thinking` doesn't apply.
+  `max_tokens` on a provider caps `agent.max_tokens` for APIs with a lower output limit.
+- **Context and cost**: context windows are known for the default models' families;
+  set `model.context_window` for others (unknown models assume 200k). Costs aren't
+  estimated.
+- **Switching**: the conversation carries over in both directions. Reasoning from other
+  providers is dropped when replaying to the Anthropic API, which only accepts its own.
+
+Override any field of a built-in provider, or add your own, in
+`~/.config/tamale/config.toml`:
+
+```toml
+[backend.providers.deepseek]
+model = "deepseek-reasoner"
+max_tokens = 32768
+
+[backend.providers.together]
+label = "Together"
+base_url = "https://api.together.xyz/v1"
+api_key_env = "TOGETHER_API_KEY"
+model = "moonshotai/Kimi-K2-Instruct-0905"
+
+[backend.providers.vllm]
+base_url = "http://localhost:8000/v1"
+api_key_env = ""                   # no key
+model = "Qwen/Qwen3-Coder-30B-A3B-Instruct"
+```
+
+A project's `tamale.toml` can't set `backend.providers`: a repository must not be able to
+send your API keys somewhere else.

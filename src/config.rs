@@ -137,6 +137,7 @@ impl ModelSettings {
         Reasoning {
             effort: self.effort,
             thinking: self.thinking,
+            ..Reasoning::default()
         }
     }
 
@@ -172,7 +173,7 @@ impl Settings {
     /// Inject the environment lookup so tests don't mutate process-wide variables.
     pub fn apply_env(&mut self, get: impl Fn(&str) -> Option<String>) -> Result<()> {
         if let Some(value) = get("TAMALE_BACKEND").filter(|s| !s.trim().is_empty()) {
-            self.backend.kind = backend::Kind::parse_setting(&value).context("TAMALE_BACKEND")?;
+            self.backend.select(&value).context("TAMALE_BACKEND")?;
         }
         if let Some(value) = get("TAMALE_MODEL") {
             self.model.name = value;
@@ -209,6 +210,23 @@ impl Settings {
             !self.backend.codex_path.as_os_str().is_empty(),
             "backend.codex_path must not be empty"
         );
+        if self.backend.kind == backend::Kind::Compat {
+            self.backend.provider_settings(&self.backend.provider)?;
+        }
+        for (name, provider) in &self.backend.providers {
+            ensure!(
+                !provider.base_url.trim().is_empty(),
+                "backend.providers.{name}.base_url must not be empty"
+            );
+            ensure!(
+                !provider.model.trim().is_empty(),
+                "backend.providers.{name}.model must not be empty"
+            );
+            ensure!(
+                provider.max_tokens != Some(0),
+                "backend.providers.{name}.max_tokens must be positive"
+            );
+        }
         ensure!(
             !self.model.name.trim().is_empty(),
             "model.name must not be empty"
@@ -304,13 +322,15 @@ or --config can.",
     Ok(())
 }
 
-/// The `[backend]` settings that say what tamale runs: the CLIs, and the directories those CLIs
-/// load their own settings, hooks and MCP servers from.
-const BACKEND_PROGRAMS: [&str; 4] = [
+/// The `[backend]` settings that say what tamale runs: the CLIs, the directories those CLIs
+/// load their own settings, hooks and MCP servers from, and the providers API keys go to.
+const BACKEND_PROGRAMS: [&str; 5] = [
     "claude_path",
     "claude_config_dirs",
     "codex_path",
     "codex_homes",
+    // Where requests, with your API keys, are sent.
+    "providers",
 ];
 
 /// Takes out of a project's file what a repository doesn't get to decide, and returns what it

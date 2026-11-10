@@ -42,7 +42,7 @@ pub fn new_login(kind: Kind, settings: &BackendSettings) -> Result<Backend> {
             Some(dir),
         )),
         Kind::Codex => Backend::Codex(Codex::signed_out(settings.codex_path.clone(), Some(dir))),
-        Kind::Api => bail!("the API backend has no logins"),
+        Kind::Api | Kind::Compat => bail!("API backends have no logins"),
     })
 }
 
@@ -57,7 +57,7 @@ pub async fn remove(login: &Backend) -> Result<()> {
         match login {
             Backend::ClaudeCode(cc) => cc.logout().await?,
             Backend::Codex(codex) => codex.logout().await?,
-            Backend::Api(_) | Backend::Unset => {}
+            Backend::Api(_) | Backend::Compat(_) | Backend::Unset => {}
         }
     }
     std::fs::remove_dir_all(&dir).with_context(|| format!("removing {}", dir.display()))?;

@@ -11,6 +11,8 @@
 #                `claude` CLI headlessly; sign in with `claude auth login` or /login
 #   codex        your Codex sign-in (ChatGPT plan or OpenAI API key), by running the
 #                `codex` CLI headlessly; sign in with `codex login` or /login
+#   <provider>   an OpenAI-compatible API with its own key: a name from
+#                [backend.providers] below (deepseek, kimi, gemini, openrouter, …)
 # Tools, permissions, undo and sessions work the same with each.
 kind = "api"
 claude_path = "claude" # the Claude Code executable (searched on PATH)
@@ -23,6 +25,79 @@ codex_path = "codex" # the Codex executable (searched on PATH)
 # to an account. ~/.codex is offered automatically when signed in. The codex backend uses
 # model.name unless it's a Claude model, in which case Codex picks its default.
 codex_homes = [] # e.g. ["~/.codex-work"]
+
+# OpenAI-compatible providers (Chat Completions: POST {base_url}/chat/completions). Select
+# one with `kind = "<name>"`, --backend <name>, TAMALE_BACKEND or /backend <name>; the
+# picker lists those whose key is set. Each needs:
+#   base_url     the API's base, without /chat/completions
+#   api_key_env  the environment variable holding the key ("" for local servers)
+#   model        the model used while model.name is a Claude model (/model lists theirs)
+# and can set label (for the footer) and max_tokens (the provider's output limit, when
+# below agent.max_tokens). Override any field, or add your own provider:
+#   [backend.providers.together]
+#   base_url = "https://api.together.xyz/v1"
+#   api_key_env = "TOGETHER_API_KEY"
+#   model = "moonshotai/Kimi-K2-Instruct-0905"
+[backend.providers.deepseek]
+label = "DeepSeek"
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+model = "deepseek-chat"
+max_tokens = 8192
+
+[backend.providers.kimi]
+label = "Kimi (Moonshot)"
+base_url = "https://api.moonshot.ai/v1"
+api_key_env = "MOONSHOT_API_KEY"
+model = "kimi-k2.5"
+
+[backend.providers.gemini]
+label = "Gemini"
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+api_key_env = "GEMINI_API_KEY"
+model = "gemini-2.5-pro"
+
+[backend.providers.openrouter]
+label = "OpenRouter"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+model = "moonshotai/kimi-k2"
+
+[backend.providers.xai]
+label = "xAI"
+base_url = "https://api.x.ai/v1"
+api_key_env = "XAI_API_KEY"
+model = "grok-4"
+
+[backend.providers.groq]
+label = "Groq"
+base_url = "https://api.groq.com/openai/v1"
+api_key_env = "GROQ_API_KEY"
+model = "openai/gpt-oss-120b"
+
+[backend.providers.mistral]
+label = "Mistral"
+base_url = "https://api.mistral.ai/v1"
+api_key_env = "MISTRAL_API_KEY"
+model = "mistral-large-latest"
+
+[backend.providers.zai]
+label = "Z.ai (GLM)"
+base_url = "https://api.z.ai/api/paas/v4"
+api_key_env = "ZAI_API_KEY"
+model = "glm-4.6"
+
+[backend.providers.openai]
+label = "OpenAI API"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+model = "gpt-5"
+
+[backend.providers.ollama]
+label = "Ollama"
+base_url = "http://localhost:11434/v1"
+api_key_env = ""
+model = "qwen3-coder"
 
 [model]
 name = "claude-opus-5-5"

@@ -112,7 +112,7 @@ async fn start(cli: cli::Cli) -> Result<()> {
     }
     let mut settings = config::Settings::load(&workspace.cwd, cli.config.as_deref())?;
     settings.apply_env(|name| std::env::var(name).ok())?;
-    cli.apply(&mut settings);
+    cli.apply(&mut settings)?;
     settings.validate()?;
 
     // A key has one chef: when it runs on another machine, `tamale chef` shows that one.
@@ -135,14 +135,18 @@ async fn start(cli: cli::Cli) -> Result<()> {
     }
 
     // Without a key the TUI asks for a backend; a `-p` run can't ask, so it fails below.
-    let choose_backend = cli.print_prompt.is_none()
-        && settings.backend.kind == backend::Kind::Api
-        && !backend::api_key_set();
+    let choose_backend = cli.print_prompt.is_none() && settings.backend.missing_key().is_some();
     let mut backend = if choose_backend {
         Backend::Unset
     } else {
         Backend::connect(&settings.backend).await?
     };
+    // A provider's own model, unless one of its models was asked for.
+    if let Some(model) = backend.model_after(&Backend::Unset, &settings.model.name)
+        && backend::is_claude_model(&settings.model.name)
+    {
+        settings.model.name = model;
+    }
     if !backend.signed_in() && !choose_backend {
         let (name, login) = match &backend {
             Backend::Codex(_) => ("Codex", "codex login"),

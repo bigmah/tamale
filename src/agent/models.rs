@@ -4,6 +4,9 @@ pub(super) const DEFAULT_CONTEXT_WINDOW: u64 = 200_000;
 
 /// Built-in context window of a model in tokens. Overrides are resolved in `config`.
 pub fn context_window(model: &str) -> u64 {
+    if let Some(window) = other_context_window(model) {
+        return window;
+    }
     let m = model.strip_prefix("anthropic/").unwrap_or(model);
     // Opus 4.6+, Sonnet 4.6 and every Claude 5 model have a 1M-token window.
     let one_million = m.starts_with("claude-opus-4-6")
@@ -18,6 +21,33 @@ pub fn context_window(model: &str) -> u64 {
     } else {
         DEFAULT_CONTEXT_WINDOW
     }
+}
+
+/// Context windows of the default models of the built-in OpenAI-compatible providers.
+/// A gateway's `vendor/` prefix is ignored.
+fn other_context_window(model: &str) -> Option<u64> {
+    let m = model
+        .rsplit('/')
+        .next()
+        .unwrap_or(model)
+        .to_ascii_lowercase();
+    Some(if m.starts_with("deepseek") {
+        128_000
+    } else if m == "kimi-k2" || m.starts_with("kimi-k2-0711") {
+        131_072
+    } else if m.starts_with("kimi-k2") {
+        262_144
+    } else if m.starts_with("gemini-2.5") || m.starts_with("gemini-3") {
+        1_048_576
+    } else if m.starts_with("grok-4") {
+        256_000
+    } else if m.starts_with("gpt-5") {
+        400_000
+    } else if m.starts_with("gpt-oss") {
+        131_072
+    } else {
+        return None;
+    })
 }
 
 /// USD price per million input and output tokens, or `None` for unknown models.

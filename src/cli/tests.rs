@@ -1,4 +1,5 @@
 use super::*;
+use crate::backend;
 
 fn parse(args: &[&str]) -> Result<Cli> {
     Cli::parse(args.iter().map(|s| s.to_string()))
@@ -27,7 +28,7 @@ fn parses_startup_options_and_keeps_last_value() {
     assert_eq!(cli.print_prompt.as_deref(), Some("a prompt"));
     assert_eq!(cli.resume, Some(Resume::Pick));
     let mut settings = Settings::default();
-    cli.apply(&mut settings);
+    cli.apply(&mut settings).unwrap();
     assert_eq!(settings.model.name, "last");
     assert_eq!(settings.model.effort, Some(Effort::High));
     assert_eq!(settings.model.thinking, Thinking::Off);
@@ -39,13 +40,14 @@ fn omitted_flags_preserve_settings_and_default_resets_effort() {
     settings.model.name = "configured-model".into();
     settings.model.effort = Some(Effort::High);
     settings.model.thinking = Thinking::Off;
-    parse(&[]).unwrap().apply(&mut settings);
+    parse(&[]).unwrap().apply(&mut settings).unwrap();
     assert_eq!(settings.model.name, "configured-model");
     assert_eq!(settings.model.effort, Some(Effort::High));
     assert_eq!(settings.model.thinking, Thinking::Off);
     parse(&["--effort", "default"])
         .unwrap()
-        .apply(&mut settings);
+        .apply(&mut settings)
+        .unwrap();
     assert_eq!(settings.model.effort, None);
 }
 
@@ -98,16 +100,30 @@ fn backend_flag_selects_where_inference_comes_from() {
     let mut settings = Settings::default();
     parse(&["--backend", "claude-code"])
         .unwrap()
-        .apply(&mut settings);
+        .apply(&mut settings)
+        .unwrap();
     assert_eq!(settings.backend.kind, backend::Kind::ClaudeCode);
-    parse(&["-b", "codex"]).unwrap().apply(&mut settings);
+    parse(&["-b", "codex"])
+        .unwrap()
+        .apply(&mut settings)
+        .unwrap();
     assert_eq!(settings.backend.kind, backend::Kind::Codex);
-    parse(&["-b", "api"]).unwrap().apply(&mut settings);
+    parse(&["-b", "api"]).unwrap().apply(&mut settings).unwrap();
     assert_eq!(settings.backend.kind, backend::Kind::Api);
-    parse(&[]).unwrap().apply(&mut settings);
+    parse(&[]).unwrap().apply(&mut settings).unwrap();
     assert_eq!(settings.backend.kind, backend::Kind::Api);
+    parse(&["-b", "DeepSeek"])
+        .unwrap()
+        .apply(&mut settings)
+        .unwrap();
+    assert_eq!(settings.backend.kind, backend::Kind::Compat);
+    assert_eq!(settings.backend.provider, "deepseek");
     assert!(parse(&["--backend"]).is_err());
-    assert!(parse(&["--backend", "gpt"]).is_err());
+    let error = parse(&["--backend", "gpt"])
+        .unwrap()
+        .apply(&mut settings)
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("kimi"), "{error:#}");
 }
 
 #[test]

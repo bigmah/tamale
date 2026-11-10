@@ -7,14 +7,18 @@
 //!   calls tamale's tools through a local MCP bridge.
 //! - [`Backend::Codex`]: a signed-in Codex CLI run headlessly with `codex exec`, through
 //!   the same bridge.
+//! - [`Backend::Compat`]: any OpenAI-compatible API (DeepSeek, Kimi, Gemini, OpenRouter,
+//!   …) with its own API key, through the same agent loop.
 //! - [`Backend::Unset`]: none chosen yet, while the TUI asks which to use.
 
 pub mod claude_code;
 pub mod codex;
+pub mod compat;
 pub mod logins;
 mod mcp;
 mod subagent;
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -28,6 +32,7 @@ use crate::agent::{self, AgentEvent, TurnConfig, TurnCtx};
 use crate::workspace::Workspace;
 pub use claude_code::ClaudeCode;
 pub use codex::Codex;
+pub use compat::{Compat, ProviderSettings};
 pub use subagent::Subagent;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -36,6 +41,8 @@ pub enum Kind {
     Api,
     ClaudeCode,
     Codex,
+    /// An OpenAI-compatible provider, named in [`BackendSettings::provider`].
+    Compat,
 }
 
 impl Kind {
@@ -53,6 +60,7 @@ impl Kind {
             Self::Api => "api",
             Self::ClaudeCode => "claude-code",
             Self::Codex => "codex",
+            Self::Compat => "openai-compatible",
         }
     }
 
@@ -62,19 +70,19 @@ impl Kind {
             Self::Api => "Anthropic API",
             Self::ClaudeCode => "Claude Code",
             Self::Codex => "Codex",
+            Self::Compat => "OpenAI-compatible API",
         }
-    }
-
-    pub fn parse_setting(s: &str) -> Result<Self> {
-        Self::parse(s)
-            .with_context(|| format!("unknown backend: {s} (use api, claude-code or codex)"))
     }
 }
 
 #[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(from = "RawBackendSettings")]
 pub struct BackendSettings {
     pub kind: Kind,
+    /// With [`Kind::Compat`], the name of the provider in `providers`.
+    pub provider: String,
+    /// OpenAI-compatible providers by name, selected with their name as `kind`.
+    pub providers: BTreeMap<String, ProviderSettings>,
     /// The Claude Code executable, for the `claude-code` backend.
     pub claude_path: PathBuf,
     /// More Claude Code config directories (`CLAUDE_CONFIG_DIR`), each with its own
@@ -85,6 +93,85 @@ pub struct BackendSettings {
     /// More Codex home directories (`CODEX_HOME`), each with its own login, offered in
     /// the backend picker when signed in.
     pub codex_homes: Vec<PathBuf>,
+}
+
+/// `[backend]` as written: `kind` is a backend or a provider's name.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawBackendSettings {
+    kind: String,
+    claude_path: PathBuf,
+    claude_config_dirs: Vec<PathBuf>,
+    codex_path: PathBuf,
+    codex_homes: Vec<PathBuf>,
+    #[serde(default)]
+    providers: BTreeMap<String, ProviderSettings>,
+}
+
+impl From<RawBackendSettings> for BackendSettings {
+    fn from(raw: RawBackendSettings) -> Self {
+        let (kind, provider) = parse_selection(&raw.kind);
+        Self {
+            kind,
+            provider,
+            providers: raw.providers,
+            claude_path: raw.claude_path,
+            claude_config_dirs: raw.claude_config_dirs,
+            codex_path: raw.codex_path,
+            codex_homes: raw.codex_homes,
+        }
+    }
+}
+
+/// A backend's name, or else a provider's (checked against the providers later).
+fn parse_selection(s: &str) -> (Kind, String) {
+    match Kind::parse(s) {
+        Some(kind) => (kind, String::new()),
+        None => (Kind::Compat, s.trim().to_ascii_lowercase()),
+    }
+}
+
+impl BackendSettings {
+    /// Selects a backend by name: `api`, `claude-code`, `codex` or a provider.
+    pub fn select(&mut self, name: &str) -> Result<()> {
+        let (kind, provider) = parse_selection(name);
+        if kind == Kind::Compat {
+            self.provider_settings(&provider)?;
+        }
+        self.kind = kind;
+        self.provider = provider;
+        Ok(())
+    }
+
+    /// The provider called `name`, or an error naming the backends there are.
+    pub fn provider_settings(&self, name: &str) -> Result<&ProviderSettings> {
+        self.providers.get(name).with_context(|| {
+            let names: Vec<&str> = self.providers.keys().map(String::as_str).collect();
+            format!(
+                "unknown backend: {name} (use api, claude-code, codex or a provider: {})",
+                names.join(", ")
+            )
+        })
+    }
+
+    /// The environment variable the configured backend needs and doesn't have, if any.
+    pub fn missing_key(&self) -> Option<String> {
+        match self.kind {
+            Kind::Api => (!api_key_set()).then(|| "ANTHROPIC_API_KEY".to_string()),
+            Kind::Compat => self
+                .providers
+                .get(&self.provider)
+                .filter(|p| !p.key_set())
+                .map(|p| p.api_key_env.clone()),
+            Kind::ClaudeCode | Kind::Codex => None,
+        }
+    }
+}
+
+/// Whether `name` is an Anthropic model, which only the Anthropic backends serve.
+pub fn is_claude_model(name: &str) -> bool {
+    let name = name.trim();
+    name.is_empty() || name.starts_with("claude") || name.starts_with("anthropic/")
 }
 
 /// Everything a turn needs; the API backend ignores `prompt` and `thread`.
@@ -106,6 +193,7 @@ pub enum Backend {
     Api(anthropic::Client),
     ClaudeCode(ClaudeCode),
     Codex(Codex),
+    Compat(Compat),
     /// Nothing to run turns with yet: the API was configured without a key, and the TUI
     /// asks for a backend. Its kind stays [`Kind::Api`], as in the settings.
     Unset,
@@ -138,6 +226,10 @@ the claude-code backend)"
             Kind::Codex => Ok(Self::Codex(
                 Codex::connect(settings.codex_path.clone(), None).await?,
             )),
+            Kind::Compat => {
+                let provider = settings.provider_settings(&settings.provider)?;
+                Ok(Self::Compat(Compat::connect(&settings.provider, provider)?))
+            }
         }
     }
 
@@ -146,6 +238,7 @@ the claude-code backend)"
             Self::Api(_) | Self::Unset => Kind::Api,
             Self::ClaudeCode(_) => Kind::ClaudeCode,
             Self::Codex(_) => Kind::Codex,
+            Self::Compat(_) => Kind::Compat,
         }
     }
 
@@ -156,13 +249,14 @@ the claude-code backend)"
             Self::Unset => "no backend".into(),
             Self::ClaudeCode(cc) => cc.label(),
             Self::Codex(codex) => codex.label(),
+            Self::Compat(compat) => compat.label.clone(),
         }
     }
 
     /// The label plus the signed-in account, to tell logins apart.
     pub fn label_with_account(&self) -> String {
         match self {
-            Self::Api(_) | Self::Unset => self.label(),
+            Self::Api(_) | Self::Compat(_) | Self::Unset => self.label(),
             Self::ClaudeCode(cc) => cc.label_with_account(),
             Self::Codex(codex) => codex.label_with_account(),
         }
@@ -170,7 +264,7 @@ the claude-code backend)"
 
     pub fn email(&self) -> Option<&str> {
         match self {
-            Self::Api(_) | Self::Unset => None,
+            Self::Api(_) | Self::Compat(_) | Self::Unset => None,
             Self::ClaudeCode(cc) => cc.account.email.as_deref(),
             Self::Codex(codex) => codex.account.email.as_deref(),
         }
@@ -179,15 +273,34 @@ the claude-code backend)"
     /// The directory a CLI login lives in; `None` is the CLI's default.
     pub fn login_dir(&self) -> Option<&Path> {
         match self {
-            Self::Api(_) | Self::Unset => None,
+            Self::Api(_) | Self::Compat(_) | Self::Unset => None,
             Self::ClaudeCode(cc) => cc.config_dir.as_deref(),
             Self::Codex(codex) => codex.home.as_deref(),
         }
     }
 
-    /// Whether both are the same login (the same CLI and directory), signed in or not.
+    /// Whether both are the same login (the same CLI and directory, or the same
+    /// provider), signed in or not.
     pub fn same_login(&self, other: &Backend) -> bool {
-        self.kind() == other.kind() && self.login_dir() == other.login_dir()
+        match (self, other) {
+            (Self::Compat(a), Self::Compat(b)) => a.name == b.name,
+            _ => self.kind() == other.kind() && self.login_dir() == other.login_dir(),
+        }
+    }
+
+    /// The model to switch to on becoming the backend after `previous`, when the
+    /// current one (`name`) is another provider's.
+    pub fn model_after(&self, previous: &Backend, name: &str) -> Option<String> {
+        match self {
+            Self::Compat(compat) if !self.same_login(previous) => {
+                Some(compat.default_model.clone()).filter(|m| m != name)
+            }
+            Self::Compat(_) => None,
+            _ if matches!(previous, Self::Compat(_)) && !is_claude_model(name) => {
+                Some(crate::config::Settings::default().model.name)
+            }
+            _ => None,
+        }
     }
 
     /// Whether both are signed in to the same account of the same CLI.
@@ -205,6 +318,7 @@ the claude-code backend)"
             Self::Api(_) => {
                 bail!("the API backend uses ANTHROPIC_API_KEY; there's nothing to sign in to")
             }
+            Self::Compat(compat) => bail!("{}", compat.no_login()),
             Self::Unset => bail!("no backend is selected; pick one with /backend"),
             Self::ClaudeCode(cc) => cc.login().await,
             Self::Codex(codex) => codex.login().await,
@@ -218,6 +332,7 @@ the claude-code backend)"
             Self::Api(_) => {
                 bail!("the API backend uses ANTHROPIC_API_KEY; there's nothing to sign in to")
             }
+            Self::Compat(compat) => bail!("{}", compat.no_login()),
             Self::Unset => bail!("no backend is selected; pick one with /backend"),
             Self::ClaudeCode(cc) => Ok(cc.login_command()),
             Self::Codex(codex) => codex.login_command(),
@@ -228,7 +343,7 @@ the claude-code backend)"
     #[cfg(unix)]
     pub async fn finish_login(&mut self, success: bool, status: &str) -> Result<()> {
         match self {
-            Self::Api(_) | Self::Unset => Ok(()),
+            Self::Api(_) | Self::Compat(_) | Self::Unset => Ok(()),
             Self::ClaudeCode(cc) => cc.finish_login(success, status).await,
             Self::Codex(codex) => codex.finish_login(success, status).await,
         }
@@ -238,6 +353,7 @@ the claude-code backend)"
     pub fn model_label(&self, name: &str) -> String {
         match self {
             Self::Codex(_) => codex::model(name).unwrap_or("codex default").to_string(),
+            Self::Compat(compat) => compat.model(name).to_string(),
             _ => name.to_string(),
         }
     }
@@ -245,7 +361,7 @@ the claude-code backend)"
     /// Whether requests can be made: the API backend checked its key at startup.
     pub fn signed_in(&self) -> bool {
         match self {
-            Self::Api(_) => true,
+            Self::Api(_) | Self::Compat(_) => true,
             Self::Unset => false,
             Self::ClaudeCode(cc) => cc.account.logged_in,
             Self::Codex(codex) => codex.account.logged_in,
@@ -256,7 +372,13 @@ the claude-code backend)"
         match self {
             Self::Api(client) => {
                 let model = api_model(&client, &turn.model);
-                agent::run(model, turn.history, turn.config, turn.workspace, ctx, tx).await
+                let history = signed_reasoning_only(turn.history);
+                agent::run(model, history, turn.config, turn.workspace, ctx, tx).await
+            }
+            Self::Compat(compat) => {
+                let model = compat.completion_model(&turn.model);
+                let config = compat_config(&compat, turn.config);
+                agent::run(model, turn.history, config, turn.workspace, ctx, tx).await
             }
             Self::Unset => no_backend(&tx),
             Self::ClaudeCode(cc) => cc.run(turn, ctx, tx).await,
@@ -275,9 +397,22 @@ the claude-code backend)"
                 let model = api_model(&client, &turn.model);
                 agent::compact(
                     model,
-                    turn.history,
+                    signed_reasoning_only(turn.history),
                     instructions,
                     turn.config,
+                    turn.workspace,
+                    tx,
+                )
+                .await
+            }
+            Self::Compat(compat) => {
+                let model = compat.completion_model(&turn.model);
+                let config = compat_config(&compat, turn.config);
+                agent::compact(
+                    model,
+                    turn.history,
+                    instructions,
+                    config,
                     turn.workspace,
                     tx,
                 )
@@ -305,6 +440,7 @@ the claude-code backend)"
             // Claude Code has no model listing; it accepts the same model ids.
             Self::ClaudeCode(_) | Self::Unset => Ok(Vec::new()),
             Self::Codex(codex) => codex.list_models().await.map_err(|e| format!("{e:#}")),
+            Self::Compat(compat) => compat.list_models().await.map_err(|e| format!("{e:#}")),
         }
     }
 }
@@ -320,4 +456,40 @@ fn api_model(client: &anthropic::Client, name: &str) -> anthropic::completion::C
     client
         .completion_model(name.to_string())
         .with_prompt_caching()
+}
+
+/// A turn's settings for an OpenAI-compatible provider: its reasoning parameters and
+/// output limit.
+fn compat_config(compat: &Compat, mut config: TurnConfig) -> TurnConfig {
+    config.reasoning.dialect = agent::Dialect::OpenAi;
+    config.limits.max_tokens = compat.max_tokens(config.limits.max_tokens);
+    config.limits.compact_max_tokens = compat.max_tokens(config.limits.compact_max_tokens);
+    config
+}
+
+/// Drops reasoning without a signature (from another provider), which Anthropic rejects.
+fn signed_reasoning_only(mut history: Vec<Message>) -> Vec<Message> {
+    use rig_core::completion::{AssistantContent, message::ReasoningContent};
+    for message in &mut history {
+        if let Message::Assistant { content, .. } = message {
+            let mut kept = content.clone();
+            kept.retain_mut(|c| match c {
+                AssistantContent::Reasoning(r) => {
+                    r.content.retain(|block| match block {
+                        ReasoningContent::Text { signature, .. } => {
+                            signature.as_ref().is_some_and(|s| !s.is_empty())
+                        }
+                        _ => true,
+                    });
+                    !r.content.is_empty()
+                }
+                _ => true,
+            });
+            // A message has to keep some content.
+            if !kept.is_empty() {
+                *content = kept;
+            }
+        }
+    }
+    history
 }

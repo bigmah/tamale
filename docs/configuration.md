@@ -63,12 +63,13 @@ The same settings apply to interactive and `-p` runs, tool follow-ups, retries a
 manual/automatic compaction. Settings load at startup; slash commands change the
 current session's settings without rewriting TOML files.
 
-`TAMALE_BACKEND` sets the backend (`api`, `claude-code` or `codex`).
+`TAMALE_BACKEND` sets the backend (`api`, `claude-code`, `codex` or a provider's name, e.g.
+`deepseek`; see [Backends](backends.md#openai-compatible-providers)).
 `TAMALE_MODEL` sets the default model (otherwise `claude-opus-5-5`).
 `TAMALE_EFFORT` sets the default effort level (otherwise the API default).
 `TAMALE_THINKING` sets the thinking mode (`adaptive` or `on`, the default; `off` to disable).
 `TAMALE_CONTEXT_WINDOW` overrides the context window size (default: 1M tokens for Claude 5, Opus 4.6+ and Sonnet 4.6; 200k for older models).
-API keys (`ANTHROPIC_API_KEY`, `BRAVE_SEARCH_API_KEY`) and storage paths
+API keys (`ANTHROPIC_API_KEY`, each provider's `api_key_env`, `BRAVE_SEARCH_API_KEY`) and storage paths
 (`TAMALE_SESSIONS_DIR`, XDG directories) continue to use environment variables.
 
 Adaptive thinking is **on by default**: Claude decides when and how much to reason,

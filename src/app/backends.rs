@@ -1,5 +1,5 @@
-//! Choosing where inference comes from: `/backend`, its picker, and Claude Code and Codex
-//! logins (`/login`, adding and removing accounts).
+//! Choosing where inference comes from: `/backend`, its picker, OpenAI-compatible
+//! providers, and Claude Code and Codex logins (`/login`, adding and removing accounts).
 
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -17,6 +17,8 @@ pub(super) struct Picker {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Choice {
     Api,
+    /// An index into `[backend.providers]`.
+    Provider(usize),
     /// An index into `App::logins`.
     Login(usize),
     /// Sign in to another account of a CLI.
@@ -30,6 +32,7 @@ const LOGIN_KINDS: [Kind; 2] = [Kind::ClaudeCode, Kind::Codex];
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum ChoiceKey {
     Api,
+    Provider(String),
     Login(Kind, Option<std::path::PathBuf>),
     AddLogin(Kind),
 }
@@ -46,16 +49,26 @@ impl App {
     pub(super) fn backend_label(&self) -> String {
         let kind = self.backend.kind();
         let logins = self.logins.iter().filter(|l| l.kind() == kind).count();
-        if kind != Kind::Api && logins > 1 {
+        if matches!(kind, Kind::ClaudeCode | Kind::Codex) && logins > 1 {
             self.backend.label_with_account()
         } else {
             self.backend.label()
         }
     }
 
-    /// The API, each CLI's logins, then a row to add an account of each CLI.
+    /// The API, the providers with a key, each CLI's logins, then a row to add an
+    /// account of each CLI.
     pub(super) fn backend_choices(&self) -> Vec<Choice> {
         let mut choices = vec![Choice::Api];
+        choices.extend(
+            self.settings
+                .backend
+                .providers
+                .iter()
+                .enumerate()
+                .filter(|(_, (name, provider))| provider.key_set() || self.is_provider(name))
+                .map(|(i, _)| Choice::Provider(i)),
+        );
         for kind in LOGIN_KINDS {
             choices.extend(
                 (0..self.logins.len())
@@ -70,12 +83,27 @@ impl App {
     pub(super) fn is_current(&self, choice: Choice) -> bool {
         match choice {
             Choice::Api => matches!(self.backend, Backend::Api(_)),
+            Choice::Provider(i) => self.provider_name(i).is_some_and(|n| self.is_provider(n)),
             Choice::Login(i) => self
                 .logins
                 .get(i)
                 .is_some_and(|l| l.same_login(&self.backend)),
             Choice::AddLogin(_) => false,
         }
+    }
+
+    /// Whether the current backend is the provider called `name`.
+    fn is_provider(&self, name: &str) -> bool {
+        matches!(&self.backend, Backend::Compat(c) if c.name == name)
+    }
+
+    pub(super) fn provider_name(&self, i: usize) -> Option<&str> {
+        self.settings
+            .backend
+            .providers
+            .keys()
+            .nth(i)
+            .map(String::as_str)
     }
 
     /// The row to start on: the current backend, or with none yet, the first signed-in
@@ -92,7 +120,7 @@ impl App {
             .position(|&c| self.is_current(c))
             .or_else(|| {
                 let unset = matches!(self.backend, Backend::Unset);
-                (unset && !backend::api_key_set())
+                (unset && self.settings.backend.missing_key().is_some())
                     .then(first_login)
                     .flatten()
             })
@@ -102,9 +130,14 @@ impl App {
     /// At startup without a backend: says why and opens the picker, unless another
     /// picker (`--resume`) is already open; the first prompt opens it then.
     pub fn ask_for_backend(&mut self) {
-        self.entries.push(Entry::Info(
-            "ANTHROPIC_API_KEY isn't set. Choose a backend to get started (/backend).".into(),
-        ));
+        let key = self
+            .settings
+            .backend
+            .missing_key()
+            .unwrap_or_else(|| "ANTHROPIC_API_KEY".into());
+        self.entries.push(Entry::Info(format!(
+            "{key} isn't set. Choose a backend to get started (/backend)."
+        )));
         if self.resume_picker.is_none() {
             self.open_backend_picker();
         }
@@ -135,6 +168,10 @@ impl App {
 Code or Codex sign-in instead, pick one with /backend."
                     .into(),
             )),
+            Backend::Compat(compat) => self.entries.push(Entry::Info(format!(
+                "{}. To use a Claude Code or Codex sign-in instead, pick one with /backend.",
+                compat.no_login()
+            ))),
             _ if self.is_running() => self.entries.push(Entry::Error(
                 "Can't sign in while the agent is running (Esc to interrupt first).".into(),
             )),
@@ -147,26 +184,28 @@ Code or Codex sign-in instead, pick one with /backend."
         }
     }
 
-    /// `/backend <kind>` switches directly (`claude-code` and `codex` are the default logins);
-    /// without an argument it opens the picker. The conversation carries over.
+    /// `/backend <kind>` switches directly (`claude-code` and `codex` are the default logins,
+    /// a provider's name its API); without an argument it opens the picker. The
+    /// conversation carries over.
     pub(super) fn switch_backend(&mut self, arg: Option<&str>) {
         let Some(arg) = arg else {
             self.open_backend_picker();
             return;
         };
-        let kind = match backend::Kind::parse_setting(arg) {
-            Ok(kind) => kind,
-            Err(e) => {
-                self.entries.push(Entry::Error(e.to_string()));
-                return;
-            }
-        };
+        let mut settings = self.settings.backend.clone();
+        if let Err(e) = settings.select(arg) {
+            self.entries.push(Entry::Error(e.to_string()));
+            return;
+        }
         if self.refuse_while_running() {
             return;
         }
-        let current = self.backend.kind() == kind
-            && self.backend.login_dir().is_none()
-            && !matches!(self.backend, Backend::Unset);
+        let kind = settings.kind;
+        let current = match &self.backend {
+            Backend::Unset => false,
+            Backend::Compat(c) => kind == Kind::Compat && c.name == settings.provider,
+            backend => backend.kind() == kind && backend.login_dir().is_none(),
+        };
         if current {
             self.entries.push(Entry::Info(format!(
                 "Already using {}.",
@@ -174,8 +213,6 @@ Code or Codex sign-in instead, pick one with /backend."
             )));
             return;
         }
-        let mut settings = self.settings.backend.clone();
-        settings.kind = kind;
         let tx = self.tx.clone();
         tokio::spawn(async move {
             let result = Backend::connect(&settings)
@@ -197,10 +234,18 @@ Code or Codex sign-in instead, pick one with /backend."
     /// Makes `backend` current. A CLI session from before doesn't hold the turns made
     /// since, so the next turn starts a new one.
     fn set_backend(&mut self, backend: Backend) {
-        if backend.kind() != Kind::Api {
+        if matches!(backend.kind(), Kind::ClaudeCode | Kind::Codex) {
             self.remember_login(backend.clone());
         }
+        if let Some(model) = backend.model_after(&self.backend, &self.settings.model.name) {
+            self.entries
+                .push(Entry::Info(format!("Switched model to {model}.")));
+            self.settings.model.name = model;
+        }
         self.settings.backend.kind = backend.kind();
+        if let Backend::Compat(compat) = &backend {
+            self.settings.backend.provider = compat.name.clone();
+        }
         self.backend = backend;
         self.thread = None;
         self.models = None;
@@ -327,7 +372,7 @@ Code or Codex sign-in instead, pick one with /backend."
         self.logins.retain(|l| !listed.contains(&l.kind()));
         self.logins.extend(list);
         // The current login stays listed even if it was signed out meanwhile.
-        if self.backend.kind() != Kind::Api {
+        if matches!(self.backend.kind(), Kind::ClaudeCode | Kind::Codex) {
             match self.logins.iter().find(|l| l.same_login(&self.backend)) {
                 Some(fresh) => self.backend = fresh.clone(),
                 None => self.logins.push(self.backend.clone()),
@@ -352,6 +397,9 @@ Code or Codex sign-in instead, pick one with /backend."
     fn choice_key(&self, choice: Choice) -> ChoiceKey {
         match choice {
             Choice::Api => ChoiceKey::Api,
+            Choice::Provider(i) => {
+                ChoiceKey::Provider(self.provider_name(i).unwrap_or_default().to_string())
+            }
             Choice::Login(i) => ChoiceKey::Login(
                 self.logins[i].kind(),
                 self.logins[i].login_dir().map(Into::into),
@@ -407,6 +455,11 @@ Code or Codex sign-in instead, pick one with /backend."
     fn choose(&mut self, choice: Choice) {
         match choice {
             Choice::Api => self.switch_backend(Some(backend::Kind::Api.as_str())),
+            Choice::Provider(i) => {
+                if let Some(name) = self.provider_name(i).map(str::to_string) {
+                    self.switch_backend(Some(&name));
+                }
+            }
             Choice::Login(i) => {
                 if self.refuse_while_running() {
                     return;

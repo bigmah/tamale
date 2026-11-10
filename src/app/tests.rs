@@ -1077,6 +1077,8 @@ async fn backend_switches_keep_the_conversation_and_drop_the_old_thread() {
         test_settings("test-model"),
         Workspace::current().unwrap(),
     );
+    // Which providers have keys depends on the environment.
+    app.settings.backend.providers.clear();
     let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
     let personal = login("me@home.dev", None);
     let work = login("me@work.dev", Some("/tmp/tamale-test-work"));
@@ -2637,4 +2639,50 @@ async fn chef_off_in_the_chef_ends_it() {
     app.set_chef();
     app.command("/chef off");
     assert!(app.should_quit);
+}
+
+#[test]
+fn providers_with_keys_are_backends_with_their_own_models() {
+    use backend::{Compat, ProviderSettings};
+    use backends::Choice;
+    let mut settings = test_settings("claude-opus-5-5");
+    settings.backend.providers.clear();
+    let local = ProviderSettings {
+        label: "Local vLLM".into(),
+        base_url: "http://127.0.0.1:9/v1".into(),
+        api_key_env: String::new(),
+        model: "qwen3-coder".into(),
+        max_tokens: None,
+    };
+    let mut keyed = local.clone();
+    keyed.api_key_env = "TAMALE_TEST_KEY_THAT_ISNT_SET".into();
+    settings
+        .backend
+        .providers
+        .insert("local".into(), local.clone());
+    settings.backend.providers.insert("other".into(), keyed);
+    let client = anthropic::Client::new("test-key").unwrap();
+    let (mut app, _rx) = App::new_with_channel(
+        Backend::Api(client),
+        settings,
+        Workspace::current().unwrap(),
+    );
+
+    // Only providers that can be used are offered.
+    assert_eq!(
+        &app.backend_choices()[..2],
+        [Choice::Api, Choice::Provider(0)]
+    );
+    app.command("/backend nope");
+    assert!(matches!(app.entries.last(), Some(Entry::Error(e)) if e.contains("local, other")));
+
+    let compat = Compat::connect("local", &local).unwrap();
+    app.on_app_event(AppEvent::Backend(Ok(Backend::Compat(compat))));
+    assert_eq!(app.settings.backend.kind, backend::Kind::Compat);
+    assert_eq!(app.settings.backend.provider, "local");
+    assert_eq!(app.settings.model.name, "qwen3-coder");
+    assert_eq!(app.backend_label(), "Local vLLM");
+    assert!(app.is_current(Choice::Provider(0)));
+    app.command("/backend local");
+    assert!(matches!(app.entries.last(), Some(Entry::Info(e)) if e.starts_with("Already using")));
 }

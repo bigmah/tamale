@@ -3,7 +3,8 @@
 **A coding agent you can drive from your terminal, browser or phone.**
 
 tamale is a full agent harness: tools, permission prompts, undo, sessions and compaction
-are built in. Inference comes from whichever backend you choose: an Anthropic API key, or
+are built in. Inference comes from whichever backend you choose: an Anthropic API key, an
+API key for any OpenAI-compatible provider (DeepSeek, Kimi, Gemini, OpenRouter, …), or
 your existing [Claude Code](https://docs.claude.com/en/docs/claude-code) or
 [Codex](https://github.com/openai/codex) sign-in.
 
@@ -63,7 +64,7 @@ Want your own hub? See the [self-hosting guide](docs/self-hosting.md).
 
 | | |
 | --- | --- |
-| [Backends](docs/backends.md) | The Anthropic API, Claude Code and Codex, and several logins |
+| [Backends](docs/backends.md) | The Anthropic API, OpenAI-compatible providers, Claude Code and Codex, and several logins |
 | [Configuration](docs/configuration.md) | Settings files, `AGENTS.md`, extra directories, context and retries |
 | [Permissions](docs/permissions.md) | Permission modes and allow/deny rules |
 | [Tools](docs/tools.md) | The agent's tools, web search and subagents |

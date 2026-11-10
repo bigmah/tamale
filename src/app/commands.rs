@@ -116,13 +116,20 @@ impl App {
                         "Couldn't fetch model list ({e}); showing built-in list."
                     )));
                 }
-                FALLBACK_MODELS
-                    .iter()
-                    .map(|(id, name)| ModelInfo {
-                        id: id.to_string(),
-                        name: name.to_string(),
-                    })
-                    .collect()
+                match &self.backend {
+                    // A provider's built-in list is the model it's configured with.
+                    crate::backend::Backend::Compat(compat) => vec![ModelInfo {
+                        id: compat.default_model.clone(),
+                        name: compat.default_model.clone(),
+                    }],
+                    _ => FALLBACK_MODELS
+                        .iter()
+                        .map(|(id, name)| ModelInfo {
+                            id: id.to_string(),
+                            name: name.to_string(),
+                        })
+                        .collect(),
+                }
             }
         };
         if let Some(picker) = &mut self.picker {

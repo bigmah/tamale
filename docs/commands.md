@@ -57,7 +57,7 @@
   it, `/goal clear` drops it, and `/goal` alone shows it. The goal is shown above the input
   while it is set. Messages you queue during a goal are sent before the next check.
   `/clear` and `/resume` drop the goal.
-- `/backend` opens a backend picker; `/backend api|claude-code|codex` switches directly, keeping the conversation
+- `/backend` opens a backend picker; `/backend api|claude-code|codex|<provider>` (e.g. `deepseek`) switches directly, keeping the conversation
 - `/login` signs in to Claude Code or Codex (with their backends; see [Backends](backends.md))
 - `/add-dir [path]` adds a directory to the agent's scope, or lists the current scope
 - `/chef` goes to the tamale chef, which looks after all your sessions (see [The chef](chef.md)),

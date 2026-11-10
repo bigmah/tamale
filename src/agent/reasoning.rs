@@ -80,15 +80,37 @@ impl Thinking {
     }
 }
 
+/// Which API the reasoning settings are sent to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Dialect {
+    #[default]
+    Anthropic,
+    /// OpenAI's Chat Completions, as compatible providers speak it.
+    OpenAi,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Reasoning {
     pub thinking: Thinking,
     /// `None` leaves the API default.
     pub effort: Option<Effort>,
+    pub dialect: Dialect,
 }
 
 impl Reasoning {
     pub(super) fn params(self) -> serde_json::Value {
+        if self.dialect == Dialect::OpenAi {
+            // Compatible APIs have no common thinking switch; `reasoning_effort` is the
+            // closest there is, and only sent when asked for, since not all accept it.
+            return match self.effort {
+                Some(effort) => serde_json::json!({ "reasoning_effort": match effort {
+                    Effort::Low => "low",
+                    Effort::Medium => "medium",
+                    Effort::High | Effort::XHigh | Effort::Max => "high",
+                } }),
+                None => serde_json::json!({}),
+            };
+        }
         let mut params = serde_json::json!({
             "thinking": { "type": match self.thinking {
                 Thinking::Adaptive => "adaptive",
