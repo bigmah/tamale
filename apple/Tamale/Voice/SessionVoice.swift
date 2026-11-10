@@ -244,6 +244,11 @@ final class SessionAgent {
         var line = s.busy ? "tamale is working" : "tamale is idle"
         if s.busy, let since = s.since {
             line += " (for \(formatElapsed(Int(Date().timeIntervalSince1970 - since))))"
+            if !s.step.isEmpty {
+                let step = Int(Date().timeIntervalSince1970 - (s.stepSince ?? since))
+                line += "; now: \(s.step), for \(formatElapsed(step))"
+                if s.steps > 0 { line += ", \(s.steps) steps so far" }
+            }
         }
         return line + ". Project \(s.project), model \(s.model). Session \(connection)."
     }

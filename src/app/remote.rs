@@ -331,19 +331,29 @@ impl RemoteView {
         }
         self.transcript.sync(&self.entries, area.width, verbose);
         let running = self.status.running;
-        let (label, palette) = if self.status.compacting {
-            ("Compacting…", activity::COMPACTING)
-        } else if self.prompt.is_some() {
-            ("Waiting for approval…", activity::WAITING)
+        let now = crate::session::now();
+        let ago =
+            |since: Option<u64>| Duration::from_secs(since.map_or(0, |s| now.saturating_sub(s)));
+        let total = ago(self.status.since);
+        let elapsed = if self.status.step_since.is_some() {
+            ago(self.status.step_since)
         } else {
-            ("Thinking…", activity::THINKING)
+            total
         };
-        let elapsed = self
-            .status
-            .since
-            .map(|since| Duration::from_secs(crate::session::now().saturating_sub(since)))
-            .unwrap_or_default();
-        let spinner = activity::line(label, palette, elapsed, self.prompt.is_none());
+        // Hosts from before steps were reported say only that they're working.
+        let step = match &self.prompt {
+            Some(_) => activity::step(&[], Some("Waiting for approval"), false),
+            None if self.status.step.is_empty() => {
+                activity::step(&self.entries, None, self.status.compacting)
+            }
+            None => activity::Step {
+                label: self.status.step.clone(),
+                kind: activity::StepKind::parse(&self.status.step_kind),
+                steps: self.status.steps,
+                sub_steps: self.status.sub_steps,
+            },
+        };
+        let spinner = activity::lines(&step, elapsed, total, self.prompt.is_none());
         let spinner_rows = if running {
             Paragraph::new(spinner.clone())
                 .wrap(Wrap { trim: false })
@@ -357,7 +367,7 @@ impl RemoteView {
         let offset = max_scroll - self.scroll_back;
         let (mut lines, local) = self.transcript.visible(offset.min(rows), area.height as usize);
         if running {
-            lines.push(spinner);
+            lines.extend(spinner);
         }
         let local = if offset > rows { (offset - rows) as u16 } else { local };
         frame.render_widget(

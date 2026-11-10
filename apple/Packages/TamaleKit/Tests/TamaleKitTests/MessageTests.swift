@@ -61,6 +61,13 @@ final class MessageTests: XCTestCase {
         XCTAssertEqual(status.model, "claude-opus-4")
         XCTAssertEqual(status.queued, ["then run the tests"])
         XCTAssertEqual(status.effort, "high")
+        XCTAssertEqual(status.step, "Run the tests")
+        XCTAssertEqual(status.stepKind, "tool")
+        XCTAssertEqual(status.stepSince, 1_700_000_090)
+        XCTAssertEqual(status.steps, 3)
+        XCTAssertNil(status.longStepNote(seconds: 60, elapsed: "1m 0s"))
+        XCTAssertEqual(status.longStepNote(seconds: 600, elapsed: "10m 0s"),
+                       "This step has been running for 10m 0s. Its output shows up when it finishes.")
 
         guard case .approval(let approval?) = try message("approval.json") else { return XCTFail() }
         XCTAssertEqual(approval.name, "bash")

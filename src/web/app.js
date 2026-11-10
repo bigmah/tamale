@@ -199,6 +199,9 @@ const state = {
   roots: [],
   fileSets: [],
   treeLoaded: false,
+  /** When the current run began (unix seconds), and whether one finished out of sight. */
+  runSince: null,
+  doneUnseen: false,
 };
 
 // ---------------------------------------------------------------- connection
@@ -919,15 +922,23 @@ function resolvePath(raw) {
 
 // ---------------------------------------------------------------- activity
 
-function activityLabel() {
-  const s = state.status;
-  if (state.approval) return 'Waiting for your approval';
-  if (state.question) return 'Waiting for your answer';
-  if (s.compacting) return 'Compacting the conversation';
-  const last = state.entries[state.entries.length - 1];
-  if (last?.kind === 'tool' && last.output == null) return last.description;
-  if (last?.kind === 'assistant') return 'Writing';
-  return 'Thinking';
+/** After this long on one step, the activity line says what it's waiting on. */
+const LONG_STEP = 180;
+
+/** Why a long step is still going, in words. */
+function longStepNote(step, t) {
+  switch (step.kind) {
+    case 'think':
+      return `No output from the model for ${t}. It may be reasoning through a big step; interrupt it if it looks stuck.`;
+    case 'subagent':
+      return `The subagent has been on its own for ${t}${step.steps ? ` (${step.steps} step${step.steps === 1 ? '' : 's'} so far)` : ''}. Only its final report goes back to the agent.`;
+    case 'tool':
+      return `This step has been running for ${t}. Its output shows up when it finishes.`;
+    case 'wait':
+      return `Waiting on you for ${t}. The run is paused until you answer.`;
+    default:
+      return '';
+  }
 }
 
 function updateActivity() {
@@ -937,9 +948,24 @@ function updateActivity() {
   const stick = nearBottom();
   node.hidden = !running;
   if (!running) return;
-  node.classList.toggle('waiting', !!(state.approval || state.question));
-  $('act-label').textContent = activityLabel();
-  $('act-time').textContent = s.since ? fmtElapsed(Math.max(0, Math.floor(Date.now() / 1000) - s.since)) : '';
+  const now = Math.floor(Date.now() / 1000);
+  const total = s.since ? Math.max(0, now - s.since) : null;
+  // The server says what the run is doing (see `app::activity::step` in tamale).
+  const step = { label: s.step || 'Thinking', kind: s.step_kind || 'think', steps: s.sub_steps || 0 };
+  const stepTime = s.step_since ? Math.max(0, now - s.step_since) : total;
+  node.classList.toggle('waiting', step.kind === 'wait');
+  node.classList.toggle('long', stepTime != null && stepTime >= LONG_STEP);
+  $('act-label').textContent = step.label;
+  $('act-time').textContent = stepTime == null ? '' : fmtElapsed(stepTime);
+  // The run's totals, once there's more to it than this one step.
+  const steps = s.steps || 0;
+  const meta = [];
+  if (steps) meta.push(`${steps} step${steps === 1 ? '' : 's'}`);
+  if (total != null && stepTime != null && total - stepTime >= 5) meta.push(`${fmtElapsed(total)} total`);
+  $('act-meta').textContent = meta.join(' · ');
+  const note = stepTime != null && stepTime >= LONG_STEP ? longStepNote(step, fmtElapsed(stepTime)) : '';
+  $('act-note').textContent = note;
+  $('act-note').hidden = !note;
   if (stick) scrollToBottom();
 }
 setInterval(() => state.status?.running && updateActivity(), 1000);
@@ -968,12 +994,23 @@ function applyStatus(s) {
   $('cost').textContent = s.cost > 0 ? `$${s.cost.toFixed(s.cost < 1 ? 3 : 2)}${s.cost_partial ? '+' : ''}` : '';
   $('hint-left').textContent = s.goal ? `goal: ${s.goal}` : `via ${s.backend}`;
   $('queued').replaceChildren(...s.queued.map((q) => h('div', { class: 'queued-item', text: q })));
-  document.title = `${s.running ? '● ' : ''}${s.project} · tamale`;
+  // A long run that finished while you were away says so in the tab until you look.
+  const ranLong = wasRunning && !s.running && state.runSince && Date.now() / 1000 - state.runSince >= 60;
+  if (ranLong && !document.hasFocus()) state.doneUnseen = true;
+  if (s.running) state.doneUnseen = false;
+  state.runSince = s.running ? s.since : null;
+  document.title = `${s.running ? '● ' : state.doneUnseen ? '✓ ' : ''}${s.project} · tamale`;
   updateSend();
   updateActivity();
   // The agent may have changed files while it ran.
   if (wasRunning && !s.running) afterToolResult();
 }
+
+addEventListener('focus', () => {
+  if (!state.doneUnseen) return;
+  state.doneUnseen = false;
+  document.title = document.title.replace(/^✓ /, '');
+});
 
 $('mode').onclick = () => {
   const next = MODES[(MODES.indexOf(state.status?.mode) + 1) % MODES.length];

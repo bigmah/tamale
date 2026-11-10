@@ -460,22 +460,57 @@ struct TracksEnd: ViewModifier {
     }
 }
 
+/// What the run is doing and for how long: the current step's label and time, the run's
+/// totals, and a note when one step takes long (as in the web UI and the terminal).
 struct WorkingIndicator: View {
     var status: SessionStatus?
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text(status?.compacting == true ? "Compacting" : "Working")
-                if let since = status?.since {
-                    Text(formatElapsed(max(0, Int(context.date.timeIntervalSince1970 - since))))
-                        .monospacedDigit()
+            let now = context.date.timeIntervalSince1970
+            let total = status?.since.map { max(0, Int(now - $0)) }
+            let step = (status?.stepSince ?? status?.since).map { max(0, Int(now - $0)) }
+            let long = (step ?? 0) >= SessionStatus.longStep
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(label).lineLimit(1).truncationMode(.tail).layoutPriority(1)
+                    if let step {
+                        Text(formatElapsed(step))
+                            .monospacedDigit()
+                            .foregroundStyle(long ? Theme.warning : Theme.dim)
+                    }
+                    if let totals = totals(step: step, total: total) {
+                        Text("· \(totals)").monospacedDigit().foregroundStyle(Theme.faint).lineLimit(1)
+                    }
+                }
+                if let step, let note = status?.longStepNote(seconds: step, elapsed: formatElapsed(step)) {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(Theme.dim)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, 28)
                 }
             }
             .font(.footnote)
             .foregroundStyle(Theme.dim)
+            .accessibilityElement(children: .combine)
         }
+    }
+
+    private var label: String {
+        guard let status else { return "Working" }
+        if !status.step.isEmpty { return status.step }
+        return status.compacting ? "Compacting" : "Working"
+    }
+
+    /// The run's tool calls, and its time once that's more than the step's.
+    private func totals(step: Int?, total: Int?) -> String? {
+        var parts: [String] = []
+        let steps = status?.steps ?? 0
+        if steps > 0 { parts.append("\(steps) step\(steps == 1 ? "" : "s")") }
+        if let step, let total, total - step >= 5 { parts.append("\(formatElapsed(total)) total") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 }
 

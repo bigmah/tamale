@@ -263,6 +263,9 @@ pub struct App {
     tick: usize,
     /// When the current run began, for the activity animation and elapsed time.
     busy_since: Option<std::time::Instant>,
+    /// When the run's current step began (a model request, a tool call, a wait for the
+    /// user), so a long run shows how long it has been on this step, not just in total.
+    step_since: Option<std::time::Instant>,
     /// Whether `/web` has taken over: replies are written for the web UI (see
     /// `web::ARTIFACT_PROMPT`) and the terminal only shows the session's address.
     web_session: bool,
@@ -370,6 +373,7 @@ impl App {
             attempt_entry: None,
             tick: 0,
             busy_since: None,
+            step_since: None,
             web_session: false,
             hub_viewers: None,
             hub_live: false,
@@ -711,6 +715,17 @@ impl App {
             }
             return;
         }
+        let new_step = match &event {
+            // Streaming into the reply that's already shown continues the step.
+            AgentEvent::TextDelta(_) => {
+                self.joining.is_none() && !matches!(self.entries.last(), Some(Entry::Assistant(_)))
+            }
+            AgentEvent::History(_) | AgentEvent::Usage(_) | AgentEvent::SubagentUsage(_) => false,
+            _ => true,
+        };
+        if new_step {
+            self.step_since = Some(std::time::Instant::now());
+        }
         match event {
             AgentEvent::TextDelta(delta) if self.joining.is_some() => {
                 let (i, _) = self.joining.unwrap();
@@ -872,6 +887,18 @@ impl App {
                 }
             }
         }
+    }
+
+    /// What the run is doing now, as every client shows it.
+    fn activity_step(&self) -> activity::Step {
+        let waiting = if self.approval.is_some() {
+            Some("Waiting for your approval")
+        } else if self.question.is_some() {
+            Some("Waiting for your answer")
+        } else {
+            None
+        };
+        activity::step(&self.entries, waiting, self.compacting)
     }
 
     fn add_usage(&mut self, u: &rig_core::completion::Usage) {

@@ -129,6 +129,12 @@ pub struct Status {
     pub compacting: bool,
     /// Unix seconds when the current run began.
     pub since: Option<u64>,
+    /// What the run is doing now, and since when (see `app::activity::step`).
+    pub step: String,
+    pub step_kind: String,
+    pub step_since: Option<u64>,
+    pub steps: usize,
+    pub sub_steps: usize,
     pub context: u64,
     pub window: u64,
     pub cost: f64,

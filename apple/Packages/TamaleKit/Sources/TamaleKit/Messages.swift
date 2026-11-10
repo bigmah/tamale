@@ -114,6 +114,15 @@ public struct SessionStatus: Codable, Equatable, Sendable {
     public var compacting: Bool
     /// Unix seconds when the current run began.
     public var since: Double?
+    /// Unix seconds when the run's current step began (a model request, a tool call, a wait).
+    public var stepSince: Double?
+    /// What the run is doing now: a tool's description, "Thinking", "Writing", …
+    public var step: String
+    /// think, write, tool, subagent, wait or compact.
+    public var stepKind: String
+    /// The run's tool calls so far, and its running subagent's.
+    public var steps: Int
+    public var subSteps: Int
     public var context: Int
     public var window: Int
     public var inputTokens: Int
@@ -125,7 +134,8 @@ public struct SessionStatus: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case project, cwd, dirs, model, backend, mode, effort, thinking, running, compacting, since
-        case context, window, cost, goal, queued
+        case step, steps, context, window, cost, goal, queued
+        case stepSince = "step_since", stepKind = "step_kind", subSteps = "sub_steps"
         case signedIn = "signed_in", inputTokens = "input_tokens", outputTokens = "output_tokens"
         case costPartial = "cost_partial"
     }
@@ -147,6 +157,11 @@ public struct SessionStatus: Codable, Equatable, Sendable {
         running = get(.running, false)
         compacting = get(.compacting, false)
         since = get(.since, nil as Double?)
+        stepSince = get(.stepSince, nil as Double?)
+        step = get(.step, "")
+        stepKind = get(.stepKind, "think")
+        steps = get(.steps, 0)
+        subSteps = get(.subSteps, 0)
         context = get(.context, 0)
         window = get(.window, 0)
         inputTokens = get(.inputTokens, 0)
@@ -158,6 +173,28 @@ public struct SessionStatus: Codable, Equatable, Sendable {
     }
 
     public var busy: Bool { running || compacting }
+
+    /// After this many seconds on one step, the app says what the run is waiting on.
+    public static let longStep = 180
+
+    /// Why a step that has run for `seconds` (written as `elapsed`) is still going, once
+    /// that's long; nil before. The same notes as the web UI and the terminal.
+    public func longStepNote(seconds: Int, elapsed: String) -> String? {
+        guard seconds >= Self.longStep else { return nil }
+        switch stepKind {
+        case "think":
+            return "No output from the model for \(elapsed). It may be reasoning through a big step; interrupt it if it looks stuck."
+        case "subagent":
+            let soFar = subSteps == 0 ? "" : " (\(subSteps) step\(subSteps == 1 ? "" : "s") so far)"
+            return "The subagent has been on its own for \(elapsed)\(soFar). Only its final report goes back to the agent."
+        case "tool":
+            return "This step has been running for \(elapsed). Its output shows up when it finishes."
+        case "wait":
+            return "Waiting on you for \(elapsed). The run is paused until you answer."
+        default:
+            return nil
+        }
+    }
 }
 
 public struct Approval: Codable, Equatable, Sendable {

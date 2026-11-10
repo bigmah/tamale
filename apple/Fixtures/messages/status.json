@@ -22,6 +22,11 @@
     "running": true,
     "signed_in": true,
     "since": 1700000000,
+    "step": "Run the tests",
+    "step_kind": "tool",
+    "step_since": 1700000090,
+    "steps": 3,
+    "sub_steps": 0,
     "thinking": "auto",
     "window": 200000
   },

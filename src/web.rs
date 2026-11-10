@@ -228,6 +228,14 @@ pub struct Status {
     pub compacting: bool,
     /// Unix seconds when the current run began.
     pub since: Option<u64>,
+    /// Unix seconds when the run's current step (model request, tool call, wait) began.
+    pub step_since: Option<u64>,
+    /// What the run is doing now (a tool's description, "Thinking", …), its kind (think,
+    /// write, tool, subagent, wait, compact), its tool calls so far and its subagent's.
+    pub step: String,
+    pub step_kind: &'static str,
+    pub steps: usize,
+    pub sub_steps: usize,
     pub context: u64,
     pub window: u64,
     pub input_tokens: u64,

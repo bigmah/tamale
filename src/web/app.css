@@ -534,6 +534,13 @@ body.artifact-open .app::after { content: ""; position: fixed; inset: 0; z-index
   white-space: nowrap;
 }
 .act-time { font-variant-numeric: tabular-nums; }
+.act-meta { font-variant-numeric: tabular-nums; color: var(--fg-faint); opacity: .8; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.act-meta:empty { display: none; }
+.act-meta::before { content: "· "; }
+.activity { flex-wrap: wrap; row-gap: 4px; }
+.act-label { min-width: 0; max-width: min(50ch, calc(100% - 96px)); }
+.activity.long .act-time { color: var(--modified); }
+.act-note { flex-basis: 100%; margin: 2px 0 0 22px; font-size: 12.5px; line-height: 1.5; color: var(--fg-dim); max-width: 64ch; }
 .act-hint { margin-left: auto; font-size: 12px; }
 
 /* ---------- dock: approval, composer ---------- */

@@ -386,16 +386,16 @@ impl App {
             self.busy_since = None;
             std::time::Instant::now()
         };
-        let (label, palette) = if self.compacting {
-            ("Compacting…", activity::COMPACTING)
-        } else if self.approval.is_some() {
-            ("Waiting for approval…", activity::WAITING)
-        } else if self.question.is_some() {
-            ("Waiting for your answer…", activity::WAITING)
-        } else {
-            ("Thinking…", activity::THINKING)
-        };
-        let spinner = activity::line(label, palette, since.elapsed(), !self.waiting_for_user());
+        let total_elapsed = since.elapsed();
+        let step_elapsed = self
+            .step_since
+            .map_or(total_elapsed, |step| step.max(since).elapsed());
+        let spinner = activity::lines(
+            &self.activity_step(),
+            step_elapsed,
+            total_elapsed,
+            !self.waiting_for_user(),
+        );
         let spinner_rows = if running {
             Paragraph::new(spinner.clone())
                 .wrap(Wrap { trim: false })
@@ -411,7 +411,7 @@ impl App {
             .transcript
             .visible(offset.min(self.transcript.rows()), area.height as usize);
         if running {
-            lines.push(spinner);
+            lines.extend(spinner);
         }
         let local_offset = if offset > self.transcript.rows() {
             (offset - self.transcript.rows()) as u16

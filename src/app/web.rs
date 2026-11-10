@@ -67,12 +67,15 @@ have it next time."
     }
 
     pub fn web_view(&self) -> web::View<'_> {
-        let since = self.busy_since.filter(|_| self.is_running()).map(|since| {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default();
-            now.saturating_sub(since.elapsed()).as_secs()
-        });
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let unix = |at: std::time::Instant| now.saturating_sub(at.elapsed()).as_secs();
+        let busy = self.busy_since.filter(|_| self.is_running());
+        let since = busy.map(unix);
+        // A step from an earlier run started before this one: the run's start is its start.
+        let step_since = busy.map(|busy| unix(self.step_since.map_or(busy, |step| step.max(busy))));
+        let step = self.activity_step();
         let cwd = &self.workspace.cwd;
         let status = web::Status {
             project: cwd
@@ -95,6 +98,15 @@ have it next time."
             running: self.is_running(),
             compacting: self.compacting,
             since,
+            step_since,
+            step: if self.is_running() {
+                step.label
+            } else {
+                String::new()
+            },
+            step_kind: step.kind.as_str(),
+            steps: step.steps,
+            sub_steps: step.sub_steps,
             context: self.context_tokens,
             window: self.settings.model.context_window(),
             input_tokens: self.input_tokens,
