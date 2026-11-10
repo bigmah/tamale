@@ -381,6 +381,39 @@ final class TamaleUITests: XCTestCase {
         app.buttons["Done"].tap()
     }
 
+    /// The chef is a switch: listed on in its own section, stopped from there, then off with
+    /// how to start it. uitest.sh starts a real `tamale chef` on the hub for this.
+    func testTheChefShowsOnAndStopsFromTheList() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let key = env["TAMALE_DEBUG_KEY"], let hub = env["TAMALE_DEBUG_HUB"],
+              env["TAMALE_DEBUG_CHEF"] != nil else {
+            throw XCTSkip("run apple/scripts/uitest.sh")
+        }
+        let app = XCUIApplication()
+        app.launchEnvironment = ["TAMALE_DEBUG_KEY": key, "TAMALE_DEBUG_HUB": hub]
+        app.launch()
+
+        let on = text(app, containing: "Chef on")
+        wait(on, app, timeout: 20)
+        XCTAssertTrue(text(app, containing: "tamale chef").exists)
+        // Sessions are listed under it, apart.
+        wait(text(app, containing: "Show me the plan"), app, timeout: 20)
+
+        let stop = app.buttons["Stop"]
+        wait(stop, app, timeout: 5)
+        stop.tap()
+        let confirm = app.buttons["Stop Chef"]
+        wait(confirm, app, timeout: 5)
+        XCTAssertTrue(text(app, containing: "Stop the tamale chef?").exists)
+        confirm.tap()
+
+        // Off, saying how to start it again; the other session is untouched.
+        wait(text(app, containing: "Chef off"), app, timeout: 30)
+        XCTAssertTrue(text(app, containing: "Start it on one of your machines").exists)
+        XCTAssertFalse(app.buttons["Stop"].exists)
+        XCTAssertTrue(text(app, containing: "Show me the plan").exists)
+    }
+
     /// The agent's questions: options to tap, one or several, an answer of your own, and the
     /// answers sent together.
     func testAnswersTheAgentsQuestions() throws {
