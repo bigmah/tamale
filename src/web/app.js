@@ -1303,7 +1303,17 @@ function updateSend() {
   button.classList.toggle('ready', !empty);
   button.classList.toggle('stop', empty && running);
   button.title = empty && running ? 'Interrupt (esc)' : running ? 'Queue for the next step (⏎)' : 'Send (⏎)';
+  // A prompt typed often enough to get a button, as in the iOS app; out of the way while typing.
+  $('make-artifact').hidden = !empty;
+  $('composer').classList.toggle('empty', empty);
 }
+
+/** The iOS app's artifact button sends the same words. */
+const ARTIFACT_PROMPT = 'Can you generate an artifact for this?';
+
+$('make-artifact').onclick = () => {
+  if (send({ t: 'send', text: ARTIFACT_PROMPT })) scrollToBottom(true);
+};
 
 $('send').onclick = () => {
   if (!input.value.trim() && state.status?.running) send({ t: 'interrupt' });

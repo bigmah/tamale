@@ -90,7 +90,9 @@ back to the terminal, and `Ctrl+C` quits. Any number of tabs can be open.
   above it can **revise** it (puts `Revise the "<title>" artifact: ` in the prompt; the
   model answers with the whole updated document), download it, reload it, expand it
   (`Esc` closes) or open it in a new tab. Back in the terminal, each artifact is
-  collapsed to one line with its title.
+  collapsed to one line with its title. The sparkle button beside Send asks for one in a
+  tap ("Can you generate an artifact for this?"), as in the iOS app; it hides while you
+  type.
 - **Artifact guide.** How artifacts should look and behave lives in a design guide
   (`src/web/artifact.md`: output contract, which layout fits which kind of answer, the
   colour and type tokens, component recipes and a quality checklist). While `/web` is on
