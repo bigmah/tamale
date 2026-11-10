@@ -60,6 +60,7 @@ pub async fn run_command(command: &Command) -> Result<()> {
             };
             attach(id).await
         }
+        Command::Update => crate::update::run().await,
         Command::Kill(id) => {
             stop(*id).await?;
             println!("Ended session {id}. `tamale --continue` can pick it back up.");

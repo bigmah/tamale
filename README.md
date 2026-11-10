@@ -22,6 +22,8 @@ macOS and Linux:
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/bigmah/tamale/releases/latest/download/install.sh | sh
 ```
 
+Run `tamale update` later to get the latest release.
+
 Or build from source with [Rust](https://rustup.rs):
 
 ```sh

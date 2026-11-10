@@ -14,6 +14,7 @@ mod tests;
 pub const HELP: &str = "usage: tamale [--backend <kind>] [--add-dir <path>] [--config <path>] [--model <id>] [--effort <level>] [--thinking <mode>] [-c | -r] [--foreground] [-p <prompt> [--yes]]
        tamale chef [off]
        tamale ls | attach [<id>] | kill <id>
+       tamale update
 
 chef              Talk to the tamale chef, which looks after all your sessions, on every
                   machine with your hub key (or go back to it if it's running).
@@ -21,6 +22,7 @@ chef off          Stop the chef, wherever it runs (it stays saved).
 ls                List the sessions running in the background.
 attach [<id>]     Go back to a session running in the background.
 kill <id>         End a session running in the background.
+update            Install the latest release of tamale, if this one is older.
 
 -b, --backend      api (ANTHROPIC_API_KEY), claude-code (your Claude Code sign-in) or
                    codex (your Codex sign-in).
@@ -34,6 +36,7 @@ kill <id>         End a session running in the background.
 --foreground      Run the session in this terminal's process, so it can't detach.
 -p, --print       Run one prompt non-interactively and exit.
 -y, --yes         With -p, run tool calls that would otherwise need approval.
+-V, --version     Print tamale's version.
 -h, --help        Show this help.
 
 Settings: built-in defaults < ~/.config/tamale/config.toml < project tamale.toml
@@ -54,6 +57,8 @@ pub enum Command {
     List,
     Attach(Option<u32>),
     Kill(u32),
+    /// Install the latest release (see `update`).
+    Update,
 }
 
 #[derive(Default, Debug)]
@@ -74,6 +79,7 @@ pub struct Cli {
     /// Approve every call that would prompt in `-p` mode (deny rules still apply).
     pub yes: bool,
     pub help: bool,
+    pub version: bool,
     backend: Option<backend::Kind>,
     model: Option<String>,
     // Outer None means no flag; Some(None) explicitly resets the API default.
@@ -105,6 +111,10 @@ impl Cli {
                 args.next();
                 let id = args.next().context("kill needs a session id")?;
                 cli.command = Some(Command::Kill(session_id(&id)?));
+            }
+            Some("update" | "upgrade") => {
+                args.next();
+                cli.command = Some(Command::Update);
             }
             Some("chef") => {
                 args.next();
@@ -153,6 +163,10 @@ impl Cli {
                 "-r" | "--resume" => cli.resume = Some(Resume::Pick),
                 "-p" | "--print" => {
                     cli.print_prompt = Some(args.next().context("--print needs a prompt")?)
+                }
+                "-V" | "--version" => {
+                    cli.version = true;
+                    return Ok(cli);
                 }
                 "-h" | "--help" => {
                     cli.help = true;

@@ -146,3 +146,12 @@ fn parses_chef_and_chef_off() {
         assert!(off.chef_off && !off.chef, "{word}");
     }
 }
+
+#[test]
+fn parses_update_and_version() {
+    assert_eq!(parse(&["update"]).unwrap().command, Some(Command::Update));
+    assert_eq!(parse(&["upgrade"]).unwrap().command, Some(Command::Update));
+    assert!(parse(&["update", "now"]).is_err());
+    assert!(parse(&["--version"]).unwrap().version);
+    assert!(parse(&["-V"]).unwrap().version);
+}

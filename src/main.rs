@@ -17,6 +17,7 @@ mod screen;
 mod secure;
 mod session;
 mod tools;
+mod update;
 mod web;
 mod workspace;
 
@@ -40,6 +41,10 @@ fn main() -> Result<()> {
     let cli = cli::Cli::parse(std::env::args().skip(1))?;
     if cli.help {
         println!("{}", cli::HELP);
+        return Ok(());
+    }
+    if cli.version {
+        println!("tamale {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
     #[cfg(unix)]
@@ -73,6 +78,9 @@ async fn stop_chef(cli: &cli::Cli) -> Result<()> {
 }
 
 async fn start(cli: cli::Cli) -> Result<()> {
+    if cli.command == Some(cli::Command::Update) {
+        return update::run().await;
+    }
     #[cfg(unix)]
     let (host, chef_lock) = {
         if let Some(command) = &cli.command {
