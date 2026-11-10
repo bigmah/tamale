@@ -298,6 +298,21 @@ pub fn short_id(sid: &str) -> String {
     sid.chars().take(6).collect()
 }
 
+/// The chef online through the hub, if there is one other than this session. A key has
+/// one (the hub refuses a second), so starting one goes to it instead. `None` too when the
+/// hub can't be asked: the hub still holds a new chef to the rule.
+#[cfg(unix)]
+pub async fn running_elsewhere(hub: &HubSettings) -> Option<crate::remote::HubSession> {
+    let own = crate::web::sid();
+    let sessions = tokio::time::timeout(Duration::from_secs(8), crate::remote::sessions(hub))
+        .await
+        .ok()?
+        .ok()?;
+    sessions
+        .into_iter()
+        .find(|s| s.chef && s.online && s.sid != own)
+}
+
 /// Where a session runs, as `host:cwd`.
 pub fn place(host: &str, cwd: &str) -> String {
     match (host.is_empty(), cwd.is_empty()) {

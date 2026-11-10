@@ -14,6 +14,21 @@ the footer's **🫔 Chef** tab does the same, leaving that session running behin
 background session like any other: `ctrl+c` detaches, `/sessions` goes back to a session, and
 `tamale chef` comes back to it.
 
+### One chef
+
+A hub key has **one chef**, wherever it runs:
+
+- On the machine running it, `tamale chef` and `/chef` go back to it. Two started at the same
+  moment settle on one.
+- On another machine with the same key, they open that chef through the hub, as `/sessions`
+  does. `esc` leaves it (and, from `tamale chef`, leaves tamale).
+- The hub refuses a second chef while one is online. A chef that's offline (a laptop asleep, say)
+  gives way to a new one, and when it comes back it's the one refused: it stops, saved, and says
+  where the chef is now.
+
+For this the hub learns which of your sessions is the chef, though not where it runs or what it
+says. Without a hub key, the one-chef rule holds per machine.
+
 ## What it can do
 
 The chef has four tools, and none of the usual ones: it doesn't edit files or run commands.

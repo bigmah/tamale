@@ -73,7 +73,7 @@ pub async fn run_command(command: &Command) -> Result<()> {
 pub fn session_to_rejoin(cli: &Cli) -> Result<Option<u32>> {
     // There's one chef: `tamale chef` goes back to it wherever it was started.
     if cli.chef {
-        return Ok(list().into_iter().find(|s| s.chef).map(|s| s.id));
+        return Ok(super::running_chef());
     }
     if cli.resume != Some(Resume::Latest) {
         return Ok(None);
@@ -172,9 +172,38 @@ pub async fn stop(id: u32) -> Result<()> {
 }
 
 /// Starts a server with this command line's arguments and attaches to it.
-pub async fn start_and_attach() -> Result<()> {
-    let id = start_server(std::env::args_os().skip(1)).await?;
+pub async fn start_and_attach(chef: bool) -> Result<()> {
+    let args = std::env::args_os().skip(1);
+    let id = if chef {
+        start_chef(args).await?
+    } else {
+        start_server(args).await?
+    };
     attach(id).await
+}
+
+/// Starts a chef with `args`, or finds the one that started alongside it: a machine has
+/// one (see [`super::hold_chef_lock`]), and the other gives way.
+pub async fn start_chef<I, S>(args: I) -> Result<u32>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let failed = match start_server(args).await {
+        Ok(id) => return Ok(id),
+        Err(e) => e,
+    };
+    // The one that got the lock may not be listening yet.
+    let deadline = Instant::now() + START_TIMEOUT;
+    loop {
+        if let Some(id) = super::running_chef() {
+            return Ok(id);
+        }
+        if Instant::now() > deadline {
+            return Err(failed);
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 /// Starts a server with `args` (in this directory) and returns its id once it's listening.

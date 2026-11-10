@@ -36,13 +36,19 @@ pub mod close {
     pub const TOO_MANY: u16 = 4429;
     /// Another connection with the same sid and key took over.
     pub const REPLACED: u16 = 4410;
+    /// The key already has a tamale chef online, and it may only have one.
+    pub const CHEF_TAKEN: u16 = 4411;
 }
 
 /// Whether an agent socket closed with `code` should not be retried as is.
 pub fn is_permanent(code: u16) -> bool {
     matches!(
         code,
-        close::BAD_TOKEN | close::BAD_HELLO | close::SID_TAKEN | close::REPLACED
+        close::BAD_TOKEN
+            | close::BAD_HELLO
+            | close::SID_TAKEN
+            | close::REPLACED
+            | close::CHEF_TAKEN
     )
 }
 
@@ -182,6 +188,11 @@ pub enum ToHub {
         /// The label, for browsers holding the key.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sealed: Option<String>,
+        /// Whether it's a tamale chef, in the clear even when the label is sealed: a key may
+        /// have only one chef online, and the hub is what holds it to that. Browsers go by
+        /// the sealed label's `chef`, which the hub can't forge.
+        #[serde(default, skip_serializing_if = "is_false")]
+        chef: bool,
     },
     /// One `/web` message for browser client `c`.
     Msg { c: u64, data: String },
@@ -294,10 +305,21 @@ mod tests {
             mid: Some("1".repeat(32)),
             e2e: true,
             sealed: Some("c2VhbGVk".into()),
+            chef: false,
         };
         let text = serde_json::to_string(&hello).unwrap();
         assert!(text.starts_with(r#"{"t":"hello","proto":2,"#), "{text}");
+        assert!(!text.contains("chef"), "{text}");
         assert_eq!(serde_json::from_str::<ToHub>(&text).unwrap(), hello);
+        let ToHub::Hello { chef, .. } = serde_json::from_str(&text.replacen(
+            r#""proto":2,"#,
+            r#""proto":2,"chef":true,"#,
+            1,
+        ))
+        .unwrap() else {
+            panic!("not a hello");
+        };
+        assert!(chef);
 
         // A tamale from before end-to-end encryption still parses, in plaintext.
         let old = format!(
@@ -309,14 +331,15 @@ mod tests {
             mid,
             e2e,
             sealed,
+            chef,
             ..
         } = serde_json::from_str(&old).unwrap()
         else {
             panic!("not a hello");
         };
         assert_eq!(
-            (label.host.as_str(), mid, e2e, sealed),
-            ("h", None, false, None)
+            (label.host.as_str(), mid, e2e, sealed, chef),
+            ("h", None, false, None, false)
         );
         let old = r#"{"t":"status","busy":true,"approval":false,"title":"t","model":"m"}"#;
         assert!(matches!(

@@ -182,31 +182,86 @@ impl App {
                 ));
                 return;
             }
-            let running = crate::background::list()
-                .into_iter()
-                .find(|s| s.chef && s.id != std::process::id());
-            if let Some(chef) = running {
-                self.switch_request = Some(chef.id);
+            if let Some(chef) = crate::background::running_chef() {
+                self.switch_request = Some(chef);
                 return;
             }
             if self.chef_starting {
                 return;
             }
             self.chef_starting = true;
-            self.entries
-                .push(Entry::Info("🫔 Starting the tamale chef…".into()));
-            let tx = self.tx.clone();
-            tokio::spawn(async move {
-                let started = crate::background::client::start_server(["chef"])
-                    .await
-                    .map_err(|e| format!("Couldn't start the chef: {e:#}"));
-                let _ = tx.send(AppEvent::ChefStarted(started));
-            });
+            // A key has one chef: one running on another machine opens here instead.
+            if self.settings.hub.key_bytes().is_ok() {
+                let hub = self.settings.hub.clone();
+                let tx = self.tx.clone();
+                tokio::spawn(async move {
+                    let _ = tx.send(AppEvent::ChefElsewhere(chef::running_elsewhere(&hub).await));
+                });
+            } else {
+                self.start_chef();
+            }
         }
         #[cfg(not(unix))]
         self.entries.push(Entry::Error(
             "The chef needs background sessions, which this platform doesn't have.".into(),
         ));
+    }
+
+    #[cfg(unix)]
+    fn start_chef(&mut self) {
+        self.entries
+            .push(Entry::Info("🫔 Starting the tamale chef…".into()));
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            let started = crate::background::client::start_chef(["chef"])
+                .await
+                .map_err(|e| format!("Couldn't start the chef: {e:#}"));
+            let _ = tx.send(AppEvent::ChefStarted(started));
+        });
+    }
+
+    #[cfg(unix)]
+    pub(super) fn on_chef_elsewhere(&mut self, chef: Option<crate::remote::HubSession>) {
+        match chef {
+            Some(session) => {
+                self.chef_starting = false;
+                self.entries.push(Entry::Info(format!(
+                    "🫔 The chef is running on {}; it opens here. Esc comes back.",
+                    super::remote::session_name(&session)
+                )));
+                self.open_remote_view(session);
+            }
+            None => self.start_chef(),
+        }
+    }
+
+    /// Only shows `session`, a chef on another machine: leaving it leaves tamale.
+    #[cfg(unix)]
+    pub fn open_remote_chef(&mut self, session: crate::remote::HubSession) {
+        self.remote_only = true;
+        self.open_remote_view(session);
+        if self.remote_view.is_none() {
+            self.exit_error = self.entries.iter().rev().find_map(|e| match e {
+                Entry::Error(e) => Some(e.clone()),
+                _ => None,
+            });
+            self.should_quit = true;
+        }
+    }
+
+    /// The hub refused this chef: its key has another one online. This one ends, saved.
+    pub fn on_chef_taken(&mut self, why: String) {
+        if !self.is_chef() {
+            self.entries
+                .push(Entry::Error(format!("The hub refused this session: {why}")));
+            return;
+        }
+        self.exit_error = Some(
+            "Another tamale chef is already running with this hub key, so this one stopped. \
+             `tamale chef` or /chef opens that one."
+                .into(),
+        );
+        self.should_quit = true;
     }
 
     #[cfg(unix)]

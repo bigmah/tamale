@@ -203,6 +203,9 @@ pub enum WebEvent {
     Answer(Vec<crate::tools::ask::Answer>),
     /// End the session, as `tamale kill` does: it stays saved.
     Close,
+    /// The hub refused this tamale chef because its key has another one online, with the
+    /// hub's reason.
+    ChefTaken(String),
     /// A side question from a tamale chef, answered from this session's context without
     /// adding to its conversation. The answer goes back to tab `tab` with [`Replier`].
     Ask {
@@ -1687,6 +1690,53 @@ mod tests {
         let hub = format!("ws://{}", listener.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(listener, app).await });
         (hub, to_agent, from_agent)
+    }
+
+    #[tokio::test]
+    async fn a_chef_says_so_in_the_clear_and_hears_when_the_key_has_one() {
+        use std::time::Duration;
+        use tamale_hub_protocol::{ToHub, close};
+        let (to_test, mut hellos) = mpsc::unbounded_channel::<String>();
+        let app = Router::new().route(
+            "/agent",
+            get(move |upgrade: WebSocketUpgrade| {
+                let to_test = to_test.clone();
+                async move {
+                    upgrade.on_upgrade(move |mut ws| async move {
+                        let Some(Ok(Message::Text(hello))) = ws.next().await else { return };
+                        let _ = to_test.send(hello.to_string());
+                        let refusal = axum::extract::ws::CloseFrame {
+                            code: close::CHEF_TAKEN,
+                            reason: "this key already has a tamale chef running".into(),
+                        };
+                        let _ = ws.send(Message::Close(Some(refusal))).await;
+                    })
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let hub = format!("ws://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await });
+
+        let mut server = Server::start(false).await.unwrap();
+        let label = Label { host: "laptop".into(), chef: true, ..Default::default() };
+        server.connect_hub(&hub, "f00d", label, Some(e2e::Keys::from_psk([3u8; 32])));
+        let hello = tokio::time::timeout(Duration::from_secs(5), hellos.recv()).await.unwrap().unwrap();
+        let ToHub::Hello { chef, label, sealed, .. } = serde_json::from_str(&hello).unwrap() else {
+            panic!("no hello")
+        };
+        assert!(chef, "{hello}");
+        assert!(label.host.is_empty() && sealed.is_some(), "the rest stays sealed: {hello}");
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), server.events.recv()).await.unwrap().unwrap() {
+                WebEvent::ChefTaken(why) => {
+                    assert!(why.contains("already has a tamale chef"), "{why}");
+                    break;
+                }
+                WebEvent::Hub(Err(e)) => panic!("reported as a plain problem: {e}"),
+                _ => {}
+            }
+        }
     }
 
     #[tokio::test]

@@ -51,6 +51,7 @@ const STYLE: &str = include_str!("../static/hub.css");
 const GRACE: Duration = Duration::from_secs(600);
 /// What a session's pages are told when it ends on purpose (see [`ToHub::End`]).
 const SESSION_ENDED: &str = "This session ended.";
+const CHEF_REPLACED: &str = "A new tamale chef took this one's place.";
 const TICKET_LIFE: Duration = Duration::from_secs(60);
 const SESSION_COOKIE_LIFE: u64 = 30 * 24 * 3600;
 const VIEW_COOKIE_LIFE: u64 = 34_560_000;
@@ -226,6 +227,8 @@ struct Session {
     e2e: bool,
     sealed_label: Option<String>,
     sealed_status: Option<String>,
+    /// Whether it's a tamale chef: a key may have one online (see [`close::CHEF_TAKEN`]).
+    chef: bool,
     /// Unix seconds.
     last_activity: u64,
     /// The connected agent, `None` while offline.
@@ -920,7 +923,7 @@ async fn api_sessions(
                 "host": s.label.host,
                 "cwd": s.label.cwd,
                 "model": s.label.model,
-                "chef": s.label.chef,
+                "chef": s.label.chef || s.chef,
                 "title": s.title,
                 "mid": s.mid,
                 "e2e": s.e2e,
@@ -1646,6 +1649,7 @@ async fn agent_socket(hub: Arc<Hub>, key: state::Key, ip: IpAddr, ws: WebSocket)
         mid,
         e2e,
         sealed,
+        chef,
     }) = hello
     else {
         let _ = sink
@@ -1694,11 +1698,34 @@ async fn agent_socket(hub: Arc<Hub>, key: state::Key, ip: IpAddr, ws: WebSocket)
             .iter()
             .filter(|(s, session)| **s != sid && session.key == key.name)
             .count();
+        // One chef per key: one that's online keeps the place, and a new one takes it from
+        // one that's offline (which is refused in turn if it comes back).
+        let chef_online = chef
+            && sessions
+                .iter()
+                .any(|(s, other)| *s != sid && other.key == key.name && other.chef && other.agent.is_some());
         if taken {
             Some((close::SID_TAKEN, "that session id is in use"))
+        } else if chef_online {
+            Some((
+                close::CHEF_TAKEN,
+                "this key already has a tamale chef running; open that one instead",
+            ))
         } else if count >= MAX_SESSIONS_PER_KEY {
             Some((close::TOO_MANY, "this key has too many sessions"))
         } else {
+            if chef {
+                // An offline chef this one replaces leaves the list, and its tabs with it.
+                sessions.retain(|s, other| {
+                    let replaced = *s != sid && other.key == key.name && other.chef;
+                    if replaced {
+                        for (_, client) in other.clients.drain() {
+                            let _ = client.tx.send(Out::Close(4000, CHEF_REPLACED.into()));
+                        }
+                    }
+                    !replaced
+                });
+            }
             let session = sessions.entry(sid.clone()).or_insert_with(|| Session {
                 key: key.name.clone(),
                 auth_hash: key.auth_hash.clone(),
@@ -1710,6 +1737,7 @@ async fn agent_socket(hub: Arc<Hub>, key: state::Key, ip: IpAddr, ws: WebSocket)
                 e2e: false,
                 sealed_label: None,
                 sealed_status: None,
+                chef: false,
                 last_activity: state::now(),
                 agent: None,
                 generation,
@@ -1740,6 +1768,7 @@ async fn agent_socket(hub: Arc<Hub>, key: state::Key, ip: IpAddr, ws: WebSocket)
             session.mid = mid;
             session.e2e = e2e;
             session.sealed_label = sealed;
+            session.chef = chef;
             session.auth_hash = key.auth_hash.clone();
             session.last_activity = state::now();
             None
@@ -2164,6 +2193,10 @@ mod tests {
         }
 
         async fn agent_hello(port: u16, token: &str, sid: &str) -> Ws {
+            agent_hello_as(port, token, sid, false).await
+        }
+
+        async fn agent_hello_as(port: u16, token: &str, sid: &str, chef: bool) -> Ws {
             let mut agent = ws(
                 port,
                 "/agent",
@@ -2186,6 +2219,7 @@ mod tests {
                 mid: None,
                 e2e: false,
                 sealed: None,
+                chef,
             };
             agent
                 .send(tungstenite::Message::Text(
@@ -2638,6 +2672,7 @@ mod tests {
                     mid: Some("a".repeat(32)),
                     e2e: true,
                     sealed: Some("SEALED-LABEL".into()),
+                    chef: false,
                 }))
                 .await
                 .unwrap();
@@ -2806,6 +2841,7 @@ mod tests {
                 mid: mid.map(String::from),
                 e2e,
                 sealed,
+                chef: false,
             };
 
             // Malformed encryption fields are refused.
@@ -3218,6 +3254,69 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn a_key_has_one_chef_online_and_a_new_one_replaces_one_gone_offline() {
+            let setup = start().await;
+            let port = setup.port;
+            let (first, second, worker) = ("a".repeat(32), "b".repeat(32), "c".repeat(32));
+            let mut chef = agent_hello_as(port, &setup.auth, &first, true).await;
+            assert!(next_text(&mut chef).await.contains("\"welcome\""));
+
+            // A second chef under the key is refused for good; other sessions aren't.
+            let mut rival = agent_hello_as(port, &setup.auth, &second, true).await;
+            assert_eq!(close_code(&mut rival).await, close::CHEF_TAKEN);
+            assert!(protocol::is_permanent(close::CHEF_TAKEN));
+            let mut session = agent_hello(port, &setup.auth, &worker).await;
+            assert!(next_text(&mut session).await.contains("\"welcome\""));
+            // Another key has a chef of its own.
+            let mut theirs = agent_hello_as(port, &setup.other_auth, &second, true).await;
+            assert!(next_text(&mut theirs).await.contains("\"welcome\""));
+            drop(theirs);
+            let hub = setup.hub.clone();
+            until("the other key's chef going", || {
+                hub.sessions.lock().unwrap().get(&second).is_none_or(|s| s.agent.is_none())
+            })
+            .await;
+            hub.sessions.lock().unwrap().remove(&second);
+
+            // The chef reconnecting under its own sid takes its place back.
+            let mut again = agent_hello_as(port, &setup.auth, &first, true).await;
+            assert!(next_text(&mut again).await.contains("\"welcome\""));
+            assert_eq!(close_code(&mut chef).await, close::REPLACED);
+            let listed = reqwest::Client::new()
+                .get(format!("http://127.0.0.1:{port}/api/sessions"))
+                .header("host", format!("hub.localhost:{port}"))
+                .bearer_auth(&setup.auth)
+                .send()
+                .await
+                .unwrap()
+                .json::<Value>()
+                .await
+                .unwrap();
+            let chefs: Vec<_> = listed["sessions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|s| s["chef"] == true)
+                .map(|s| s["sid"].as_str().unwrap().to_string())
+                .collect();
+            assert_eq!(chefs, vec![first.clone()]);
+
+            // Gone offline, it gives way to a new chef, and is refused when it comes back.
+            drop(again);
+            until("the chef going offline", || {
+                hub.sessions.lock().unwrap().get(&first).is_some_and(|s| s.agent.is_none())
+            })
+            .await;
+            let mut new = agent_hello_as(port, &setup.auth, &second, true).await;
+            assert!(next_text(&mut new).await.contains("\"welcome\""));
+            assert!(!hub.sessions.lock().unwrap().contains_key(&first), "the old one left the list");
+            let mut old = agent_hello_as(port, &setup.auth, &first, true).await;
+            assert_eq!(close_code(&mut old).await, close::CHEF_TAKEN);
+            drop((new, session));
+            let _ = std::fs::remove_dir_all(&setup.store.dir);
+        }
+
+        #[tokio::test]
         async fn labels_and_titles_the_hub_keeps_are_bounded() {
             let setup = start().await;
             let port = setup.port;
@@ -3237,6 +3336,7 @@ mod tests {
                 mid: None,
                 e2e: false,
                 sealed: None,
+                chef: false,
             };
             for label in [
                 Label { host: long.clone(), ..Label::default() },

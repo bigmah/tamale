@@ -90,6 +90,9 @@ impl App {
         if let Some(view) = self.remote_view.take() {
             (self.input, self.cursor) = view.draft;
         }
+        if self.remote_only {
+            self.should_quit = true;
+        }
     }
 
     pub(super) fn on_remote_event(&mut self, generation: u64, event: RemoteEvent) {

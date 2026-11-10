@@ -55,7 +55,7 @@ fn main() -> Result<()> {
 
 async fn start(cli: cli::Cli) -> Result<()> {
     #[cfg(unix)]
-    let host = {
+    let (host, chef_lock) = {
         if let Some(command) = &cli.command {
             return background::client::run_command(command).await;
         }
@@ -63,8 +63,14 @@ async fn start(cli: cli::Cli) -> Result<()> {
         if in_background && let Some(id) = background::client::session_to_rejoin(&cli)? {
             return background::client::attach(id).await;
         }
+        // One chef to a machine, decided before it's listening, so the one that doesn't
+        // get to go on never shows up in the list.
+        let chef_lock = (cli.chef && (cli.server || cli.foreground))
+            .then(background::hold_chef_lock)
+            .transpose()?;
         // Listening before anything slow, so the client has something to connect to.
-        cli.server.then(|| background::Host::bind(cli.chef)).transpose()?
+        let host = cli.server.then(|| background::Host::bind(cli.chef)).transpose()?;
+        (host, chef_lock)
     };
     #[cfg(not(unix))]
     if cli.command.is_some() {
@@ -78,6 +84,25 @@ async fn start(cli: cli::Cli) -> Result<()> {
     settings.apply_env(|name| std::env::var(name).ok())?;
     cli.apply(&mut settings);
     settings.validate()?;
+
+    // A key has one chef: when it runs on another machine, `tamale chef` shows that one.
+    #[cfg(unix)]
+    if cli.chef
+        && !cli.server
+        && settings.hub.key_bytes().is_ok()
+        && let Some(chef) = chef::running_elsewhere(&settings.hub).await
+    {
+        drop(chef_lock);
+        let (mut app, rx) = App::new_with_channel(Backend::Unset, settings, workspace);
+        app.load_prompt_history();
+        app.open_remote_chef(chef);
+        let mut screen = Screen::local(app.mouse_enabled())?;
+        let result = run(&mut screen, (app, rx)).await;
+        screen
+            .close(result.as_ref().err().map(|e| format!("{e:#}")))
+            .await;
+        return result;
+    }
 
     // Without a key the TUI asks for a backend; a `-p` run can't ask, so it fails below.
     let choose_backend = cli.print_prompt.is_none()
@@ -128,7 +153,7 @@ async fn start(cli: cli::Cli) -> Result<()> {
 
     #[cfg(unix)]
     if !cli.server && !cli.foreground {
-        return background::client::start_and_attach().await;
+        return background::client::start_and_attach(cli.chef).await;
     }
     #[cfg(unix)]
     let screen = match host {
@@ -387,6 +412,9 @@ fn connect_hub(app: &App, server: &mut web::Server) -> Result<(), String> {
 /// start, without taking over the terminal the way `/remote` does.
 async fn connect_hub_on_start(app: &mut App, web: &mut Option<web::Server>) {
     let hub = app.settings_hub();
+    if app.is_remote_only() {
+        return;
+    }
     // A chef is reachable from the start, so a phone can talk to it too.
     if hub.connect != config::HubConnect::Auto && !(app.is_chef() && hub.key.is_some()) {
         return;
@@ -598,6 +626,7 @@ async fn run(
                         web::WebEvent::Approve(choice, reason) => app.web_approve(choice, reason),
                         web::WebEvent::Answer(answers) => app.web_answer(answers),
                         web::WebEvent::Close => app.should_quit = true,
+                        web::WebEvent::ChefTaken(why) => app.on_chef_taken(why),
                         web::WebEvent::Ask { tab, id, question } => {
                             if let Some(web) = &web {
                                 let replier = web.replier();
@@ -660,7 +689,10 @@ async fn run(
         web.end().await;
     }
     app.finish_saves().await;
-    result
+    match app.exit_error.take() {
+        Some(problem) if result.is_ok() => Err(anyhow::anyhow!(problem)),
+        _ => result,
+    }
 }
 
 /// Draws the TUI on the screen in use and a notice on the other. During a web session

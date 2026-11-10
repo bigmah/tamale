@@ -89,5 +89,6 @@ iPhone app refuse anything unsealed: such a session only opens in a browser.
 
 **What it doesn't cover:** the hub still serves the page code, so someone in control of it could
 change that code to steal a key the next time a page loads, or as one is made. It still sees
-metadata (which sessions exist and when, from which IPs, busy or not, message sizes and timing).
+metadata (which sessions exist and when, from which IPs, busy or not, which one is the
+[chef](chef.md), message sizes and timing).
 And it can't protect a compromised laptop or phone. Details are in [`e2e.md`](../e2e.md).

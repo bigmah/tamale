@@ -2520,3 +2520,73 @@ async fn a_chef_shows_its_kitchen_beside_a_welcome() {
     assert!(ctx.chef.is_some());
     assert!(app.backend_turn(String::new()).config.chef);
 }
+
+#[tokio::test]
+async fn a_chef_the_hub_refuses_stops_and_says_where_to_go() {
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(
+        client.clone(),
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    app.set_chef();
+    app.on_chef_taken("this key already has a tamale chef running".into());
+    assert!(app.should_quit);
+    assert!(app.exit_error.as_deref().unwrap().contains("tamale chef"));
+
+    // Only a chef is told it's taken; anything else just hears of it.
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    app.on_chef_taken("odd".into());
+    assert!(!app.should_quit && app.exit_error.is_none());
+    assert!(matches!(app.entries.last(), Some(Entry::Error(e)) if e.contains("odd")));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn the_chef_elsewhere_opens_here_and_leaving_it_leaves_tamale() {
+    use crate::remote::HubSession;
+    let chef = HubSession {
+        sid: "a".repeat(32),
+        host: "far-box".into(),
+        cwd: "~".into(),
+        e2e: true,
+        online: true,
+        chef: true,
+        ..Default::default()
+    };
+    let mut settings = test_settings("test-model");
+    settings.hub.key = Some(tamale_hub_protocol::encode_key(&[1; 32]));
+    // Nothing listens there, which only means retrying.
+    settings.hub.url = "ws://127.0.0.1:1".into();
+
+    // /chef in a session: it opens over this one, and Esc comes back.
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) =
+        App::new_with_channel(client, settings.clone(), Workspace::current().unwrap());
+    app.chef_starting = true;
+    app.on_app_event(AppEvent::ChefElsewhere(Some(chef.clone())));
+    assert!(app.remote_view.is_some() && !app.chef_starting);
+    assert!(screen(&mut app).contains("far-box"));
+    app.on_event(key(KeyCode::Esc));
+    assert!(app.remote_view.is_none() && !app.should_quit);
+
+    // `tamale chef`: there's nothing behind it to go back to.
+    let (mut app, _rx) =
+        App::new_with_channel(Backend::Unset, settings.clone(), Workspace::current().unwrap());
+    app.open_remote_chef(chef.clone());
+    assert!(app.is_remote_only() && app.remote_view.is_some());
+    app.on_event(key(KeyCode::Esc));
+    assert!(app.should_quit && app.exit_error.is_none());
+
+    // Without e2e it can't open here, and says why on the way out.
+    settings.hub.key = None;
+    let (mut app, _rx) =
+        App::new_with_channel(Backend::Unset, settings, Workspace::current().unwrap());
+    app.open_remote_chef(HubSession { e2e: false, ..chef });
+    assert!(app.should_quit);
+    assert!(app.exit_error.as_deref().unwrap().contains("browser"));
+}

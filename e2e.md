@@ -149,7 +149,9 @@ and `status`. With E2E:
 - `hello.label` and `status.title` are replaced by `sealed`: AES-256-GCM under the
   metadata key, random 96-bit nonce, `aad = sid || "label"/"status"`. Busy and approval
   stay plaintext booleans, so the list can sort and badge without the key; hiding even
-  those isn't worth a sealed list.
+  those isn't worth a sealed list. So does `hello.chef`, whether the session is a tamale
+  chef: a key may have only one online, and the hub refuses a second (close code 4411).
+  Browsers and tamale still go by the sealed label's `chef`, which the hub can't forge.
 - The dashboard decrypts with the keys it holds by `mid`. A session whose key the browser
   doesn't have shows as "Encrypted session on an unknown machine: scan its code".
 - The hub log keeps pair names and short sids only, as now.

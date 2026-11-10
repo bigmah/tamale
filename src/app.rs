@@ -82,6 +82,9 @@ pub enum AppEvent {
     /// The chef `/chef` started (its server's id), or why it couldn't.
     #[cfg(unix)]
     ChefStarted(Result<u32, String>),
+    /// A chef online on another machine, which `/chef` opens instead of starting one.
+    #[cfg(unix)]
+    ChefElsewhere(Option<crate::remote::HubSession>),
 }
 
 /// What `/browser` and `/web` ask the event loop to do.
@@ -296,8 +299,13 @@ pub struct App {
     detach_requested: bool,
     /// Set when this session is a tamale chef.
     chef: Option<chef::ChefState>,
-    /// Whether `/chef` is starting one.
+    /// Whether `/chef` is starting one, or looking for one first.
     chef_starting: bool,
+    /// Only here to show a session on another machine (`tamale chef` when the chef runs
+    /// elsewhere): leaving it leaves tamale.
+    remote_only: bool,
+    /// Why the session ended, when it ended because of a problem.
+    pub exit_error: Option<String>,
 }
 
 impl App {
@@ -399,11 +407,18 @@ impl App {
             detach_requested: false,
             chef: None,
             chef_starting: false,
+            remote_only: false,
+            exit_error: None,
         }
     }
 
     pub fn mouse_enabled(&self) -> bool {
         self.settings.ui.mouse
+    }
+
+    /// Whether this tamale only shows a session on another machine (see `open_remote_chef`).
+    pub fn is_remote_only(&self) -> bool {
+        self.remote_only
     }
 
     /// Loads earlier prompts from this directory for ↑ recall, and saves new ones.
@@ -690,6 +705,8 @@ impl App {
             AppEvent::Kitchen(result) => self.on_kitchen(result),
             #[cfg(unix)]
             AppEvent::ChefStarted(result) => self.on_chef_started(result),
+            #[cfg(unix)]
+            AppEvent::ChefElsewhere(chef) => self.on_chef_elsewhere(chef),
             AppEvent::ClipboardPasted(Ok(text)) => self.on_paste(&text),
             AppEvent::ClipboardCopied(Ok(())) => self
                 .entries

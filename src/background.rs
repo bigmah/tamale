@@ -19,7 +19,7 @@ mod tests;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tamale_web_protocol::{self as protocol, Frame};
@@ -138,6 +138,40 @@ pub fn dir() -> Result<PathBuf> {
         .join(".servers");
     ensure_private(&dir)?;
     Ok(dir)
+}
+
+/// What makes a machine's chef its only one: held for as long as the chef runs, so one
+/// started alongside it can't take it. Two starting at once both find no chef in
+/// [`list`]; this decides which goes on.
+pub fn hold_chef_lock() -> Result<std::fs::File> {
+    hold_chef_lock_in(&dir()?)
+}
+
+fn hold_chef_lock_in(dir: &Path) -> Result<std::fs::File> {
+    let path = dir.join("chef.lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .with_context(|| format!("couldn't open {}", path.display()))?;
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(std::fs::TryLockError::WouldBlock) => {
+            bail!("a tamale chef is already running on this machine; `tamale chef` goes to it")
+        }
+        Err(std::fs::TryLockError::Error(e)) => {
+            Err(e).with_context(|| format!("couldn't lock {}", path.display()))
+        }
+    }
+}
+
+/// The chef running here, other than this process.
+pub fn running_chef() -> Option<u32> {
+    list()
+        .into_iter()
+        .find(|s| s.chef && s.id != std::process::id())
+        .map(|s| s.id)
 }
 
 fn ensure_private(dir: &Path) -> Result<()> {

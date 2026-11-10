@@ -272,6 +272,8 @@ enum Ended {
     Retry(String),
     /// The hub refused this session; retrying wouldn't help.
     Rejected(String),
+    /// The hub refused this chef: the key has another one online.
+    ChefTaken(String),
     /// The session is over, and the hub has been told.
     Finished,
 }
@@ -313,6 +315,11 @@ async fn run(
             Ended::Finished => return,
             Ended::Rejected(why) => {
                 report(Err(format!("The hub refused this session: {why}")));
+                return;
+            }
+            Ended::ChefTaken(why) => {
+                *problem.lock().unwrap() = Some(why.clone());
+                let _ = shared.events.send(WebEvent::ChefTaken(why));
                 return;
             }
             Ended::Retry(why) => {
@@ -482,7 +489,9 @@ fn closed(code: u16, reason: &str) -> Ended {
     } else {
         reason.to_string()
     };
-    if protocol::is_permanent(code) {
+    if code == protocol::close::CHEF_TAKEN {
+        Ended::ChefTaken(why)
+    } else if protocol::is_permanent(code) {
         Ended::Rejected(why)
     } else {
         Ended::Retry(why)
@@ -509,6 +518,7 @@ fn hello(target: &Target) -> anyhow::Result<ToHub> {
         e2e: mid.is_some(),
         mid,
         sealed,
+        chef: target.label.chef,
     })
 }
 

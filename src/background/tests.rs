@@ -298,3 +298,14 @@ async fn switching_sends_the_client_on_even_if_the_server_exits_right_after() {
     assert_eq!(receive(&mut client).await, None);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn a_machine_has_one_chef_lock_until_its_chef_ends() {
+    let dir = temp_dir();
+    let held = hold_chef_lock_in(&dir).unwrap();
+    let refused = hold_chef_lock_in(&dir).unwrap_err().to_string();
+    assert!(refused.contains("already running"), "{refused}");
+    drop(held);
+    hold_chef_lock_in(&dir).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
