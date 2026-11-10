@@ -84,8 +84,12 @@ pub struct Host {
 
 impl Host {
     /// Starts listening as this process, and ends the session on SIGTERM.
-    pub fn bind() -> Result<Self> {
+    pub fn bind(chef: bool) -> Result<Self> {
         let mut host = Self::bind_in(&super::dir()?, std::process::id())?;
+        if chef {
+            host.status.chef = true;
+            host.write_status();
+        }
         let mut terminate =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
         let tx = host.tx.clone();
@@ -129,6 +133,7 @@ impl Host {
                 attached: false,
                 since: crate::session::now(),
                 sid: crate::web::sid().to_string(),
+                chef: false,
             },
             idle_since: None,
             quit: false,
@@ -265,6 +270,7 @@ impl Host {
             attached: self.client.is_some(),
             since,
             sid: self.status.sid.clone(),
+            chef: self.status.chef,
         };
         if status != self.status {
             self.status = status;

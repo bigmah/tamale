@@ -6,6 +6,7 @@ mod approval;
 #[cfg(unix)]
 mod background;
 mod backends;
+mod chef;
 mod commands;
 mod diff;
 mod goal;
@@ -74,6 +75,13 @@ pub enum AppEvent {
     /// News of the session being driven, tagged with which time it was opened.
     #[cfg(unix)]
     Remote(u64, crate::remote::Event),
+    /// Time for a chef to look at its kitchen again.
+    KitchenTick,
+    /// The hub's list of sessions, as a chef's kitchen shows it.
+    Kitchen(Result<Vec<crate::web::KitchenSession>, String>),
+    /// The chef `/chef` started (its server's id), or why it couldn't.
+    #[cfg(unix)]
+    ChefStarted(Result<u32, String>),
 }
 
 /// What `/browser` and `/web` ask the event loop to do.
@@ -89,6 +97,8 @@ pub enum FooterTab {
     Remote,
     Web,
     Diff,
+    /// The tamale chef, which looks after every session (see `crate::chef`).
+    Chef,
 }
 
 /// What `/web` and `/remote` asked of the event loop.
@@ -284,6 +294,10 @@ pub struct App {
     /// Running as a server: a client can leave while the session goes on.
     detachable: bool,
     detach_requested: bool,
+    /// Set when this session is a tamale chef.
+    chef: Option<chef::ChefState>,
+    /// Whether `/chef` is starting one.
+    chef_starting: bool,
 }
 
 impl App {
@@ -383,6 +397,8 @@ impl App {
             should_quit: false,
             detachable: false,
             detach_requested: false,
+            chef: None,
+            chef_starting: false,
         }
     }
 
@@ -539,6 +555,7 @@ impl App {
             thread: self.thread.clone(),
             config: agent::TurnConfig {
                 web_ui: self.writes_for_web(),
+                chef: self.is_chef(),
                 ..self.settings.turn_config(self.context_tokens)
             },
             workspace: self.workspace.clone(),
@@ -571,7 +588,7 @@ impl App {
         self.save_session();
         // A fresh queue per turn: an interrupted turn's task can't take later messages.
         self.queued = agent::Steering::default();
-        agent::TurnCtx::new(
+        let ctx = agent::TurnCtx::new(
             self.permissions.clone(),
             session::checkpoint_dir(&self.session_id, turn).map(Recorder::new),
         )
@@ -580,8 +597,11 @@ impl App {
             model: self.settings.model.name.clone(),
             config: self.settings.turn_config(0),
         })
-        .with_steering(self.queued.clone())
-        .interactive()
+        .with_steering(self.queued.clone());
+        match self.kitchen_tools() {
+            Some(kitchen) => ctx.with_chef(kitchen).interactive(),
+            None => ctx.interactive(),
+        }
     }
 
     fn compact(&mut self, instructions: Option<String>) {
@@ -666,6 +686,10 @@ impl App {
             }
             #[cfg(unix)]
             AppEvent::Remote(generation, event) => self.on_remote_event(generation, event),
+            AppEvent::KitchenTick => self.refresh_kitchen(),
+            AppEvent::Kitchen(result) => self.on_kitchen(result),
+            #[cfg(unix)]
+            AppEvent::ChefStarted(result) => self.on_chef_started(result),
             AppEvent::ClipboardPasted(Ok(text)) => self.on_paste(&text),
             AppEvent::ClipboardCopied(Ok(())) => self
                 .entries

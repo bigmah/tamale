@@ -27,6 +27,11 @@ const READ_ONLY_TOOLS: &[&str] = &[
     "agent",
     // Questions only reach the user; their answers are the result.
     "ask_user",
+    // A chef's looking: listing sessions, reading them and side questions, which change
+    // nothing there (see `crate::chef`).
+    crate::chef::LIST,
+    crate::chef::READ,
+    crate::chef::ASK,
 ];
 const EDIT_TOOLS: &[&str] = &["write_file", "edit_file"];
 const PATH_TOOLS: &[&str] = &[
@@ -109,7 +114,11 @@ impl Rule {
             Some((tool, pattern)) => (tool.trim(), Some(pattern)),
             None => (text, None),
         };
-        if !READ_ONLY_TOOLS.contains(&tool) && !EDIT_TOOLS.contains(&tool) && tool != "bash" {
+        if !READ_ONLY_TOOLS.contains(&tool)
+            && !EDIT_TOOLS.contains(&tool)
+            && tool != "bash"
+            && !crate::chef::is_tool(tool)
+        {
             bail!("unknown tool {tool:?} in permission rule {text:?}");
         }
         let glob = pattern
@@ -235,10 +244,12 @@ impl Policy {
         if self.allowed_by_rules(tool, &subject) {
             return Decision::Allow;
         }
+        // A chef's message makes another session act, which is asked about like a command.
+        let acts = tool == "bash" || tool == crate::chef::MESSAGE;
         let needs_approval = match self.mode {
             Mode::Auto => false,
-            Mode::AcceptEdits => tool == "bash",
-            Mode::Ask => tool == "bash" || EDIT_TOOLS.contains(&tool),
+            Mode::AcceptEdits => acts,
+            Mode::Ask => acts || EDIT_TOOLS.contains(&tool),
         } && !READ_ONLY_TOOLS.contains(&tool);
         if needs_approval {
             Decision::Ask {
@@ -266,6 +277,14 @@ impl Policy {
         policy
             .deny
             .extend(EDIT_TOOLS.iter().map(|tool| Rule::parse(tool).unwrap()));
+        policy
+    }
+
+    /// A copy that denies edits and shell commands too, for a chef's side questions: they
+    /// may look around to answer, and nothing else.
+    pub fn look_only(&self) -> Self {
+        let mut policy = self.read_only();
+        policy.deny.push(Rule::parse("bash").unwrap());
         policy
     }
 

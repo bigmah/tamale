@@ -125,6 +125,9 @@ pub struct Status {
     /// Its id on a hub (see `web::sid`), which lists it if it's connected to one.
     #[serde(default)]
     pub sid: String,
+    /// Whether it's a tamale chef (`tamale chef`), which `/chef` goes to.
+    #[serde(default)]
+    pub chef: bool,
 }
 
 /// Where servers keep their files. Only this user can enter it, which is what guards the

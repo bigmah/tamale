@@ -115,6 +115,8 @@ have it next time."
             cost_partial: self.cost_partial,
             goal: self.goal.as_ref().map(|g| g.condition.clone()),
             queued: self.queued_messages(),
+            chef: self.is_chef(),
+            asks: true,
         };
         let approval = self.approval.as_ref().map(|p| web::Approval {
             name: p.name.clone(),
@@ -135,6 +137,7 @@ have it next time."
             question,
             roots,
             artifact_dir: web::artifact_dir(&self.session_id),
+            kitchen: self.kitchen_view(),
         }
     }
 
@@ -213,6 +216,7 @@ have it next time."
             host: web::hostname(),
             cwd,
             model: self.backend.model_label(&self.settings.model.name),
+            chef: self.is_chef(),
         }
     }
 

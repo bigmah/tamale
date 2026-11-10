@@ -243,6 +243,7 @@ impl Settings {
             reasoning: self.model.reasoning(),
             limits: self.agent,
             web_ui: false,
+            chef: false,
         }
     }
 }

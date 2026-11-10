@@ -70,6 +70,7 @@ Want your own hub? See the [self-hosting guide](docs/self-hosting.md).
 | [Diff viewer](docs/diff-viewer.md) | Reviewing changes and asking about code |
 | [Browser and web UI](docs/web.md) | `/browser`, `/web` and artifacts |
 | [Remote access](docs/remote-access.md) | Using tamale-hub, and what its encryption covers |
+| [The chef](docs/chef.md) | One agent that knows what all your sessions are doing |
 | [Self-hosting](docs/self-hosting.md) | Running your own tamale-hub |
 | [iOS app](docs/ios.md) | The iPhone app |
 | [Development](docs/development.md) | Building, testing, benchmarks and the code layout |

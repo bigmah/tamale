@@ -1,6 +1,8 @@
 {
   "status": {
+    "asks": true,
     "backend": "anthropic",
+    "chef": false,
     "compacting": false,
     "context": 12345,
     "cost": 0.42,

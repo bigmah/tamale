@@ -346,6 +346,7 @@ backend.codex_path if it isn't on PATH",
             ctx: Some(Mutex::new(ctx)),
             workspace: turn.workspace.clone(),
             tx: tx.clone(),
+            chef: turn.config.chef,
         };
         let run = Run {
             prompt,
@@ -439,6 +440,7 @@ backend.codex_path if it isn't on PATH",
             ctx: None,
             workspace: turn.workspace.clone(),
             tx: tx.clone(),
+            chef: turn.config.chef,
         };
         let mut summary = String::new();
         let mut usage = Usage::new();
@@ -552,7 +554,7 @@ backend.codex_path if it isn't on PATH",
         let mut config = vec![
             (
                 "instructions",
-                toml_string(&agent::system_prompt(&turn.workspace, turn.config.web_ui)),
+                toml_string(&agent::instructions(&turn.workspace, &turn.config)),
             ),
             ("project_doc_max_bytes", "0".into()),
             ("skills.bundled.enabled", "false".into()),

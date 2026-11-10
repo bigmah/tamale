@@ -432,6 +432,8 @@ function onMessage(m) {
       return;
     case 'artifact':
       return onArtifact(m);
+    case 'kitchen':
+      return applyKitchen(m.kitchen);
   }
 }
 
@@ -557,6 +559,7 @@ const FILE_TOOLS = new Set(['read_file', 'write_file', 'edit_file']);
 function patchTool(node, e) {
   const pending = e.output == null;
   node._entry = e;
+  node.classList.toggle('chef-step', CHEF_TOOLS.has(e.name));
   node.classList.toggle('pending', pending);
   node.classList.toggle('error', !pending && e.error);
   node.classList.toggle('done', !pending && !e.error);
@@ -977,10 +980,12 @@ const MODES = ['ask', 'accept-edits', 'auto'];
 function applyStatus(s) {
   const wasRunning = state.status?.running;
   state.status = s;
+  if (s.chef) setUpChef();
   $('project-name').textContent = s.project;
   $('project-dirs').textContent = s.dirs.length ? `+${s.dirs.length}` : '';
   $('project').title = [s.cwd, ...s.dirs].join('\n');
-  $('hero-sub').textContent = s.cwd;
+  const heroSub = $('hero-sub');
+  if (heroSub) heroSub.textContent = s.cwd;
   const mode = $('mode');
   mode.textContent = s.mode;
   mode.className = `pill mode ${s.mode}`;
@@ -999,7 +1004,8 @@ function applyStatus(s) {
   if (ranLong && !document.hasFocus()) state.doneUnseen = true;
   if (s.running) state.doneUnseen = false;
   state.runSince = s.running ? s.since : null;
-  document.title = `${s.running ? '● ' : state.doneUnseen ? '✓ ' : ''}${s.project} · tamale`;
+  const name = s.chef ? 'chef' : s.project;
+  document.title = `${s.running ? '● ' : state.doneUnseen ? '✓ ' : ''}${name} · tamale`;
   updateSend();
   updateActivity();
   // The agent may have changed files while it ran.
@@ -1017,6 +1023,202 @@ $('mode').onclick = () => {
   send({ t: 'send', text: `/permissions ${next}` });
 };
 $('model').onclick = () => setInput('/model ');
+
+// ---------------------------------------------------------------- chef
+//
+// A tamale chef (src/chef.rs) looks after the other sessions. Its page is this one in amber,
+// with a kitchen panel of the sessions it can reach, kept current by `kitchen` messages.
+
+const CHEF_TOOLS = new Set(['list_sessions', 'read_session', 'ask_sessions', 'message_session']);
+const KITCHEN_STATES = {
+  approval: { label: 'needs you', rank: 0 },
+  working: { label: 'working', rank: 1 },
+  idle: { label: 'idle', rank: 2 },
+  offline: { label: 'offline', rank: 3 },
+};
+const TOQUE =
+  '<svg class="toque" viewBox="0 0 64 64" aria-hidden="true">' +
+  '<path class="toque-puff" d="M19 41c-6.6-1.4-11.5-7.2-11.5-14 0-7.9 6.4-14.3 14.3-14.3 1.9 0 3.7.4 5.4 1.1C29.6 8.9 34.5 5.5 40.2 5.5c7.9 0 14.3 6.4 14.3 14.3 0 .6 0 1.1-.1 1.7 2.9 2 4.6 5.2 4.6 8.8 0 5.4-3.9 9.9-9 10.7"/>' +
+  '<path class="toque-body" d="M19 41h31v9H19z"/>' +
+  '<path class="toque-pleat" d="M27 31v10M34.5 29v12M42 31v10"/>' +
+  '<rect class="toque-band" x="17" y="50" width="35" height="8" rx="2"/>' +
+  '</svg>';
+
+let chefReady = false;
+
+/** What the empty prompt says: who you're talking to, and on a keyboard, about `/`. */
+function promptPlaceholder() {
+  const who = chefReady ? 'Ask the chef about your sessions…' : 'Ask tamale anything…';
+  return touch.matches ? who : `${who}   / for commands`;
+}
+let kitchenSeen = new Map();
+
+function setUpChef() {
+  if (chefReady) return;
+  chefReady = true;
+  document.body.classList.add('chef');
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#1f1a12');
+  document.querySelector('.brand-name').innerHTML = 'tamale <span class="brand-chef">chef</span>';
+  $('kitchen').hidden = narrow.matches;
+  $('toggle-kitchen').hidden = false;
+  input.placeholder = promptPlaceholder();
+  const hero = $('hero');
+  hero.classList.add('chef-hero');
+  hero.innerHTML =
+    `<div class="hero-mark chef-mark">${TOQUE}<span class="chef-tamale">🫔</span></div>` +
+    '<h1>What\'s cooking?</h1>' +
+    '<p class="hero-lede">I keep an eye on every tamale session on your machines. Ask me what they\'re doing, ' +
+    'ask them questions, or pass them instructions.</p>' +
+    '<div class="hero-kitchen" id="hero-kitchen"></div>' +
+    '<div class="hero-chips">' +
+    '<button class="chip" data-send="What is everyone working on?">What is everyone working on?</button>' +
+    '<button class="chip" data-send="Which sessions need me right now, and for what?">Which sessions need me?</button>' +
+    '<button class="chip" data-send="Ask all sessions whether their tests pass, and summarize.">Do the tests pass everywhere?</button>' +
+    '<button class="chip" data-send="Are any two sessions working on the same files or likely to conflict?">Any conflicts brewing?</button>' +
+    '</div>';
+  bindChips(hero);
+  if (state.kitchen) applyKitchen(state.kitchen);
+}
+
+function applyKitchen(k) {
+  state.kitchen = k;
+  if (!chefReady) return;
+  const sessions = [...(k.sessions || [])].sort(
+    (a, b) => (KITCHEN_STATES[a.state]?.rank ?? 9) - (KITCHEN_STATES[b.state]?.rank ?? 9),
+  );
+  const count = (st) => sessions.filter((s) => s.state === st).length;
+  const needs = count('approval');
+  const stats = [
+    ['approval', needs, 'need you'],
+    ['working', count('working'), 'working'],
+    ['idle', count('idle'), 'idle'],
+    ['offline', count('offline'), 'offline'],
+  ].filter(([, n]) => n > 0);
+  const statHtml = stats.map(([st, n, label]) => `<span class="k-stat st-${st}"><b>${n}</b> ${label}</span>`).join('');
+
+  $('k-live').className = `k-live${k.loading ? ' loading' : k.problem ? ' stale' : ''}`;
+  $('k-live').title = k.problem ? k.problem : 'Live: refreshes every few seconds';
+  $('k-stats').innerHTML = statHtml;
+  $('k-stats').hidden = !statHtml;
+  $('kitchen-count').textContent = needs ? String(needs) : sessions.length ? String(sessions.length) : '';
+  $('toggle-kitchen').classList.toggle('alert', needs > 0);
+
+  const heroK = $('hero-kitchen');
+  if (heroK) {
+    heroK.innerHTML = k.loading
+      ? '<span class="k-stat">Looking around the kitchen…</span>'
+      : sessions.length
+        ? `<span class="k-stat total"><b>${sessions.length}</b> session${sessions.length === 1 ? '' : 's'}</span>${statHtml}`
+        : `<span class="k-stat">${esc(k.problem || 'No other sessions on the hub yet.')}</span>`;
+  }
+
+  const list = $('k-list');
+  if (!sessions.length) {
+    list.replaceChildren(
+      h('div', { class: 'k-empty' },
+        h('div', { class: 'k-empty-mark', html: TOQUE }),
+        h('p', { text: k.loading ? 'Looking around…' : k.problem || 'No other sessions yet.' }),
+        !k.loading && !k.problem &&
+          h('p', { class: 'k-empty-hint', html: 'Turn on <kbd>/remote</kbd> in a session (with the same hub key) to bring it into the kitchen.' }),
+      ),
+    );
+    return;
+  }
+  const seen = new Map();
+  list.replaceChildren(
+    ...sessions.map((s) => {
+      seen.set(s.id, s.state);
+      const changed = kitchenSeen.size && kitchenSeen.get(s.id) !== s.state;
+      return kitchenCard(s, changed);
+    }),
+  );
+  kitchenSeen = seen;
+}
+
+function kitchenCard(s, changed) {
+  const place = [s.host, s.cwd].filter(Boolean).join(':') || s.id;
+  const label = KITCHEN_STATES[s.state]?.label ?? s.state;
+  const card = h('div', {
+    class: `k-card st-${s.state}${changed ? ' changed' : ''}`,
+    tabindex: 0,
+    title: `${place}\nClick to ask what it's doing`,
+  });
+  card.innerHTML =
+    `<div class="k-top"><span class="k-dot"></span><span class="k-host">${esc(s.host || '?')}</span>` +
+    `<span class="k-id">${esc(s.id)}</span></div>` +
+    `<div class="k-cwd">${esc(s.cwd)}</div>` +
+    `<div class="k-what">${s.title ? esc(s.title) : '<i>Nothing asked yet</i>'}</div>` +
+    `<div class="k-meta"><span class="k-state">${esc(label)}</span>` +
+    (s.model ? `<span class="k-model">${esc(s.model)}</span>` : '') +
+    (s.viewers ? `<span>${s.viewers} viewing</span>` : '') +
+    '</div>' +
+    '<div class="k-actions">' +
+    (s.state === 'approval' ? '<button data-act="needs" class="primary">What does it need?</button>' : '') +
+    '<button data-act="catchup">Catch me up</button>' +
+    '<button data-act="ask">Ask…</button>' +
+    '</div>';
+  const who = `${s.id} (${place})`;
+  const act = {
+    needs: () => ask(`What is session ${who} waiting for me to approve, and should I?`),
+    catchup: () => ask(`Catch me up on session ${who}: what was it asked, what has it done, and where is it now?`),
+    ask: () => {
+      setInput(`Ask ${s.id}: `);
+      input.focus();
+    },
+    open: () => ask(`What is session ${who} working on right now?`),
+  };
+  card.onclick = (ev) => {
+    const which = ev.target.closest('button')?.dataset.act ?? 'open';
+    act[which]?.();
+    if (narrow.matches) closeKitchen();
+  };
+  card.onkeydown = (ev) => {
+    if (ev.key === 'Enter' && ev.target === card) act.open();
+  };
+  return card;
+}
+
+function openKitchen() {
+  $('kitchen').hidden = false;
+  $('kitchen').classList.add('drawer');
+  $('toggle-kitchen').classList.add('on');
+  pushLayer(closeKitchen);
+}
+
+function closeKitchen() {
+  if (!narrow.matches) return;
+  $('kitchen').hidden = true;
+  $('kitchen').classList.remove('drawer');
+  $('toggle-kitchen').classList.remove('on');
+  dropLayer(closeKitchen);
+}
+
+$('toggle-kitchen').onclick = () => {
+  if (!narrow.matches) {
+    // Wide enough to sit beside the chat: the button shows or hides it.
+    $('kitchen').hidden = !$('kitchen').hidden;
+    $('toggle-kitchen').classList.toggle('on', !$('kitchen').hidden);
+  } else if ($('kitchen').hidden) openKitchen();
+  else closeKitchen();
+};
+$('k-close').onclick = () => {
+  if (narrow.matches) closeKitchen();
+  else {
+    $('kitchen').hidden = true;
+    $('toggle-kitchen').classList.remove('on');
+  }
+};
+$('k-askall').onclick = () => {
+  setInput('Ask all sessions: ');
+  input.focus();
+  if (narrow.matches) closeKitchen();
+};
+narrow.addEventListener('change', () => {
+  if (!chefReady) return;
+  $('kitchen').classList.remove('drawer');
+  $('kitchen').hidden = narrow.matches;
+  $('toggle-kitchen').classList.toggle('on', !narrow.matches);
+});
 
 // ---------------------------------------------------------------- approval
 
@@ -1107,7 +1309,7 @@ function applyQuestion(q) {
   node.hidden = !q;
   syncDiffLayout();
   updateActivity();
-  input.placeholder = q ? 'Or reply in your own words…' : touch.matches ? 'Ask tamale anything…' : 'Ask tamale anything…   / for commands';
+  input.placeholder = q ? 'Or reply in your own words…' : promptPlaceholder();
   if (!q) {
     node.replaceChildren();
     if (had && !document.hasFocus()) document.title = document.title.replace(/^⚠ /, '');
@@ -1524,11 +1726,21 @@ input.addEventListener('keydown', (ev) => {
   }
 });
 
-for (const chip of document.querySelectorAll('.chip')) {
-  chip.onclick = () => {
-    if (chip.dataset.command) runLocal(chip.dataset.command);
-    else setInput(chip.dataset.prompt);
-  };
+function bindChips(root = document) {
+  for (const chip of root.querySelectorAll('.chip')) {
+    chip.onclick = () => {
+      if (chip.dataset.command) runLocal(chip.dataset.command);
+      else if (chip.dataset.send) ask(chip.dataset.send);
+      else setInput(chip.dataset.prompt);
+    };
+  }
+}
+bindChips();
+
+/** Sends `text` as a prompt straight away, as if typed and sent. */
+function ask(text) {
+  setInput(text);
+  submit();
 }
 
 /** Adds `text` to the prompt on a paragraph of its own, ready for a question. */
@@ -3097,7 +3309,7 @@ addEventListener('keydown', (ev) => {
 window.visualViewport?.addEventListener('resize', fitViewport);
 window.visualViewport?.addEventListener('scroll', fitViewport);
 fitViewport();
-if (touch.matches) input.placeholder = 'Ask tamale anything…';
+input.placeholder = promptPlaceholder();
 if (store.get('codeOpen', false)) openCode();
 renderView();
 autosize();

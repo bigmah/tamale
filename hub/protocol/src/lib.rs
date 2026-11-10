@@ -151,6 +151,14 @@ pub struct Label {
     pub host: String,
     pub cwd: String,
     pub model: String,
+    /// Whether it's a tamale chef, which looks after the key's other sessions rather than
+    /// working in a project (see tamale's `docs/chef.md`).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub chef: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 /// tamale → hub.
@@ -281,6 +289,7 @@ mod tests {
                 host: "vps-b".into(),
                 cwd: "~/api".into(),
                 model: "claude-opus-5-5".into(),
+                ..Default::default()
             },
             mid: Some("1".repeat(32)),
             e2e: true,

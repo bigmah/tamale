@@ -115,6 +115,7 @@ export function withLabels(session, label, status) {
     cwd: text(label.cwd),
     title: text(status.title),
     model: text(status.model) || text(label.model),
+    chef: label.chef === true,
     encrypted: true,
   };
 }

@@ -235,3 +235,39 @@ fn read_only_copies_deny_edits_and_keep_the_mode_and_rules() {
         Decision::Ask { .. }
     ));
 }
+
+#[test]
+fn a_side_question_may_look_but_not_touch() {
+    let mut settings = crate::config::Settings::default().permissions;
+    settings.mode = Mode::Auto;
+    let policy = Policy::new(&settings, "/repo".into()).look_only();
+    assert!(matches!(policy.check("read_file", &json!({ "path": "a.rs" })), Decision::Allow));
+    assert!(matches!(policy.check("grep", &json!({ "pattern": "x" })), Decision::Allow));
+    for (tool, args) in [
+        ("bash", json!({ "command": "ls" })),
+        ("bash", json!({ "command": "rm -rf / && echo" })),
+        ("edit_file", json!({ "path": "a.rs" })),
+        ("write_file", json!({ "path": "b.rs" })),
+    ] {
+        assert!(matches!(policy.check(tool, &args), Decision::Deny(_)), "{tool} {args}");
+    }
+}
+
+#[test]
+fn a_chef_asks_before_it_messages_a_session_but_never_to_look() {
+    let mut settings = crate::config::Settings::default().permissions;
+    for mode in [Mode::Ask, Mode::AcceptEdits] {
+        settings.mode = mode;
+        let policy = Policy::new(&settings, "/repo".into());
+        let message = json!({ "session": "a1b2c3", "message": "run the tests" });
+        assert!(matches!(policy.check("message_session", &message), Decision::Ask { .. }));
+        for tool in ["list_sessions", "read_session", "ask_sessions"] {
+            assert!(matches!(policy.check(tool, &json!({})), Decision::Allow), "{tool}");
+        }
+    }
+    settings.mode = Mode::Auto;
+    let policy = Policy::new(&settings, "/repo".into());
+    assert!(matches!(policy.check("message_session", &json!({})), Decision::Allow));
+    // "Always allow" works for it, and a deny rule can switch it off.
+    assert!(Rule::parse("message_session").is_ok());
+}

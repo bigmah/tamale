@@ -179,7 +179,7 @@ function shortPath(path) {
   return parts.length > 2 ? parts.slice(-2).join('/') : path || '';
 }
 
-const titleOf = (s) => s.title || shortPath(s.cwd).split('/').pop() || 'New session';
+const titleOf = (s) => (s.chef ? 'tamale chef' : s.title || shortPath(s.cwd).split('/').pop() || 'New session');
 
 /**
  * The list's order, which only depends on where sessions are: rows that move when one gets
@@ -187,7 +187,8 @@ const titleOf = (s) => s.title || shortPath(s.cwd).split('/').pop() || 'New sess
  * Alt+1 means. The dots say what's going on. Gone machines sink, each to the end of its own.
  */
 function ordered(sessions) {
-  const by = (s) => [s.host || '', s.online ? 0 : 1, s.cwd || '', s.sid];
+  // A chef, which looks after all the others, comes first.
+  const by = (s) => [s.chef ? 0 : 1, s.host || '', s.online ? 0 : 1, s.cwd || '', s.sid];
   return [...sessions].sort((a, b) => {
     const [x, y] = [by(a), by(b)];
     const i = x.findIndex((v, n) => v !== y[n]);
@@ -197,13 +198,14 @@ function ordered(sessions) {
 
 function sessionItem(s, showKey) {
   const state = stateOf(s);
-  const link = el('a', `session ${state === 'offline' ? 'offline' : ''}`);
+  const link = el('a', `session ${state === 'offline' ? 'offline' : ''}${s.chef ? ' chef' : ''}`);
   link.href = s.open;
   link.dataset.sid = s.sid;
-  link.append(el('span', `dot ${state}`), el('span', 'title', titleOf(s)));
+  link.append(s.chef ? el('span', 'chef-mark', '🫔') : el('span', `dot ${state}`), el('span', 'title', titleOf(s)));
   link.append(el('span', 'when', state === 'idle' ? ago(s.idle) : ''));
   const meta = el('span', `meta ${state}`);
-  if (state === 'approval') meta.textContent = 'Needs approval';
+  if (s.chef) meta.textContent = state === 'busy' ? 'Asking around…' : `Looks after every session · ${s.host}`;
+  else if (state === 'approval') meta.textContent = 'Needs approval';
   else if (state === 'busy') meta.textContent = `Working · ${shortPath(s.cwd)}`;
   else if (state === 'offline') meta.textContent = `Offline · ${shortPath(s.cwd)}`;
   else meta.textContent = [shortPath(s.cwd), s.model].filter(Boolean).join(' · ');
@@ -256,12 +258,15 @@ function setView(view) {
 }
 
 function drawList(showKey) {
-  const hosts = new Set(sessions.map((s) => s.host));
+  const hosts = new Set(sessions.filter((s) => !s.chef).map((s) => s.host));
   const nodes = [];
   let host = null;
   for (const s of sessions) {
-    if (hosts.size > 1 && s.host !== host) nodes.push(el('div', 'group', s.host));
-    host = s.host;
+    // A chef stands above the machines, so it starts no group.
+    if (!s.chef) {
+      if (hosts.size > 1 && s.host !== host) nodes.push(el('div', 'group', s.host));
+      host = s.host;
+    }
     nodes.push(sessionItem(s, showKey));
   }
   // Every few seconds: don't take away the row under the keyboard if nothing changed.

@@ -2012,6 +2012,7 @@ fn startup_mentions_only_sessions_there_are_to_go_back_to() {
         attached,
         since: 0,
         sid: String::new(),
+        chef: false,
     };
     let note = |sessions: &[Status]| {
         background::open_sessions_note(sessions, std::path::Path::new("/project"))
@@ -2060,6 +2061,7 @@ async fn sessions_picker_joins_stops_and_keeps_its_place() {
         attached: false,
         since: 0,
         sid: format!("sid{id}"),
+        chef: false,
     };
     let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
     let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
@@ -2174,6 +2176,7 @@ async fn sessions_tab_lists_both_kinds_and_drives_a_remote_one() {
         attached: false,
         since: 0,
         sid: "aa".into(),
+        chef: false,
     }];
     app.on_app_event(AppEvent::HubSessions(Ok(vec![
         hub_session("aa", "this-box", "local one"),
@@ -2469,4 +2472,51 @@ async fn big_pastes_collapse_in_the_prompt_and_expand_when_sent() {
         app.prompts.prev(""),
         Some(format!("look: {wall} small\npaste"))
     );
+}
+
+#[tokio::test]
+async fn a_chef_shows_its_kitchen_beside_a_welcome() {
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    app.set_chef();
+    let session = |id: &str, host: &str, cwd: &str, title: &str, state| crate::web::KitchenSession {
+        id: id.into(),
+        host: host.into(),
+        cwd: cwd.into(),
+        title: title.into(),
+        model: "claude-opus-5-5".into(),
+        state,
+        viewers: 0,
+    };
+    app.on_app_event(AppEvent::Kitchen(Ok(vec![
+        session("a1b2c3", "laptop", "~/dev/api", "add rate limits to the public API", "working"),
+        session("d4e5f6", "vps-1", "~/web", "fix the login page", "idle"),
+        session("0a9b8c", "laptop", "~/dev/tamale", "", "approval"),
+    ])));
+    let lines = screen_lines(&mut app, 120, 40);
+    let text = lines.join("\n");
+    if std::env::var_os("SHOW_SCREEN").is_some() {
+        println!("{text}");
+    }
+    assert!(text.contains("Kitchen"), "{text}");
+    assert!(text.contains("c h e f"), "{text}");
+    // What needs you comes first.
+    let approval = text.find("0a9b8c").unwrap();
+    let working = text.find("a1b2c3").unwrap();
+    assert!(approval < working, "{text}");
+    assert!(text.contains("needs you"));
+    assert!(text.contains("3 sessions"));
+
+    // Too narrow for the panel: the chat keeps the width.
+    let narrow = screen_lines(&mut app, 80, 30).join("\n");
+    assert!(!narrow.contains("Kitchen"), "{narrow}");
+
+    // Its turns use the chef's tools.
+    let ctx = app.begin_turn("what's everyone doing?".into());
+    assert!(ctx.chef.is_some());
+    assert!(app.backend_turn(String::new()).config.chef);
 }

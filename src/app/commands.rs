@@ -414,6 +414,7 @@ impl App {
             }
             #[cfg(unix)]
             "/sessions" => self.open_sessions_picker(),
+            "/chef" => self.chef_command(),
             "/resume" | "/continue" => self.resume_command(cmd.split_whitespace().nth(1)),
             "/add-dir" => self.add_dir(cmd["/add-dir".len()..].trim()),
             "/goal" => self.goal_command(cmd["/goal".len()..].trim()),

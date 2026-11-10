@@ -11,6 +11,7 @@
     {
       "approval": true,
       "busy": true,
+      "chef": false,
       "cwd": "",
       "e2e": true,
       "host": "",
@@ -29,6 +30,7 @@
     {
       "approval": false,
       "busy": false,
+      "chef": false,
       "cwd": "~/api",
       "e2e": false,
       "host": "vps-b",

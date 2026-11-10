@@ -40,6 +40,8 @@ pub struct Tools {
     pub ctx: Option<Mutex<TurnCtx>>,
     pub workspace: Workspace,
     pub tx: mpsc::UnboundedSender<AgentEvent>,
+    /// Whether it's a tamale chef's run, which lists the chef's tools.
+    pub chef: bool,
 }
 
 impl Tools {
@@ -209,7 +211,7 @@ async fn handle(
             Ok(false)
         }
         method => {
-            let reply = respond(id, method, &params);
+            let reply = respond(id, method, &params, tools.chef);
             write_response(stream, "200 OK", Some(&reply)).await?;
             Ok(true)
         }
@@ -217,7 +219,7 @@ async fn handle(
 }
 
 /// Replies to every method except `tools/call`.
-fn respond(id: Value, method: &str, params: &Value) -> Value {
+fn respond(id: Value, method: &str, params: &Value, chef: bool) -> Value {
     let result = match method {
         "initialize" => json!({
             "protocolVersion": params
@@ -229,7 +231,7 @@ fn respond(id: Value, method: &str, params: &Value) -> Value {
         }),
         "ping" => json!({}),
         "tools/list" => {
-            let list: Vec<Value> = tools::definitions()
+            let list: Vec<Value> = tools::definitions_for(chef)
                 .into_iter()
                 .map(|d| {
                     json!({

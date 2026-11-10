@@ -111,6 +111,8 @@ impl App {
                 view.transcript.invalidate_from(from);
             }
             RemoteEvent::Message(Incoming::Status(status)) => view.status = *status,
+            // Only the chef asks side questions; this view never does.
+            RemoteEvent::Message(Incoming::Answer { .. }) => {}
             RemoteEvent::Message(Incoming::Approval(approval)) => {
                 let same = |prompt: &Prompt| Some(&prompt.approval) == approval.as_ref();
                 if !view.prompt.as_ref().is_some_and(same) {

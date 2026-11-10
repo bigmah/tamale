@@ -203,6 +203,13 @@ pub enum WebEvent {
     Answer(Vec<crate::tools::ask::Answer>),
     /// End the session, as `tamale kill` does: it stays saved.
     Close,
+    /// A side question from a tamale chef, answered from this session's context without
+    /// adding to its conversation. The answer goes back to tab `tab` with [`Replier`].
+    Ask {
+        tab: u64,
+        id: String,
+        question: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -244,6 +251,10 @@ pub struct Status {
     pub cost_partial: bool,
     pub goal: Option<String>,
     pub queued: Vec<String>,
+    /// Whether this session is a tamale chef (see `crate::chef`).
+    pub chef: bool,
+    /// Whether it answers a chef's side questions (`ask`); older tamales don't.
+    pub asks: bool,
 }
 
 #[derive(Serialize, PartialEq, Clone, Debug)]
@@ -271,6 +282,40 @@ pub struct View<'a> {
     pub roots: Vec<PathBuf>,
     /// Where finished artifacts are saved, if anywhere.
     pub artifact_dir: Option<PathBuf>,
+    /// A chef's view of the other sessions, for the page's kitchen panel.
+    pub kitchen: Option<Kitchen>,
+}
+
+/// The sessions a chef looks after, as its page lists them.
+#[derive(Serialize, PartialEq, Clone, Debug, Default)]
+pub struct Kitchen {
+    pub sessions: Vec<KitchenSession>,
+    /// Why the list couldn't be had (no key, the hub's down), if it couldn't.
+    pub problem: Option<String>,
+    pub loading: bool,
+}
+
+#[derive(Serialize, PartialEq, Clone, Debug)]
+pub struct KitchenSession {
+    /// The short id the chef and the user call it by.
+    pub id: String,
+    pub host: String,
+    pub cwd: String,
+    pub title: String,
+    pub model: String,
+    /// `working`, `approval`, `idle` or `offline`.
+    pub state: &'static str,
+    pub viewers: usize,
+}
+
+/// Sends replies to one tab outside the sync, from a task that finishes later.
+#[derive(Clone)]
+pub struct Replier(Arc<Shared>);
+
+impl Replier {
+    pub fn send(&self, tab: u64, message: String) {
+        self.0.send_to(tab, message);
+    }
 }
 
 pub struct Server {
@@ -609,6 +654,11 @@ impl Server {
         client.welcomed = true;
     }
 
+    /// What answers a tab later, after the event that asked has been handled.
+    pub fn replier(&self) -> Replier {
+        Replier(self.shared.clone())
+    }
+
     /// Sends a tab the page of entries before `before`. This runs between syncs, so it can't
     /// overtake an update that changes those entries.
     pub fn older(&self, id: u64, before: usize) {
@@ -679,6 +729,7 @@ struct Mirror {
     status: String,
     approval: String,
     question: String,
+    kitchen: String,
     artifacts: Arc<Mutex<Artifacts>>,
 }
 
@@ -715,6 +766,17 @@ impl Mirror {
             out.push(question.clone());
             self.question = question;
         }
+        // Only a chef has one, so other sessions' pages never hear of it.
+        let kitchen = match &view.kitchen {
+            Some(kitchen) => json!({ "t": "kitchen", "kitchen": kitchen }).to_string(),
+            None => String::new(),
+        };
+        if kitchen != self.kitchen {
+            if !kitchen.is_empty() {
+                out.push(kitchen.clone());
+            }
+            self.kitchen = kitchen;
+        }
         self.hub_status = relay::HubStatus {
             busy: view.status.running || view.status.compacting,
             approval: view.approval.is_some() || view.question.is_some(),
@@ -744,6 +806,7 @@ impl Mirror {
                 self.status.clone(),
                 self.approval.clone(),
                 self.question.clone(),
+                self.kitchen.clone(),
             ])
             .filter(|m| !m.is_empty())
             .collect()
@@ -1005,6 +1068,19 @@ fn handle(shared: &Arc<Shared>, id: u64, request: Value) {
         "close" => {
             let _ = shared.events.send(WebEvent::Close);
         }
+        // A chef's side question. Only clients that are another tamale ask (a page has no
+        // use for it), and the answer goes back to just the one that asked.
+        "ask" => {
+            let question = str_field("question");
+            let ask_id = str_field("id");
+            if !question.trim().is_empty() && !ask_id.is_empty() {
+                let _ = shared.events.send(WebEvent::Ask {
+                    tab: id,
+                    id: ask_id,
+                    question,
+                });
+            }
+        }
         "approve" => {
             let choice = match str_field("choice").as_str() {
                 "yes" => Choice::Yes,
@@ -1152,6 +1228,7 @@ mod tests {
             question: None,
             roots: Vec::new(),
             artifact_dir: None,
+            kitchen: None,
         }
     }
 
@@ -1424,6 +1501,7 @@ mod tests {
             host: "h".into(),
             cwd: "c".into(),
             model: "m".into(),
+            ..Default::default()
         };
         // Nothing listens there: the link doesn't wait for the connection.
         server.connect_hub("ws://127.0.0.1:1", "token", label, None);
@@ -1658,7 +1736,7 @@ mod tests {
         server.connect_hub(
             &hub,
             "f00d",
-            Label { host: "laptop".into(), cwd: LABEL.into(), model: "m".into() },
+            Label { host: "laptop".into(), cwd: LABEL.into(), model: "m".into(), ..Default::default() },
             Some(keys.clone()),
         );
         // The link shown on the terminal has nothing secret in it.
@@ -1824,7 +1902,7 @@ mod tests {
         let mut server = Server::start(false).await.unwrap();
         let entries = vec![Entry::User("Remote smoke test".into())];
         server.sync(view(&entries));
-        server.connect_hub(&hub, &token, Label { host: "laptop".into(), cwd: "~/dev/tamale".into(), model: "test".into() }, None);
+        server.connect_hub(&hub, &token, Label { host: "laptop".into(), cwd: "~/dev/tamale".into(), model: "test".into(), ..Default::default() }, None);
         let deadline = std::time::Duration::from_secs(15);
         loop {
             match tokio::time::timeout(deadline, server.events.recv()).await.unwrap().unwrap() {
@@ -1904,6 +1982,109 @@ for (let i = 1; i <= 14; i++) {
 document.getElementById('m').innerHTML = html;
 </script></body></html>"#;
 
+    /// A chef's page with a sample kitchen and conversation, served on this machine until
+    /// `TAMALE_FAKE_SECONDS` (default 60) pass, for looking at: prints `URL=<url>`.
+    /// `cargo test -p tamale fake_chef_page -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn fake_chef_page() {
+        let seconds: u64 = std::env::var("TAMALE_FAKE_SECONDS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(60);
+        let empty = std::env::var_os("TAMALE_FAKE_EMPTY").is_some();
+        let mut server = Server::start(false).await.unwrap();
+        println!("URL={}", server.url);
+        let mut entries = vec![Entry::Info("Welcome! Type a request and press Enter. /help for commands.".into())];
+        if !empty {
+            entries.extend([
+                Entry::User("What is everyone working on?".into()),
+                Entry::Tool {
+                    name: "list_sessions".into(),
+                    summary: String::new(),
+                    description: "Look around the kitchen".into(),
+                    output: Some(("3 sessions on the hub".into(), false)),
+                },
+                Entry::Tool {
+                    name: "ask_sessions".into(),
+                    summary: "a1b2c3, d4e5f6 → What are you working on, and what's left?".into(),
+                    description: "Ask the two busy sessions what's left".into(),
+                    output: Some(("## laptop:~/dev/api [a1b2c3]\n…".into(), false)),
+                },
+                Entry::Assistant(
+                    "Three sessions are cooking. **One needs you.**\n\n\
+                     - **`laptop:~/dev/tamale`** (0a9b8c) is waiting for approval to run \
+                     `cargo publish`. Worth a look before you say yes.\n\
+                     - **`laptop:~/dev/api`** (a1b2c3) is adding rate limits: middleware done, \
+                     two tests still failing in `limits_test.rs`. It expects ~10 more minutes.\n\
+                     - **`vps-1:~/web`** (d4e5f6) finished the login fix and is idle, waiting \
+                     for review.\n\n\
+                     > [!NOTE]\n> `api` and `web` both touched `auth/session.rs`; expect a \
+                     merge conflict."
+                        .into(),
+                ),
+            ]);
+        }
+        let session = |id: &str, host: &str, cwd: &str, title: &str, state, viewers| KitchenSession {
+            id: id.into(),
+            host: host.into(),
+            cwd: cwd.into(),
+            title: title.into(),
+            model: "claude-opus-5-5".into(),
+            state,
+            viewers,
+        };
+        let kitchen = Kitchen {
+            sessions: vec![
+                session("0a9b8c", "laptop", "~/dev/tamale", "release 0.1.7 to crates.io", "approval", 0),
+                session("a1b2c3", "laptop", "~/dev/api", "add rate limits to the public API and make the tests pass", "working", 1),
+                session("d4e5f6", "vps-1", "~/web", "fix the login page redirect loop", "idle", 0),
+                session("77aa11", "mini", "~/dev/old-thing", "", "offline", 0),
+            ],
+            problem: None,
+            loading: false,
+        };
+        fn chef_view<'a>(entries: &'a [Entry], kitchen: &Kitchen) -> View<'a> {
+            View {
+            status: Status {
+                project: "chef".into(),
+                cwd: "~".into(),
+                model: "Claude Opus 5.5".into(),
+                backend: "Anthropic API".into(),
+                signed_in: true,
+                mode: "ask",
+                thinking: "adaptive",
+                window: 200_000,
+                context: 18_000,
+                cost: 0.21,
+                chef: true,
+                asks: true,
+                ..Status::default()
+            },
+            entries,
+            approval: None,
+            question: None,
+            roots: Vec::new(),
+            artifact_dir: None,
+            kitchen: Some(kitchen.clone()),
+            }
+        }
+        let view = |entries| chef_view(entries, &kitchen);
+        server.sync(view(&entries));
+        let end = tokio::time::Instant::now() + std::time::Duration::from_secs(seconds);
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep_until(end) => break,
+                Some(event) = server.events.recv() => {
+                    if let WebEvent::Connected(id) = event {
+                        server.sync(view(&entries));
+                        server.welcome(id);
+                    }
+                }
+            }
+        }
+    }
+
     /// A stand-in session for the iOS app's integration test (`apple/scripts/integration.sh`):
     /// connects to the hub at `TAMALE_HUB_URL` with `TAMALE_HUB_KEY`, end-to-end encrypted,
     /// prints `SID=<sid>`, and answers each prompt with a reply and an artifact until
@@ -1977,7 +2158,7 @@ document.getElementById('m').innerHTML = html;
         server.connect_hub(
             &hub,
             &tamale_hub_protocol::auth_value(&key),
-            Label { host: "fake-host".into(), cwd: "~/dev/fake".into(), model: "fake-model".into() },
+            Label { host: "fake-host".into(), cwd: "~/dev/fake".into(), model: "fake-model".into(), ..Default::default() },
             Some(e2e::Keys::from_key(&key)),
         );
         println!("SID={}", relay::sid());

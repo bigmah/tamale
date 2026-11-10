@@ -60,6 +60,8 @@
 - `/backend` opens a backend picker; `/backend api|claude-code|codex` switches directly, keeping the conversation
 - `/login` signs in to Claude Code or Codex (with their backends; see [Backends](backends.md))
 - `/add-dir [path]` adds a directory to the agent's scope, or lists the current scope
+- `/chef` goes to the tamale chef, which looks after all your sessions (see [The chef](chef.md));
+  the footer's **Chef** tab does the same
 - `/resume [n|id]` continues a saved session (see [Sessions](sessions.md#sessions))
 - `/undo` and `/rewind` restore files and rewind the conversation (see [Checkpoints](sessions.md#checkpoints-and-undo))
 - `/diff [args]` opens the diff viewer (see [Diff viewer](diff-viewer.md))

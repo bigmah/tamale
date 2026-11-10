@@ -71,6 +71,10 @@ pub async fn run_command(command: &Command) -> Result<()> {
 /// The running session `--continue` attaches to instead of starting one: the latest from
 /// this directory.
 pub fn session_to_rejoin(cli: &Cli) -> Result<Option<u32>> {
+    // There's one chef: `tamale chef` goes back to it wherever it was started.
+    if cli.chef {
+        return Ok(list().into_iter().find(|s| s.chef).map(|s| s.id));
+    }
     if cli.resume != Some(Resume::Latest) {
         return Ok(None);
     }
@@ -169,11 +173,21 @@ pub async fn stop(id: u32) -> Result<()> {
 
 /// Starts a server with this command line's arguments and attaches to it.
 pub async fn start_and_attach() -> Result<()> {
+    let id = start_server(std::env::args_os().skip(1)).await?;
+    attach(id).await
+}
+
+/// Starts a server with `args` (in this directory) and returns its id once it's listening.
+pub async fn start_server<I, S>(args: I) -> Result<u32>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
     let dir = super::dir()?;
     let exe = std::env::current_exe().context("couldn't find tamale's executable")?;
     let mut command = std::process::Command::new(exe);
     command
-        .args(std::env::args_os().skip(1))
+        .args(args)
         .arg("--server")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -200,7 +214,7 @@ pub async fn start_and_attach() -> Result<()> {
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    attach(id).await
+    Ok(id)
 }
 
 /// The end of a server's log, as text to add to a message.
@@ -419,6 +433,7 @@ mod tests {
             attached: false,
             since: 0,
             sid: String::new(),
+            chef: false,
         }]);
         assert!(
             !lines[0].contains('\u{1b}') && !lines[0].contains('\u{7}'),

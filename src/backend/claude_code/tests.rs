@@ -271,6 +271,7 @@ async fn bridge_serves_tamale_tools_over_mcp() {
             additional_dirs: vec![],
         },
         tx,
+        chef: false,
     })
     .await
     .unwrap();
@@ -380,6 +381,7 @@ async fn bridge_refuses_calls_without_a_turn() {
         ctx: None,
         workspace: Workspace::current().unwrap(),
         tx,
+        chef: false,
     })
     .await
     .unwrap();

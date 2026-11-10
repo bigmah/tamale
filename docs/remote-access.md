@@ -46,6 +46,12 @@ using it needs the new one. **Delete** ends it.
 Keys made on the site are limited to 5 new keys per IP per day. Keys that never connect are
 deleted after 7 days, and keys unused for 90 days are deleted too.
 
+## The chef
+
+`tamale chef` (or `/chef` in any session) starts the [tamale chef](chef.md), an agent you can ask
+about all your sessions on the key: what they're doing, which need you, and questions they answer
+on the side without it touching their conversations.
+
 ## Driving a session from a terminal
 
 With `TAMALE_HUB_KEY` set, `/sessions` or the footer's **Sessions** tab also lists your sessions on

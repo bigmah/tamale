@@ -51,6 +51,9 @@ impl App {
         if self.diff_stats().is_some() {
             tabs.push(FooterTab::Diff);
         }
+        if self.shows_chef_tab() {
+            tabs.push(FooterTab::Chef);
+        }
         tabs
     }
 
@@ -63,6 +66,10 @@ impl App {
             FooterTab::Remote => self.open_remote(),
             FooterTab::Web => self.open_web(),
             FooterTab::Diff => self.show_diff(),
+            FooterTab::Chef => {
+                self.tab_focus = None;
+                self.chef_command();
+            }
         }
     }
 

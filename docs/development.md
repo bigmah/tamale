@@ -56,6 +56,8 @@ TAMALE_HUB_URL=wss://tamale-hub.com TAMALE_HUB_KEY=thk_… cargo test -p tamale 
 - `src/diff.rs` – running and parsing `git diff` for the diff viewer
 - `src/tools/search.rs`, `src/tools/web.rs` – built-in repository search and web tools
 - `src/tools/shell.rs` – running `bash` commands in a process group
+- `src/chef.rs`, `src/app/chef.rs` – the tamale chef: its tools and prompt, reaching sessions
+  through the hub, its kitchen panel and every session's side of a side question
 - `src/app.rs` – conversation state and agent event handling
 - `src/app/{input,commands,sessions,view,help}.rs` – key/clipboard input, commands and pickers,
   session actions, rendering and help content

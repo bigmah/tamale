@@ -188,6 +188,8 @@ fn messages(dir: &std::path::Path) -> Vec<(&'static str, Value)> {
         cost_partial: false,
         goal: Some("Fix login".into()),
         queued: vec!["then run the tests".into()],
+        chef: false,
+        asks: true,
     };
     v.approval = Some(Approval {
         name: "bash".into(),
@@ -281,6 +283,7 @@ fn view(entries: &[Entry]) -> View<'_> {
         question: None,
         roots: Vec::new(),
         artifact_dir: None,
+        kitchen: None,
     }
 }
 

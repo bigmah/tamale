@@ -256,6 +256,7 @@ backend.claude_path if it isn't on PATH",
             ctx: Some(Mutex::new(ctx)),
             workspace: turn.workspace.clone(),
             tx: tx.clone(),
+            chef: turn.config.chef,
         };
         let run = Run {
             prompt,
@@ -303,6 +304,7 @@ backend.claude_path if it isn't on PATH",
             ctx: None,
             workspace: turn.workspace.clone(),
             tx: tx.clone(),
+            chef: turn.config.chef,
         };
         let mut summary = String::new();
         let mut usage = Usage::new();
@@ -417,7 +419,7 @@ backend.claude_path if it isn't on PATH",
             "--model",
             &turn.model,
             "--system-prompt",
-            &agent::system_prompt(&turn.workspace, turn.config.web_ui),
+            &agent::instructions(&turn.workspace, &turn.config),
         ]);
         if let Some(effort) = run.reasoning.effort {
             cmd.args(["--effort", effort.as_str()]);

@@ -25,6 +25,17 @@ const DESCRIPTION_SCHEMA: &str = "Short (3-10 words) description of what this st
     shown to the user as the step's label, e.g. \"Find where tool calls are rendered\" or \
     \"Run tests to check the scroll fix\". Write it in the imperative mood.";
 
+/// The tools a turn offers: a chef's (see [`crate::chef`]) or a coding agent's.
+pub fn definitions_for(chef: bool) -> Vec<ToolDefinition> {
+    if chef {
+        let mut defs = crate::chef::definitions();
+        defs.push(ask::definition());
+        with_descriptions(defs)
+    } else {
+        definitions()
+    }
+}
+
 pub fn definitions() -> Vec<ToolDefinition> {
     let mut defs = vec![
         ToolDefinition {
@@ -124,6 +135,11 @@ pub fn definitions() -> Vec<ToolDefinition> {
             "required": ["prompt"]
         }),
     });
+    with_descriptions(defs)
+}
+
+/// Adds the `description` every tool takes, first among its required arguments.
+fn with_descriptions(mut defs: Vec<ToolDefinition>) -> Vec<ToolDefinition> {
     for def in &mut defs {
         def.parameters["properties"]["description"] =
             json!({ "type": "string", "description": DESCRIPTION_SCHEMA });
@@ -146,6 +162,9 @@ pub fn describe(name: &str, args: &Value) -> String {
         if !d.is_empty() {
             return d.lines().next().unwrap_or(d).to_string();
         }
+    }
+    if let Some(label) = crate::chef::describe(name, args) {
+        return label;
     }
     let target = summarize(name, args);
     match name {
@@ -172,6 +191,9 @@ pub fn summarize(name: &str, args: &Value) -> String {
             .unwrap_or("")
             .to_string()
     };
+    if let Some(summary) = crate::chef::summarize(name, args) {
+        return summary;
+    }
     match name {
         "read_file" | "write_file" | "edit_file" => s("path"),
         "list_dir" => {

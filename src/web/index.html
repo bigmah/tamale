@@ -38,6 +38,9 @@
     <button class="iconbtn" id="toggle-code" title="Browse code  /code  ⌘B">
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.6 4.2 1.8 8l3.8 3.8M10.4 4.2 14.2 8l-3.8 3.8"/></svg>
     </button>
+    <button class="kitchen-toggle" id="toggle-kitchen" title="Your sessions" hidden>
+      <span class="kt-mark">🫔</span><span class="kt-count" id="kitchen-count"></span>
+    </button>
     <span class="conn" id="conn" title="Connecting…"></span>
   </header>
 
@@ -129,6 +132,27 @@
         <div class="codewrap" id="codewrap"></div>
       </div>
     </section>
+
+    <!-- A chef's sessions (see src/chef.rs); hidden in every other session. -->
+    <aside class="kitchen" id="kitchen" hidden>
+      <div class="k-hdr">
+        <span class="k-mark">🫔</span>
+        <span class="k-title">Kitchen</span>
+        <span class="k-live" id="k-live" title="Refreshes every few seconds"></span>
+        <div class="spacer"></div>
+        <button class="iconbtn sm k-close" id="k-close" title="Close">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+        </button>
+      </div>
+      <div class="k-stats" id="k-stats"></div>
+      <div class="k-list" id="k-list"></div>
+      <div class="k-foot">
+        <button class="k-askall" id="k-askall">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.75c0-.69.56-1.25 1.25-1.25h8.5c.69 0 1.25.56 1.25 1.25v6c0 .69-.56 1.25-1.25 1.25H7l-3 2.5V11h-.25c-.69 0-1.25-.56-1.25-1.25Z"/></svg>
+          Ask every session…
+        </button>
+      </div>
+    </aside>
   </main>
 
   <div class="pickmask" id="picker" hidden>

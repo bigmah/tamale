@@ -920,6 +920,7 @@ async fn api_sessions(
                 "host": s.label.host,
                 "cwd": s.label.cwd,
                 "model": s.label.model,
+                "chef": s.label.chef,
                 "title": s.title,
                 "mid": s.mid,
                 "e2e": s.e2e,
@@ -2180,6 +2181,7 @@ mod tests {
                     host: "vps-b".into(),
                     cwd: "~/api".into(),
                     model: "m".into(),
+                    ..Default::default()
                 },
                 mid: None,
                 e2e: false,

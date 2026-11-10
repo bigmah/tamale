@@ -39,6 +39,8 @@ pub struct HubSession {
     pub approval: bool,
     pub online: bool,
     pub viewers: usize,
+    /// A tamale chef, looking after the others rather than working in a project.
+    pub chef: bool,
 }
 
 /// The sessions this key can reach, in the hub's order: waiting for approval first.
@@ -92,6 +94,7 @@ fn parse_sessions(list: &Value, keys: &Keys) -> Vec<HubSession> {
                 approval: s["approval"].as_bool().unwrap_or(false),
                 online: s["online"].as_bool().unwrap_or(false),
                 viewers: s["viewers"].as_u64().unwrap_or(0) as usize,
+                chef: s["chef"].as_bool().unwrap_or(false),
                 sid,
             };
             let open = |name: &str, kind: &str| -> Option<Value> {
@@ -104,6 +107,7 @@ fn parse_sessions(list: &Value, keys: &Keys) -> Vec<HubSession> {
                 session.host = text(&label, "host");
                 session.cwd = text(&label, "cwd");
                 session.model = text(&label, "model");
+                session.chef = label["chef"].as_bool().unwrap_or(false);
             }
             if let Some(status) = status {
                 session.title = text(&status, "title");
@@ -139,6 +143,10 @@ pub struct Status {
     pub window: u64,
     pub cost: f64,
     pub queued: Vec<String>,
+    /// Whether it's a tamale chef.
+    pub chef: bool,
+    /// Whether it answers side questions (`ask`), as tamales since the chef do.
+    pub asks: bool,
 }
 
 /// A tool call waiting for an answer.
@@ -157,6 +165,8 @@ pub enum Incoming {
     Entries { from: usize, items: Vec<Entry> },
     Status(Box<Status>),
     Approval(Option<Approval>),
+    /// The answer to a side question asked with `{"t":"ask"}`, by its id.
+    Answer { id: String, text: String, error: bool },
 }
 
 fn parse_incoming(text: &str) -> Option<Incoming> {
@@ -176,6 +186,11 @@ fn parse_incoming(text: &str) -> Option<Incoming> {
         "approval" => Some(Incoming::Approval(
             serde_json::from_value(message["approval"].take()).ok()?,
         )),
+        "answer" => Some(Incoming::Answer {
+            id: message["id"].as_str()?.to_string(),
+            text: message["text"].as_str().unwrap_or("").to_string(),
+            error: message["error"].as_bool().unwrap_or(false),
+        }),
         _ => None,
     }
 }

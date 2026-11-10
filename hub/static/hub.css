@@ -58,6 +58,11 @@ kbd { font: 11px var(--mono); padding: 1px 5px; border: 1px solid var(--border);
 .dot.busy { background: var(--violet); animation: pulse 1.4s ease-in-out infinite; }
 .dot.approval { background: var(--modified); }
 .dot.offline { background: none; border: 1.5px solid var(--fg-faint); }
+/* A tamale chef, which looks after the others: pinned first, in amber. */
+.session.chef { background: linear-gradient(90deg, rgba(242, 169, 59, 0.12), transparent 80%); margin-bottom: 6px; }
+.session.chef .title { color: #f2a93b; font-weight: 600; }
+.session.chef.active { background: linear-gradient(90deg, rgba(242, 169, 59, 0.22), var(--bg-3) 80%); }
+.chef-mark { font-size: 13px; line-height: 1; justify-self: center; }
 @keyframes pulse { 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) { .dot.busy { animation: none; } }
 .empty { margin: 8px; font-size: 13px; color: var(--fg-faint); }

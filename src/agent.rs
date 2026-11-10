@@ -107,6 +107,8 @@ pub struct TurnCtx {
     /// Whether someone is there to answer `ask_user` questions (not in `-p` runs, subagents
     /// or the goal checker).
     pub interactive: bool,
+    /// In a tamale chef's turns, what its tools reach sessions with (see [`crate::chef`]).
+    pub chef: Option<Arc<crate::chef::Kitchen>>,
 }
 
 /// Messages queued by the user during a turn, shared between the UI and the running turn.
@@ -136,7 +138,14 @@ impl TurnCtx {
             subagent: None,
             steering: None,
             interactive: false,
+            chef: None,
         }
+    }
+
+    /// Makes the turn a chef's: its tools reach the sessions through `kitchen`.
+    pub fn with_chef(mut self, kitchen: Arc<crate::chef::Kitchen>) -> Self {
+        self.chef = Some(kitchen);
+        self
     }
 
     /// Lets the model ask the user questions.
@@ -230,6 +239,32 @@ the user how to proceed."
         if name == tools::ASK_USER {
             return self.ask_user(&args, tx).await;
         }
+        // A chef has only its own tools, and they're only a chef's: a model that calls one
+        // from history (or invents it) is told so instead of running it.
+        match (&self.chef, crate::chef::is_tool(name)) {
+            (Some(kitchen), true) => {
+                let kitchen = kitchen.clone();
+                return match self.authorize(name, &args, tx).await {
+                    Err(denied) => (denied, true),
+                    Ok(()) => kitchen.call(name, &args).await,
+                };
+            }
+            (Some(_), false) => {
+                return (
+                    format!(
+                        "Error: {name} isn't available to the tamale chef. Ask a session to do it instead (message_session), if the user wants that."
+                    ),
+                    true,
+                );
+            }
+            (None, true) => {
+                return (
+                    format!("Error: {name} is only available to the tamale chef."),
+                    true,
+                );
+            }
+            (None, false) => {}
+        }
         let result = match self.authorize(name, &args, tx).await {
             Err(denied) => Err(denied),
             Ok(()) => match self.before_execute(name, &args, workspace) {
@@ -269,6 +304,7 @@ the user how to proceed."
             subagent: None,
             steering: None,
             interactive: false,
+            chef: None,
         };
         subagent.run(&args, ctx, workspace, tx).await
     }
@@ -335,6 +371,17 @@ pub struct TurnConfig {
     pub limits: AgentSettings,
     /// Whether replies are for the `/web` UI, so the system prompt carries the artifact guide.
     pub web_ui: bool,
+    /// Whether this is a tamale chef's turn, with the chef's instructions and tools.
+    pub chef: bool,
+}
+
+/// The system prompt for a turn: a chef's or a coding agent's.
+pub fn instructions(workspace: &Workspace, config: &TurnConfig) -> String {
+    if config.chef {
+        crate::chef::system_prompt(workspace, config.web_ui)
+    } else {
+        system_prompt(workspace, config.web_ui)
+    }
 }
 
 impl TurnConfig {
@@ -379,8 +426,8 @@ pub async fn compact<M>(
         }
         let history = compact_history(
             &model,
-            &system_prompt(&workspace, config.web_ui),
-            &tools::definitions(),
+            &self::instructions(&workspace, &config),
+            &tools::definitions_for(config.chef),
             &history,
             instructions.as_deref(),
             config,
@@ -408,8 +455,8 @@ async fn run_inner<M>(
 where
     M: CompletionModel + Clone,
 {
-    let preamble = system_prompt(workspace, config.web_ui);
-    let tool_defs = tools::definitions();
+    let preamble = instructions(workspace, &config);
+    let tool_defs = tools::definitions_for(config.chef);
     let mut force_compact = false;
     let mut empty_responses = 0;
 

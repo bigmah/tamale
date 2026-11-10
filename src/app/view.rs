@@ -45,7 +45,18 @@ impl App {
         ])
         .areas(area);
 
-        self.draw_chat(frame, chat_area);
+        // A chef keeps its kitchen beside the chat, and welcomes you above it.
+        let (chat_area, kitchen_area) = self.chef_panel_split(chat_area, area.width);
+        let banner = self.chef_banner_height(chat_area);
+        let [banner_area, transcript_area] =
+            Layout::vertical([Constraint::Length(banner), Constraint::Min(1)]).areas(chat_area);
+        if banner > 0 {
+            self.draw_chef_banner(frame, banner_area);
+        }
+        self.draw_chat(frame, transcript_area);
+        if let Some(kitchen_area) = kitchen_area {
+            self.draw_kitchen(frame, kitchen_area);
+        }
         self.draw_goal(frame, goal_area);
         draw_queued(frame, queued_area, &queued);
         self.draw_input(frame, input_area, rows, cursor);
@@ -450,6 +461,7 @@ impl App {
     }
 
     fn draw_input(&self, frame: &mut Frame, area: Rect, rows: Vec<String>, cursor: (usize, usize)) {
+        let accent = if self.is_chef() { super::chef::CHEF } else { Color::Cyan };
         let visible = area.height.saturating_sub(2) as usize;
         let skip = (cursor.0 + 1).saturating_sub(visible);
         let lines: Vec<Line> = rows
@@ -458,17 +470,20 @@ impl App {
             .skip(skip)
             .map(|(i, row)| {
                 let prefix = if i == 0 { "› " } else { "  " };
-                Line::from(vec![Span::from(prefix).fg(Color::Cyan), Span::from(row)])
+                Line::from(vec![Span::from(prefix).fg(accent), Span::from(row)])
             })
             .collect();
         let border = if self.is_running() || self.tab_focus.is_some() {
             Color::DarkGray
         } else {
-            Color::Cyan
+            accent
         };
-        let block = Block::bordered()
+        let mut block = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(Style::new().fg(border));
+        if let Some(title) = self.chef_input_title() {
+            block = block.title(title);
+        }
         frame.render_widget(Paragraph::new(lines).block(block), area);
         // With the tabs focused there is no cursor in the prompt.
         if self.tab_focus.is_some() {
@@ -510,6 +525,7 @@ impl App {
                 FooterTab::Remote => "enter connect · ←/→ choose · ↑ back",
                 FooterTab::Web => "enter open in browser · ←/→ choose · ↑ back",
                 FooterTab::Diff => "enter open · ←/→ choose · ↑ back",
+                FooterTab::Chef => "enter talk to the chef, who knows every session · ←/→ choose · ↑ back",
             }
         } else if self.is_running() && self.detachable {
             "esc to interrupt · ctrl+c to detach"
@@ -647,6 +663,10 @@ impl App {
         if let Some(stats) = self.diff_stats() {
             add(&mut spans, FooterTab::Diff, " ± Diff ".into(), style(FooterTab::Diff, secondary));
             spans.extend(stats);
+        }
+        if self.shows_chef_tab() {
+            spans.push(Span::from(SEPARATOR).fg(Color::DarkGray));
+            add(&mut spans, FooterTab::Chef, " 🫔 Chef ".into(), style(FooterTab::Chef, super::chef::CHEF));
         }
         self.tab_areas = areas;
         let tabs_width: usize = spans.iter().map(|s| s.content.width()).sum();

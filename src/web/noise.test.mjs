@@ -53,12 +53,15 @@ const shown = withLabels(
 );
 assert.deepEqual(shown, {
   sid: 'real', open: '/open/real', online: true, approval: false,
-  host: 'h', cwd: '~/x', title: 't', model: 'label-model', encrypted: true,
+  host: 'h', cwd: '~/x', title: 't', model: 'label-model', chef: false, encrypted: true,
 });
+// Only a label that says so makes a chef, and only with `true`.
+assert.equal(withLabels(row, { chef: true }, {}).chef, true);
+assert.equal(withLabels(row, { chef: 'yes' }, {}).chef, false);
 assert.equal(withLabels(row, { model: 'label' }, { model: 'status' }).model, 'status');
 assert.deepEqual(
   withLabels(row, { host: 7, cwd: null }, {}),
-  { ...row, host: '', cwd: '', title: '', model: '', encrypted: true },
+  { ...row, host: '', cwd: '', title: '', model: '', chef: false, encrypted: true },
   'what isn\'t text does not break the list',
 );
 

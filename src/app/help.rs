@@ -101,6 +101,10 @@ const COMMANDS: &[(&str, &str)] = &[
         "See the other sessions on this machine, to join or stop, and on other machines through the hub, to drive from here (the Sessions tab opens it too)",
     ),
     (
+        "/chef",
+        "Talk to the tamale chef, an agent that looks after every session on your hub key: what each is doing, side questions they answer without it touching their conversation, and messages into them (the Chef tab and `tamale chef` do the same)",
+    ),
+    (
         "/detach",
         "Leave this session running in the background (tamale attach comes back)",
     ),

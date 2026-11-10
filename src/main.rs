@@ -4,6 +4,7 @@ mod backend;
 #[cfg(unix)]
 mod background;
 mod browser;
+mod chef;
 mod checkpoint;
 mod cli;
 mod clipboard;
@@ -63,7 +64,7 @@ async fn start(cli: cli::Cli) -> Result<()> {
             return background::client::attach(id).await;
         }
         // Listening before anything slow, so the client has something to connect to.
-        cli.server.then(background::Host::bind).transpose()?
+        cli.server.then(|| background::Host::bind(cli.chef)).transpose()?
     };
     #[cfg(not(unix))]
     if cli.command.is_some() {
@@ -151,8 +152,14 @@ async fn start(cli: cli::Cli) -> Result<()> {
     for note in ignored {
         app.on_web(Err(note));
     }
+    if cli.chef {
+        app.set_chef();
+        app.refresh_kitchen();
+    }
     #[cfg(unix)]
-    app.mention_open_sessions();
+    if !cli.chef {
+        app.mention_open_sessions();
+    }
     if choose_backend {
         app.ask_for_backend();
     }
@@ -380,7 +387,8 @@ fn connect_hub(app: &App, server: &mut web::Server) -> Result<(), String> {
 /// start, without taking over the terminal the way `/remote` does.
 async fn connect_hub_on_start(app: &mut App, web: &mut Option<web::Server>) {
     let hub = app.settings_hub();
-    if hub.connect != config::HubConnect::Auto {
+    // A chef is reachable from the start, so a phone can talk to it too.
+    if hub.connect != config::HubConnect::Auto && !(app.is_chef() && hub.key.is_some()) {
         return;
     }
     if let Err(message) = hub.key_bytes() {
@@ -590,6 +598,19 @@ async fn run(
                         web::WebEvent::Approve(choice, reason) => app.web_approve(choice, reason),
                         web::WebEvent::Answer(answers) => app.web_answer(answers),
                         web::WebEvent::Close => app.should_quit = true,
+                        web::WebEvent::Ask { tab, id, question } => {
+                            if let Some(web) = &web {
+                                let replier = web.replier();
+                                let answer = app.side_question(question);
+                                tokio::spawn(async move {
+                                    let (text, error) = answer.await;
+                                    let reply = serde_json::json!({
+                                        "t": "answer", "id": id, "text": text, "error": error,
+                                    });
+                                    replier.send(tab, reply.to_string());
+                                });
+                            }
+                        }
                     }
                     dirty = true;
                 }
