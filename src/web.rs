@@ -1693,6 +1693,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_dropped_hub_connection_comes_back_without_a_word() {
+        use std::time::Duration;
+        use tamale_hub_protocol::ToAgent;
+        let (to_test, mut hellos) = mpsc::unbounded_channel::<()>();
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let app = Router::new().route(
+            "/agent",
+            get(move |upgrade: WebSocketUpgrade| {
+                let to_test = to_test.clone();
+                let first = count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0;
+                async move {
+                    upgrade.on_upgrade(move |mut ws| async move {
+                        let Some(Ok(Message::Text(_))) = ws.next().await else { return };
+                        let welcome = serde_json::to_string(&ToAgent::Welcome { proto: 2 }).unwrap();
+                        ws.send(Message::Text(welcome.into())).await.unwrap();
+                        let _ = to_test.send(());
+                        // The first connection just drops, as a sleeping laptop's does.
+                        if first {
+                            drop(ws);
+                        } else {
+                            std::future::pending::<()>().await;
+                        }
+                    })
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let hub = format!("ws://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let mut server = Server::start(false).await.unwrap();
+        server.connect_hub(&hub, "f00d", Label::default(), None);
+        for _ in 0..2 {
+            tokio::time::timeout(Duration::from_secs(5), hellos.recv()).await.unwrap().unwrap();
+        }
+        // Long enough for the second connection's welcome to be acted on.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let mut said = Vec::new();
+        while let Ok(event) = server.events.try_recv() {
+            if let WebEvent::Hub(result) = event {
+                said.push(result);
+            }
+        }
+        assert!(matches!(&said[..], [Ok(_)]), "{said:?}");
+        assert!(matches!(server.hub_state(), Some(HubState::Live(_))));
+    }
+
+    #[tokio::test]
     async fn a_chef_says_so_in_the_clear_and_hears_when_the_key_has_one() {
         use std::time::Duration;
         use tamale_hub_protocol::{ToHub, close};

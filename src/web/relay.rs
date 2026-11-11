@@ -13,7 +13,8 @@
 //! handshake succeeds, and anything unsealed closes the channel. See `e2e.md`.
 //!
 //! The connection is retried with backoff until it's turned off, except when the hub
-//! rejects it for good (a bad token, say).
+//! rejects it for good (a bad token, say). A dropped connection is retried at once and
+//! quietly; only one that stays down is reported, once, and then its return.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -291,8 +292,13 @@ async fn run(
         let _ = shared.events.send(WebEvent::Hub(result));
     };
     let mut delay = Duration::from_secs(1);
-    // The last problem reported, so a hub that stays down is reported once.
+    // The problem reported, so a hub that stays down is reported once, until it's back.
     let mut reported: Option<String> = None;
+    // Whether "reachable" has been said: a reconnect only says so after a reported problem.
+    let mut announced = false;
+    // Since when the hub has been out of reach, after being reached: a blip (a laptop
+    // waking, a hub restarting) is retried quietly, and only an outage gets reported.
+    let mut down_since: Option<tokio::time::Instant> = None;
     let mut throttle = Throttle::default();
     loop {
         if *end.borrow() {
@@ -304,12 +310,24 @@ async fn run(
             &target,
             &mut status,
             &live,
-            &mut reported,
             &mut throttle,
             &problem,
+            || {
+                if !announced || reported.is_some() {
+                    let message = if announced {
+                        "Reconnected to the hub.".to_string()
+                    } else {
+                        format!("Reachable through the hub at {}", target.open_url)
+                    };
+                    let _ = shared.events.send(WebEvent::Hub(Ok(message)));
+                }
+                announced = true;
+                reported = None;
+                down_since = None;
+            },
         )
         .await;
-        live.store(false, Ordering::Relaxed);
+        let was_live = live.swap(false, Ordering::Relaxed);
         drop_remote_clients(&shared);
         match ended {
             Ended::Finished => return,
@@ -323,13 +341,19 @@ async fn run(
                 return;
             }
             Ended::Retry(why) => {
-                if reported.as_deref() != Some(&why) {
+                // The footer says it's reconnecting, and why, either way.
+                *problem.lock().unwrap() = Some(why.clone());
+                if was_live {
+                    down_since = Some(tokio::time::Instant::now());
+                }
+                let outage = down_since.is_none_or(|since| since.elapsed() >= QUIET_FOR);
+                if outage && reported.is_none() {
                     report(Err(format!("Hub connection: {why}; retrying.")));
                     reported = Some(why);
                 }
             }
         }
-        if started.elapsed() > Duration::from_secs(60) {
+        if was_live || started.elapsed() > Duration::from_secs(60) {
             delay = Duration::from_secs(1);
         }
         tokio::select! {
@@ -339,6 +363,9 @@ async fn run(
         delay = (delay * 2).min(Duration::from_secs(30));
     }
 }
+
+/// How long a dropped connection is retried before it's reported as a problem.
+const QUIET_FOR: Duration = Duration::from_secs(20);
 
 /// Once the session is over (see [`Relay::end`]).
 async fn session_over(end: &mut watch::Receiver<bool>) {
@@ -363,9 +390,9 @@ async fn connection(
     target: &Target,
     status: &mut watch::Receiver<HubStatus>,
     live: &AtomicBool,
-    reported: &mut Option<String>,
     throttle: &mut Throttle,
     problem: &Mutex<Option<String>>,
+    on_welcome: impl FnOnce(),
 ) -> Ended {
     let mut end = target.end.clone();
     let mut request = match target.url.as_str().into_client_request() {
@@ -414,12 +441,8 @@ TAMALE_HUB_KEY, or make a new key at {}",
         _ => return Ended::Retry("the hub didn't welcome this session".into()),
     }
     live.store(true, Ordering::Relaxed);
-    *reported = None;
     *problem.lock().unwrap() = None;
-    let _ = shared.events.send(WebEvent::Hub(Ok(format!(
-        "Reachable through the hub at {}",
-        target.open_url
-    ))));
+    on_welcome();
     status.mark_changed();
 
     // Frames from relayed tabs' channels, to send to the hub.

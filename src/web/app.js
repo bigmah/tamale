@@ -236,8 +236,23 @@ let channel = null;
 /** Set when reconnecting wouldn't help. */
 let locked = false;
 
+/** Whether the hub's page has heard this one has something to show. */
+let toldShown = false;
+
+/**
+ * In a tamale-hub's page, which keeps this frame out of sight until it's drawn rather than
+ * flash an empty page: says it is, once, after the next paint.
+ */
+function shown() {
+  if (toldShown || window.parent === window) return;
+  toldShown = true;
+  const hub = `${location.protocol}//${location.host.split('.').slice(1).join('.')}`;
+  requestAnimationFrame(() => setTimeout(() => window.parent.postMessage({ tamaleShown: true }, hub)));
+}
+
 /** Replaces the page with why it can't show this session, and a way on. */
 function lock(title, text) {
+  shown();
   locked = true;
   setConn('stopped', title);
   const sid = location.hostname.split('.')[0];
@@ -406,6 +421,8 @@ function request(t, body = {}, kind = t) {
 }
 
 function onMessage(m) {
+  // The welcome's first message: drawn by the time it's painted.
+  shown();
   switch (m.t) {
     case 'entries':
       return applyEntries(m.from, m.items);

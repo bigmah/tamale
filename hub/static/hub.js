@@ -381,7 +381,9 @@ async function refresh() {
 // ---- sessions' frames. Each is its session's own origin, as a tab of it would be: this page
 // can't read it, and it talks to its tamale itself. Only so many stay connected at once.
 
-const MAX_FRAMES = 4;
+const MAX_FRAMES = 6;
+/** How long after a frame loads it shows, if its page hasn't said it's drawn. */
+const SHOW_ANYWAY = 2500;
 /** Open frames by sid, the most recently shown last. */
 const frames = new Map();
 /** Frames whose ticket is on its way, by sid, so a double click doesn't spend two. */
@@ -460,12 +462,17 @@ async function openFrame(sid) {
     const frame = el('iframe');
     frame.title = 'Session';
     frame.allow = 'clipboard-read; clipboard-write';
+    // Out of sight until its page says it's drawn (see `tamaleShown`), rather than flash
+    // white while it loads; a page that never says so (an older tamale, a session that's
+    // gone quiet) shows a little after it loads.
+    frame.addEventListener('load', () => setTimeout(() => frame.classList.add('shown'), SHOW_ANYWAY), { once: true });
     frame.src = url;
     frame.inert = true;
     frames.set(sid, frame);
     $('frames').append(frame);
-    // The oldest go, but not one that's being closed: it's what does the closing.
-    const spare = [...frames.keys()].filter((s) => s !== sid && !ending.has(s));
+    // The oldest go, but not the one showing, nor one that's being closed: it's what does
+    // the closing.
+    const spare = [...frames.keys()].filter((s) => s !== sid && s !== current && !ending.has(s));
     for (const old of spare.slice(0, Math.max(0, frames.size - MAX_FRAMES))) closeFrame(old);
     return frame;
   })();
@@ -604,6 +611,12 @@ addEventListener('message', (ev) => {
     if (current === sid) showSession(sid);
     return;
   }
+  // A session's page, drawn: its frame can show.
+  if (ev.data?.tamaleShown === true) {
+    const frame = [...frames.values()].find((f) => f.contentWindow === ev.source);
+    if (frame && ev.origin === new URL(frame.src).origin) frame.classList.add('shown');
+    return;
+  }
   // A session's page passing on a switch key, which only reaches the frame with focus.
   const move = ev.data?.tamaleHubSwitch;
   if (move === undefined) return;
@@ -626,6 +639,30 @@ document.addEventListener('click', (ev) => {
   if (!row && !home) return;
   ev.preventDefault();
   go(row ? `/open/${row.dataset.sid}` : '/');
+});
+
+// A pointer resting on a row: start loading that session out of sight, so it's ready, or
+// nearly, by the click.
+const WARM_AFTER = 150;
+let warming = null;
+document.addEventListener('pointerover', (ev) => {
+  if (ev.pointerType !== 'mouse') return;
+  const row = ev.target.closest?.('a.session');
+  if (!row || row.dataset.sid === warming?.sid) return;
+  clearTimeout(warming?.timer);
+  const sid = row.dataset.sid;
+  warming = {
+    sid,
+    timer: setTimeout(() => {
+      const s = sessions?.find((x) => x.sid === sid);
+      if (s?.online && !framesOff && !frames.has(sid)) openFrame(sid);
+    }, WARM_AFTER),
+  };
+});
+document.addEventListener('pointerout', (ev) => {
+  if (!warming || ev.target.closest?.('a.session')?.contains(ev.relatedTarget)) return;
+  clearTimeout(warming.timer);
+  warming = null;
 });
 
 $('open-keys').addEventListener('click', showKeys);
