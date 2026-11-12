@@ -4,8 +4,13 @@ struct Fixture(PathBuf);
 
 impl Fixture {
     fn new() -> Self {
-        let root =
-            std::env::temp_dir().join(format!("tamale-config-test-{}", crate::session::new_id()));
+        // Tests run in parallel, and the clock alone can give two of them the same id.
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "tamale-config-test-{}-{n}",
+            crate::session::new_id()
+        ));
         std::fs::create_dir_all(&root).unwrap();
         Self(root)
     }
