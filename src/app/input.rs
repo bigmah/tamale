@@ -113,7 +113,12 @@ impl App {
         }
     }
 
-    pub(super) fn on_key(&mut self, key: KeyEvent) {
+    pub(super) fn on_key(&mut self, mut key: KeyEvent) {
+        // Many terminals send ^H for Backspace, which crossterm reads as Ctrl+H. It's
+        // Backspace everywhere: the prompt, and every field and picker that takes text.
+        if key.code == KeyCode::Char('h') && key.modifiers == KeyModifiers::CONTROL {
+            key = KeyEvent::new_with_kind(KeyCode::Backspace, KeyModifiers::NONE, key.kind);
+        }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
@@ -267,8 +272,8 @@ impl App {
             KeyCode::Char('w') if ctrl => self.delete_word(),
             KeyCode::Backspace if alt || ctrl => self.delete_word(),
             KeyCode::Char(c) if !ctrl => self.insert_str(&c.to_string()),
-            // Many terminals send ^H (Ctrl+H) for Backspace instead of DEL.
-            KeyCode::Backspace | KeyCode::Char('h') => {
+            // Ctrl+H, which many terminals send for it, is Backspace by now (see `on_key`).
+            KeyCode::Backspace => {
                 if let Some(prev) = self.paste_before_cursor().or_else(|| self.prev_boundary()) {
                     self.input.drain(prev..self.cursor);
                     self.cursor = prev;

@@ -2374,9 +2374,13 @@ async fn question_prompt_picks_toggles_types_and_submits() {
     app.on_event(key(KeyCode::Char('4')));
     assert!(app.question.as_ref().unwrap().typing);
     app.on_event(Event::Paste("rate ".into()));
-    for c in "limits".chars() {
+    for c in "limitzz".chars() {
         app.on_event(key(KeyCode::Char(c)));
     }
+    // Backspace, as DEL or as the ^H many terminals send (crossterm's Ctrl+H).
+    app.on_event(key(KeyCode::Backspace));
+    app.on_event(Event::Key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL)));
+    app.on_event(key(KeyCode::Char('s')));
     assert!(app.input.is_empty());
     app.on_event(key(KeyCode::Enter));
     // The review page lists the answers; Enter sends them.
@@ -2685,4 +2689,20 @@ fn providers_with_keys_are_backends_with_their_own_models() {
     assert!(app.is_current(Choice::Provider(0)));
     app.command("/backend local");
     assert!(matches!(app.entries.last(), Some(Entry::Info(e)) if e.starts_with("Already using")));
+}
+
+#[test]
+fn ctrl_h_is_backspace_in_the_prompt_too() {
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("claude-sonnet-4-6"),
+        Workspace::current().unwrap(),
+    );
+    type_text(&mut app, "hello");
+    app.on_event(Event::Key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL)));
+    assert_eq!(app.input, "hell");
+    // Ctrl+Backspace still takes the word.
+    app.on_event(Event::Key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::CONTROL)));
+    assert_eq!(app.input, "");
 }
