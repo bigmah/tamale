@@ -181,7 +181,45 @@ struct SessionView: View {
 struct ConnectionBanner: View {
     var state: ChannelState
 
+    /// Since when the connection has been on its way back, while it is.
+    @State private var downSince: Date?
+    @State private var waitedLongEnough = false
+
+    /// How long a dropped connection is given to come back before the banner says so: a
+    /// blip (the app back from the background, tamale's laptop waking) shouldn't flash one.
+    static let patience: TimeInterval = 6
+
     var body: some View {
+        VStack(spacing: 0) {
+            if !Self.passing(state) || waitedLongEnough {
+                content
+            }
+        }
+        .onChange(of: state, initial: true) { _, new in
+            if !Self.passing(new) {
+                downSince = nil
+                waitedLongEnough = false
+            } else if downSince == nil {
+                downSince = .now
+            }
+        }
+        .task(id: downSince) {
+            guard let since = downSince else { return }
+            let left = Self.patience - Date.now.timeIntervalSince(since)
+            if left > 0 { try? await Task.sleep(for: .seconds(left)) }
+            if !Task.isCancelled, downSince == since { waitedLongEnough = true }
+        }
+    }
+
+    /// States that usually pass by themselves in a moment.
+    static func passing(_ state: ChannelState) -> Bool {
+        switch state {
+        case .connecting, .handshaking, .retrying: true
+        case .idle, .live, .stopped: false
+        }
+    }
+
+    @ViewBuilder private var content: some View {
         switch state {
         case .live, .idle:
             EmptyView()

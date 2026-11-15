@@ -13,8 +13,9 @@
 //! handshake succeeds, and anything unsealed closes the channel. See `e2e.md`.
 //!
 //! The connection is retried with backoff until it's turned off, except when the hub
-//! rejects it for good (a bad token, say). A dropped connection is retried at once and
-//! quietly; only one that stays down is reported, once, and then its return.
+//! rejects it for good (a bad token, say). Once it's been up, a dropped connection is
+//! retried quietly, for as long as it takes: the terminal's footer says so, and nothing
+//! else does.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -292,13 +293,13 @@ async fn run(
         let _ = shared.events.send(WebEvent::Hub(result));
     };
     let mut delay = Duration::from_secs(1);
-    // The problem reported, so a hub that stays down is reported once, until it's back.
-    let mut reported: Option<String> = None;
-    // Whether "reachable" has been said: a reconnect only says so after a reported problem.
+    // Whether a problem reaching the hub has been reported, so it's reported once.
+    let mut reported = false;
+    // Whether "reachable" has been said. From then on, the hub going out of reach shows
+    // only in the terminal's footer: a session left running for days sees it many times
+    // (whenever the laptop sleeps), and a note in the conversation each time would clutter
+    // every page showing it.
     let mut announced = false;
-    // Since when the hub has been out of reach, after being reached: a blip (a laptop
-    // waking, a hub restarting) is retried quietly, and only an outage gets reported.
-    let mut down_since: Option<tokio::time::Instant> = None;
     let mut throttle = Throttle::default();
     loop {
         if *end.borrow() {
@@ -313,17 +314,11 @@ async fn run(
             &mut throttle,
             &problem,
             || {
-                if !announced || reported.is_some() {
-                    let message = if announced {
-                        "Reconnected to the hub.".to_string()
-                    } else {
-                        format!("Reachable through the hub at {}", target.open_url)
-                    };
+                if !announced {
+                    let message = format!("Reachable through the hub at {}", target.open_url);
                     let _ = shared.events.send(WebEvent::Hub(Ok(message)));
                 }
                 announced = true;
-                reported = None;
-                down_since = None;
             },
         )
         .await;
@@ -343,13 +338,9 @@ async fn run(
             Ended::Retry(why) => {
                 // The footer says it's reconnecting, and why, either way.
                 *problem.lock().unwrap() = Some(why.clone());
-                if was_live {
-                    down_since = Some(tokio::time::Instant::now());
-                }
-                let outage = down_since.is_none_or(|since| since.elapsed() >= QUIET_FOR);
-                if outage && reported.is_none() {
+                if !announced && !reported {
                     report(Err(format!("Hub connection: {why}; retrying.")));
-                    reported = Some(why);
+                    reported = true;
                 }
             }
         }
@@ -364,8 +355,6 @@ async fn run(
     }
 }
 
-/// How long a dropped connection is retried before it's reported as a problem.
-const QUIET_FOR: Duration = Duration::from_secs(20);
 
 /// Once the session is over (see [`Relay::end`]).
 async fn session_over(end: &mut watch::Receiver<bool>) {
@@ -429,7 +418,7 @@ TAMALE_HUB_KEY, or make a new key at {}",
         Ok(hello) => hello,
         Err(e) => return Ended::Rejected(format!("couldn't seal the session's label: {e:#}")),
     };
-    if ws.send(text(&hello)).await.is_err() {
+    if !put(&mut ws, text(&hello)).await {
         return Ended::Retry("the hub closed the connection".into());
     }
     match tokio::time::timeout(Duration::from_secs(20), ws.next()).await {
@@ -449,9 +438,13 @@ TAMALE_HUB_KEY, or make a new key at {}",
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<ToHub>();
     // The hub's channel ids and this server's client ids.
     let mut channels: HashMap<u64, Channel> = HashMap::new();
-    let mut ping = tokio::time::interval(Duration::from_secs(30));
+    let mut ping = tokio::time::interval(PING_EVERY);
     ping.tick().await;
     let mut heard = tokio::time::Instant::now();
+    // The wall clock at the last ping. On macOS the monotonic clock stops while the machine
+    // sleeps, so a long gap here is how a wake shows: the hub gave up on this connection
+    // long ago, and waiting to hear it's gone would only keep the session away for longer.
+    let mut last_tick = std::time::SystemTime::now();
     let ended = loop {
         tokio::select! {
             message = ws.next() => {
@@ -469,19 +462,19 @@ TAMALE_HUB_KEY, or make a new key at {}",
                 };
                 let Ok(frame) = serde_json::from_str::<ToAgent>(&frame) else { continue };
                 if let Some(reply) = on_frame(shared, target.keys.as_ref(), throttle, frame, &mut channels, &out_tx)
-                    && ws.send(text(&reply)).await.is_err() {
+                    && !put(&mut ws, text(&reply)).await {
                         break Ended::Retry("connection lost".into());
                     }
             }
             Some(frame) = out_rx.recv() => {
-                if ws.send(text(&frame)).await.is_err() {
+                if !put(&mut ws, text(&frame)).await {
                     break Ended::Retry("connection lost".into());
                 }
             }
             Ok(()) = status.changed() => {
                 let s = status.borrow_and_update().clone();
                 let Some(frame) = status_frame(target.keys.as_ref(), s) else { continue };
-                if ws.send(text(&frame)).await.is_err() {
+                if !put(&mut ws, text(&frame)).await {
                     break Ended::Retry("connection lost".into());
                 }
             }
@@ -491,10 +484,16 @@ TAMALE_HUB_KEY, or make a new key at {}",
                 break Ended::Finished;
             }
             _ = ping.tick() => {
-                if heard.elapsed() > Duration::from_secs(75) {
+                let now = std::time::SystemTime::now();
+                let slept = now.duration_since(last_tick).is_ok_and(|gap| gap > PING_EVERY + SILENT_FOR);
+                last_tick = now;
+                if slept {
+                    break Ended::Retry("this machine was asleep".into());
+                }
+                if heard.elapsed() > SILENT_FOR {
                     break Ended::Retry("the hub stopped answering".into());
                 }
-                if ws.send(Message::Ping(Vec::new().into())).await.is_err() {
+                if !put(&mut ws, Message::Ping(Vec::new().into())).await {
                     break Ended::Retry("connection lost".into());
                 }
             }
@@ -504,6 +503,25 @@ TAMALE_HUB_KEY, or make a new key at {}",
         shared.remove_client(id);
     }
     ended
+}
+
+/// How often the hub is pinged, and how long it may stay silent before the connection
+/// counts as gone (the hub pings too, so a live one is never quiet for long).
+const PING_EVERY: Duration = Duration::from_secs(30);
+const SILENT_FOR: Duration = Duration::from_secs(75);
+/// How long one frame may take to go out. A connection that's died without saying so (a
+/// network that changed, a NAT that forgot it) can otherwise hold a send for many minutes.
+const SEND_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Sends `message`; false if it failed or took too long.
+async fn put<S>(ws: &mut S, message: Message) -> bool
+where
+    S: futures::Sink<Message> + Unpin,
+{
+    matches!(
+        tokio::time::timeout(SEND_TIMEOUT, ws.send(message)).await,
+        Ok(Ok(()))
+    )
 }
 
 fn closed(code: u16, reason: &str) -> Ended {

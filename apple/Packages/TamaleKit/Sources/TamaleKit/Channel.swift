@@ -78,10 +78,7 @@ public final class SessionChannel {
         guard wanted else { return }
         switch state {
         case .live:
-            task?.sendPing { [weak self] error in
-                guard error != nil else { return }
-                Task { @MainActor in self?.dropped("Reconnecting…") }
-            }
+            if let task { ping(task, generation) }
         case .stopped: break
         default:
             retry = 0
@@ -148,14 +145,30 @@ public final class SessionChannel {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(25))
                 guard !Task.isCancelled else { return }
-                task.sendPing { error in
-                    guard error != nil else { return }
-                    Task { @MainActor in
-                        guard let self, generation == self.generation else { return }
-                        self.dropped("Reconnecting…")
-                    }
-                }
+                self?.ping(task, generation)
             }
+        }
+    }
+
+    /// How long a pong may take. On a connection that died without closing (the phone
+    /// slept, the network changed) one never comes, and neither does an error.
+    /// Generous: a pong waits behind a big message (a long session's history) on a slow network.
+    static let pongTimeout: Duration = .seconds(20)
+
+    /// Pings, and reconnects if the answer is an error or doesn't come in time.
+    private func ping(_ task: URLSessionWebSocketTask, _ generation: Int) {
+        let answered = Answered()
+        task.sendPing { [weak self] error in
+            Task { @MainActor in
+                answered.yes = true
+                guard error != nil, let self, generation == self.generation else { return }
+                self.dropped("Reconnecting…")
+            }
+        }
+        Task { [weak self] in
+            try? await Task.sleep(for: Self.pongTimeout)
+            guard !answered.yes, let self, generation == self.generation else { return }
+            self.dropped("Reconnecting…")
         }
     }
 
@@ -182,6 +195,11 @@ public final class SessionChannel {
         let status = (task.response as? HTTPURLResponse)?.statusCode
         let code = task.closeCode.rawValue
         let reason = task.closeReason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        // A broken or throttled encrypted channel: a new connection makes a new one.
+        if code == 4000, reason.hasPrefix("e2e: "), reason != "e2e: wrong key" {
+            dropped("Reconnecting…")
+            return
+        }
         if code == 4000 {
             teardown()
             state = .stopped(reason.isEmpty ? "tamale stopped serving this session." : Self.explain(reason))
@@ -285,4 +303,10 @@ public final class SessionChannel {
 
 extension String {
     var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
+}
+
+/// Whether a ping has been answered.
+@MainActor
+private final class Answered {
+    var yes = false
 }

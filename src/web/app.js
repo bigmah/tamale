@@ -211,6 +211,13 @@ let ws;
 let seq = 0;
 let retry = 0;
 const latest = {};
+/** The next connection attempt, while one is waiting. */
+let retryTimer = null;
+/** When this connection was started, and when the socket last brought anything. */
+let connectedAt = 0;
+let lastHeard = 0;
+/** Shows a dropped connection, if it's still down by then: a blip shouldn't flash. */
+let downTimer = null;
 
 /**
  * End-to-end encryption, on a session opened through a tamale-hub (see e2e.md). The hub's
@@ -323,21 +330,26 @@ async function sealedFrame(link, data) {
 /** The connection is up and, if it's to be, encrypted. */
 function ready() {
   retry = 0;
+  clearTimeout(downTimer);
+  downTimer = null;
   if (ending.due) return endSession();
   setConn('live', e2e ? 'Connected to tamale, end-to-end encrypted' : 'Connected to tamale');
   request('tree');
-  for (const id of artifactsDue.keys()) send({ t: 'artifact', id });
+  for (const id of artifactsDue.keys()) send({ t: 'artifact', id }, true);
 }
 
 function connect() {
   // wss: when the page came over https, as it does through a tamale-hub.
   const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+  clearTimeout(retryTimer);
+  retryTimer = null;
   const socket = new WebSocket(`${scheme}://${location.host}/ws?t=${encodeURIComponent(token)}`);
   ws = socket;
   channel = null;
+  connectedAt = lastHeard = Date.now();
   ws.onopen = () => {
-    if (e2e) setConn('down', 'Encrypting the connection…');
-    else ready();
+    if (!e2e) ready();
+    else if (!downTimer) setConn('', 'Encrypting the connection…');
   };
   if (e2e) {
     // One at a time and in order: the handshake and the counters depend on it. Anything
@@ -345,6 +357,7 @@ function connect() {
     let due = Promise.resolve();
     const link = { socket, handshake: null, done: false, sealed: null };
     ws.onmessage = (ev) => {
+      lastHeard = Date.now();
       due = due.then(() => sealedFrame(link, ev.data)).catch((e) => {
         console.error(e);
         socket.close();
@@ -352,6 +365,7 @@ function connect() {
     };
   } else {
     ws.onmessage = (ev) => {
+      lastHeard = Date.now();
       try {
         const message = JSON.parse(ev.data);
         if (message.t === 'hs0') {
@@ -374,15 +388,91 @@ function connect() {
       lock("This browser's key doesn't fit this session", NEEDS_KEY);
       return;
     }
+    // A broken or throttled encrypted channel: a new connection starts a new handshake.
+    if (ev.code === 4000 && ev.reason.startsWith('e2e: ')) {
+      return reconnectLater(ev.reason.includes('too many') ? 30000 : 0);
+    }
     if (ev.code === 4000) {
+      // Over for good (the session ended, say): nothing to reconnect to.
+      locked = true;
+      clearTimeout(downTimer);
       setConn('stopped', ev.reason);
       toast(ev.reason || 'tamale stopped serving this page.', 1e9);
       return;
     }
-    setConn('down', 'Reconnecting…');
-    setTimeout(connect, Math.min(5000, 250 * 2 ** retry++));
+    reconnectLater();
   };
 }
+
+/**
+ * Tries again after a while, quietly: tamale's machine may be asleep for hours, or the hub
+ * restarting. A page out of sight tries less often; coming back into view tries at once.
+ */
+function reconnectLater(at = 0) {
+  clearTimeout(retryTimer);
+  const cap = document.hidden ? 30000 : 5000;
+  retryTimer = setTimeout(connect, Math.max(at, Math.min(cap, 250 * 2 ** retry++)));
+  showDown();
+}
+
+function showDown() {
+  if (downTimer) return;
+  setConn('', 'Reconnecting…');
+  downTimer = setTimeout(() => setConn('down', 'Reconnecting…'), 8000);
+}
+
+/** Drops this connection, which may have died without a word, and starts another. */
+function reconnectNow() {
+  if (locked || !ws) return;
+  const old = ws;
+  old.onclose = old.onmessage = null;
+  try { old.close(); } catch {}
+  channel = null;
+  retry = 0;
+  showDown();
+  connect();
+}
+
+/** Whether this connection carries messages yet (on an encrypted session, once sealed). */
+const isReady = () => ws?.readyState === WebSocket.OPEN && (!e2e || channel);
+
+// A connection can die without closing: a phone that slept, a laptop that changed networks.
+// Nothing arrives on one that's quiet, so while the page is in view it's checked now and
+// then, with a ping that goes all the way to tamale and back.
+// Generous, since a big message (a long session's history on a slow phone) arrives all at once.
+const QUIET = 20000;
+const GONE = 90000;
+setInterval(() => {
+  if (document.hidden || locked || !ws || retryTimer) return;
+  const now = Date.now();
+  if (!isReady()) {
+    if (now - connectedAt > GONE) reconnectNow();
+    return;
+  }
+  if (now - lastHeard > GONE) reconnectNow();
+  else if (now - lastHeard > QUIET) send({ t: 'ping' }, true);
+}, 10000);
+
+/** Back in view or online: makes sure the connection still works, and reconnects if not. */
+function checkConnection() {
+  if (document.hidden || locked || !ws) return;
+  if (retryTimer) {
+    retry = 0;
+    clearTimeout(retryTimer);
+    connect();
+    return;
+  }
+  // Something arrived just now, so it works.
+  if (!isReady() || Date.now() - lastHeard < 10000) return;
+  const asked = Date.now();
+  send({ t: 'ping' }, true);
+  setTimeout(() => {
+    if (ws && isReady() && lastHeard < asked) reconnectNow();
+  }, 8000);
+}
+addEventListener('visibilitychange', checkConnection);
+addEventListener('online', checkConnection);
+addEventListener('pageshow', (ev) => { if (ev.persisted) checkConnection(); });
 
 function setConn(kind, title) {
   const node = $('conn');
@@ -390,7 +480,8 @@ function setConn(kind, title) {
   node.title = title;
 }
 
-function send(message) {
+/** Sends `message`; false if not connected. Unless `quiet`, says so when it isn't. */
+function send(message, quiet = false) {
   if (e2e) {
     if (ws?.readyState === WebSocket.OPEN && channel) {
       const socket = ws;
@@ -408,7 +499,7 @@ function send(message) {
     ws.send(JSON.stringify(message));
     return true;
   }
-  toast('Not connected to tamale. Is it still running?');
+  if (!quiet) toast('Reconnecting to tamale. Try again in a moment.');
   return false;
 }
 
@@ -416,7 +507,7 @@ function send(message) {
 function request(t, body = {}, kind = t) {
   const s = ++seq;
   latest[kind] = s;
-  send({ t, seq: s, ...body });
+  send({ t, seq: s, ...body }, true);
   return s;
 }
 
@@ -424,6 +515,8 @@ function onMessage(m) {
   // The welcome's first message: drawn by the time it's painted.
   shown();
   switch (m.t) {
+    case 'pong':
+      return;
     case 'entries':
       return applyEntries(m.from, m.items);
     case 'status':
@@ -717,7 +810,7 @@ function artifactHtml(url) {
     const id = url.slice('/artifact/'.length);
     page = new Promise((resolve) => artifactsDue.set(id, resolve));
     artifactPages.set(url, page);
-    send({ t: 'artifact', id });
+    send({ t: 'artifact', id }, true);
   }
   return page;
 }

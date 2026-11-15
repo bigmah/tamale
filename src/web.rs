@@ -1000,13 +1000,20 @@ async fn client(ws: WebSocket, shared: Arc<Shared>) {
     let (mut sink, mut stream) = ws.split();
     let (tx, mut rx) = mpsc::unbounded_channel();
     tokio::spawn(async move {
-        while let Some(out) = rx.recv().await {
-            let message = match out {
-                Out::Text(text) => Message::Text(text.into()),
-                Out::Close(reason) => Message::Close(Some(CloseFrame {
-                    code: 4000,
-                    reason: reason.into(),
-                })),
+        // Pinged, so a tab on a phone that's gone to sleep is noticed (see below).
+        let mut ping = tokio::time::interval(std::time::Duration::from_secs(30));
+        ping.tick().await;
+        loop {
+            let message = tokio::select! {
+                out = rx.recv() => match out {
+                    Some(Out::Text(text)) => Message::Text(text.into()),
+                    Some(Out::Close(reason)) => Message::Close(Some(CloseFrame {
+                        code: 4000,
+                        reason: reason.into(),
+                    })),
+                    None => break,
+                },
+                _ = ping.tick() => Message::Ping(Vec::new().into()),
             };
             if sink.send(message).await.is_err() {
                 return;
@@ -1015,7 +1022,9 @@ async fn client(ws: WebSocket, shared: Arc<Shared>) {
         let _ = sink.close().await;
     });
     let id = shared.add_client(tx, false, None);
-    while let Some(Ok(message)) = stream.next().await {
+    // Browsers answer pings, so a tab silent this long is gone, and stops being sent updates.
+    let silent_for = std::time::Duration::from_secs(75);
+    while let Ok(Some(Ok(message))) = tokio::time::timeout(silent_for, stream.next()).await {
         let text = match message {
             Message::Text(text) => text,
             Message::Close(_) => break,
@@ -1051,6 +1060,10 @@ fn handle(shared: &Arc<Shared>, id: u64, request: Value) {
         });
     };
     match request.get("t").and_then(Value::as_str).unwrap_or("") {
+        // The page checking its connection is alive, as after a phone wakes: a browser
+        // can't send a WebSocket ping itself. Through a hub this comes back sealed, so
+        // it shows the whole way to tamale works, not just the hop to the hub.
+        "ping" => shared.send_to(id, json!({ "t": "pong" }).to_string()),
         "terminal" => {
             if let Some(client) = shared.clients.lock().unwrap().get_mut(&id) {
                 client.terminal = true;
@@ -1437,6 +1450,17 @@ mod tests {
         assert_eq!(sessions[0]["items"][0]["hash"], content_hash("<title>New</title>"));
         assert_eq!(sessions[1]["items"][0]["title"], "Old");
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn a_page_checking_its_connection_hears_back() {
+        let server = Server::start(false).await.unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let id = server.shared.add_client(tx, true, None);
+        while rx.try_recv().is_ok() {}
+        handle(&server.shared, id, json!({ "t": "ping" }));
+        let Some(Out::Text(pong)) = rx.recv().await else { panic!("no answer") };
+        assert_eq!(serde_json::from_str::<Value>(&pong).unwrap(), json!({ "t": "pong" }));
     }
 
     #[tokio::test]

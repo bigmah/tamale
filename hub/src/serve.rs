@@ -46,9 +46,16 @@ const SEAL: &str = include_str!("../static/seal.js");
 const QR: &str = include_str!("../static/qrcode.js");
 const STYLE: &str = include_str!("../static/hub.css");
 
-/// How long a disconnected session stays listed (and its page keeps retrying), and how
-/// long after a restart unknown sessions are assumed to be on their way back.
+/// How long after a restart unknown sessions are assumed to be on their way back.
 const GRACE: Duration = Duration::from_secs(600);
+/// How long a disconnected session stays listed, and its pages keep waiting for it. Long
+/// enough for a laptop that sleeps over a weekend: a session that ends on purpose says so
+/// (see [`ToHub::End`]) and goes at once.
+const OFFLINE_LIFE: Duration = Duration::from_secs(7 * 24 * 3600);
+/// How often an idle socket is pinged, and how long it may stay silent before it counts as
+/// gone (a phone that slept, a network that changed): pongs count.
+const PING_EVERY: Duration = Duration::from_secs(30);
+const SILENT_FOR: Duration = Duration::from_secs(75);
 /// What a session's pages are told when it ends on purpose (see [`ToHub::End`]).
 const SESSION_ENDED: &str = "This session ended.";
 const CHEF_REPLACED: &str = "A new tamale chef took this one's place.";
@@ -447,7 +454,7 @@ impl Hub {
         self.sessions
             .lock()
             .unwrap()
-            .retain(|_, s| s.offline_since.is_none_or(|t| t.elapsed() < GRACE));
+            .retain(|_, s| s.offline_since.is_none_or(|t| t.elapsed() < OFFLINE_LIFE));
         self.tickets
             .lock()
             .unwrap()
@@ -1560,7 +1567,21 @@ async fn browser(hub: Arc<Hub>, sid: String, ws: WebSocket) {
     let (mut sink, mut stream) = ws.split();
     let writing = backlog.clone();
     let writer = tokio::spawn(async move {
-        while let Some(out) = rx.recv().await {
+        // Browsers answer pings on their own, so a tab that's gone quiet (a phone asleep)
+        // is noticed, and its place and its share of tamale's updates given up.
+        let mut ping = tokio::time::interval(PING_EVERY);
+        ping.tick().await;
+        loop {
+            let out = tokio::select! {
+                out = rx.recv() => out,
+                _ = ping.tick() => {
+                    if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
+                        return;
+                    }
+                    continue;
+                }
+            };
+            let Some(out) = out else { break };
             let (message, size) = match out {
                 Out::Text(text) => {
                     let size = text.len();
@@ -1585,7 +1606,10 @@ async fn browser(hub: Arc<Hub>, sid: String, ws: WebSocket) {
     });
     loop {
         let message = tokio::select! {
-            message = stream.next() => message,
+            message = tokio::time::timeout(SILENT_FOR, stream.next()) => match message {
+                Ok(message) => message,
+                Err(_) => break,
+            },
             () = backlog.over.notified() => break,
         };
         match message {
@@ -1702,10 +1726,24 @@ async fn agent_socket(hub: Arc<Hub>, key: state::Key, ip: IpAddr, ws: WebSocket)
     let refused = {
         let mut sessions = hub.sessions.lock().unwrap();
         let taken = sessions.get(&sid).is_some_and(|s| s.key != key.name);
-        let count = sessions
+        let mut count = sessions
             .iter()
             .filter(|(s, session)| **s != sid && session.key == key.name)
             .count();
+        // Offline sessions are kept a long while, so at the limit the one offline longest
+        // makes way, rather than a new session being refused.
+        if count >= MAX_SESSIONS_PER_KEY && !taken {
+            let oldest = sessions
+                .iter()
+                .filter(|(s, other)| **s != sid && other.key == key.name)
+                .filter_map(|(s, other)| Some((other.offline_since?, s.clone())))
+                .min()
+                .map(|(_, s)| s);
+            if let Some(oldest) = oldest {
+                sessions.remove(&oldest);
+                count -= 1;
+            }
+        }
         // One chef per key: one that's online keeps the place, and a new one takes it from
         // one that's offline (which is refused in turn if it comes back).
         let chef_online = chef
@@ -1805,7 +1843,7 @@ async fn agent_socket(hub: Arc<Hub>, key: state::Key, ip: IpAddr, ws: WebSocket)
     }
     let writing = backlog.clone();
     let writer = tokio::spawn(async move {
-        let mut ping = tokio::time::interval(Duration::from_secs(30));
+        let mut ping = tokio::time::interval(PING_EVERY);
         ping.tick().await;
         loop {
             let (message, size) = tokio::select! {
@@ -1831,7 +1869,7 @@ async fn agent_socket(hub: Arc<Hub>, key: state::Key, ip: IpAddr, ws: WebSocket)
     loop {
         let next = tokio::select! {
             // Anything at all (pongs included) within 75 s, or the agent counts as gone.
-            next = tokio::time::timeout(Duration::from_secs(75), stream.next()) => next,
+            next = tokio::time::timeout(SILENT_FOR, stream.next()) => next,
             () = backlog.over.notified() => break,
         };
         let Ok(Some(Ok(message))) = next else {
@@ -3235,6 +3273,36 @@ mod tests {
             })
             .await;
             drop(agent);
+            let _ = std::fs::remove_dir_all(&setup.store.dir);
+        }
+
+        #[tokio::test]
+        async fn a_key_at_its_limit_makes_room_by_dropping_the_session_offline_longest() {
+            let setup = start().await;
+            let mut agents = Vec::new();
+            for i in 0..MAX_SESSIONS_PER_KEY {
+                let sid = format!("{:032x}", i + 1);
+                let mut agent = agent_hello(setup.port, &setup.auth, &sid).await;
+                assert!(next_text(&mut agent).await.contains("\"welcome\""));
+                agents.push(agent);
+            }
+            // All online: one more is refused.
+            let extra = format!("{:032x}", 0xffff);
+            let mut refused = agent_hello(setup.port, &setup.auth, &extra).await;
+            assert_eq!(close_code(&mut refused).await, close::TOO_MANY);
+
+            // The first goes offline (a laptop asleep), and stays listed...
+            drop(agents.remove(0));
+            let first = format!("{:032x}", 1);
+            let hub = setup.hub.clone();
+            until("the first session going offline", || {
+                hub.sessions.lock().unwrap().get(&first).is_some_and(|s| s.agent.is_none())
+            })
+            .await;
+            // ...until a new session needs its place.
+            let mut extra_agent = agent_hello(setup.port, &setup.auth, &extra).await;
+            assert!(next_text(&mut extra_agent).await.contains("\"welcome\""));
+            assert!(!setup.hub.sessions.lock().unwrap().contains_key(&first));
             let _ = std::fs::remove_dir_all(&setup.store.dir);
         }
 
