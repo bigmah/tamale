@@ -6,7 +6,11 @@
 // with the artifact CSP, so what it writes runs in an opaque origin, as a served artifact
 // does. Writing the document drops this listener with everything else on the window.
 (() => {
-  const host = window.opener || window.parent;
+  const host = window.opener || (window.parent !== window ? window.parent : null);
+  if (!host) {
+    document.write('<p style="font:16px system-ui">Open this artifact from its session.</p>');
+    return;
+  }
   let written = false;
   addEventListener('message', (ev) => {
     if (written || ev.source !== host || typeof ev.data?.tamaleArtifactHtml !== 'string') return;

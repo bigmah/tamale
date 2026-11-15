@@ -791,6 +791,14 @@ async fn dashboard(State(hub): State<Arc<Hub>>) -> Response {
         headers.insert(header::CONTENT_SECURITY_POLICY, csp);
     }
     headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("SAMEORIGIN"));
+    // A session in one of its frames opens an artifact in a tab of its own and sends it the
+    // document (see artifact-frame.html). Under `same-origin` the browser cuts that tab
+    // off from its opener, since the frame isn't this page's origin; this still keeps
+    // whatever opens this page away from it.
+    headers.insert(
+        header::HeaderName::from_static("cross-origin-opener-policy"),
+        HeaderValue::from_static("same-origin-allow-popups"),
+    );
     response
 }
 
@@ -3410,7 +3418,8 @@ mod tests {
                 .send()
                 .await
                 .unwrap();
-            assert_eq!(r.headers()["cross-origin-opener-policy"], "same-origin");
+            // Popups keep their opener: a session's frame sends an artifact to the tab it opens.
+            assert_eq!(r.headers()["cross-origin-opener-policy"], "same-origin-allow-popups");
             assert_eq!(r.headers()["cross-origin-resource-policy"], "same-origin");
             assert!(r.headers().get("strict-transport-security").is_none(), "this one's http");
             let _ = std::fs::remove_dir_all(&setup.store.dir);
