@@ -9,7 +9,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("/model", "Pick a model from a list (type to filter)"),
     (
         "/add-dir [path]",
-        "Add a directory to the agent's scope; omit the path to list scoped directories",
+        "Add a directory to the agent's scope; omit the path to browse for one, or /add-dir list",
     ),
     (
         "/model <id>",

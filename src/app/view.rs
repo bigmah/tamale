@@ -83,6 +83,9 @@ impl App {
         if self.rewind_picker.is_some() {
             self.draw_rewind_picker(frame, chat_area);
         }
+        if self.dir_browser.is_some() {
+            self.draw_dir_browser(frame, chat_area);
+        }
         if self.diff_open {
             self.draw_diff(frame);
         }
@@ -520,6 +523,8 @@ impl App {
             "answer the agent's questions · esc to interrupt"
         } else if self.rewind_picker.is_some() {
             "↑/↓ move · enter rewind · esc cancel"
+        } else if self.dir_browser.is_some() {
+            "type to filter · ↑/↓ move · →/← open/up · enter add · esc cancel"
         } else if self.picker.is_some() || self.resume_picker.is_some() {
             "type to filter · ↑/↓ move · enter select · esc cancel"
         } else if self.effort_picker.is_some() {

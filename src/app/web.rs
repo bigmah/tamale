@@ -144,7 +144,10 @@ have it next time."
     /// A prompt or slash command from the web UI, handled as if typed here.
     pub fn web_send(&mut self, text: String) {
         let text = text.trim().to_string();
-        if self.question.is_some() && !text.is_empty() && !text.starts_with('/') {
+        if text == "/add-dir" {
+            // The browser is a terminal popup that a page can't see.
+            self.show_scope();
+        } else if self.question.is_some() && !text.is_empty() && !text.starts_with('/') {
             // There's no picker there, so a message answers the agent's questions.
             self.answer_questions_with(text);
         } else if !text.is_empty() {
@@ -156,7 +159,9 @@ have it next time."
     /// The same from another terminal driving this session, which wants ordinary replies.
     pub fn terminal_send(&mut self, text: String) {
         let text = text.trim().to_string();
-        if self.question.is_some() && !text.is_empty() && !text.starts_with('/') {
+        if text == "/add-dir" {
+            self.show_scope();
+        } else if self.question.is_some() && !text.is_empty() && !text.starts_with('/') {
             self.answer_questions_with(text);
         } else if !text.is_empty() {
             self.plain_prompts = true;

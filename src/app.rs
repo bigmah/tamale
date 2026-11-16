@@ -9,6 +9,7 @@ mod backends;
 mod chef;
 mod commands;
 mod diff;
+mod dir_browser;
 mod goal;
 mod help;
 mod input;
@@ -223,6 +224,8 @@ pub struct App {
     #[cfg(unix)]
     switch_request: Option<u32>,
     rewind_picker: Option<rewind::Picker>,
+    /// The `/add-dir` file tree browser, while it is open.
+    dir_browser: Option<dir_browser::Browser>,
     /// The `/diff` viewer, while it is open.
     diff: Option<diff::Viewer>,
     /// Whether the Diff tab is showing instead of the chat.
@@ -369,6 +372,7 @@ impl App {
             #[cfg(unix)]
             switch_request: None,
             rewind_picker: None,
+            dir_browser: None,
             diff: None,
             diff_open: false,
             approval: None,

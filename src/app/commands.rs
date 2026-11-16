@@ -9,28 +9,40 @@ use crate::session::Entry;
 use crate::{agent, permissions, session};
 
 impl App {
-    /// With no argument, show the current scope. A running turn keeps its snapshot.
+    /// With no argument, browse for a directory (`/add-dir list` shows the current scope).
+    /// A running turn keeps its snapshot.
     pub(super) fn add_dir(&mut self, arg: &str) {
-        if arg.is_empty() {
-            let mut scope = format!("Working directory: {}", self.workspace.cwd.display());
-            if self.workspace.additional_dirs.is_empty() {
-                scope.push_str("\nNo additional directories. Usage: /add-dir <path>");
-            } else {
-                scope.push_str("\nAdditional directories:");
-                for dir in &self.workspace.additional_dirs {
-                    scope.push_str(&format!("\n  {}", dir.display()));
-                }
+        match arg {
+            "" => self.open_dir_browser(),
+            "list" => self.show_scope(),
+            _ => {
+                // The remainder is one path, so spaces work with or without enclosing quotes.
+                let path = arg
+                    .strip_prefix('"')
+                    .and_then(|s| s.strip_suffix('"'))
+                    .or_else(|| arg.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+                    .unwrap_or(arg);
+                self.add_dir_path(std::path::Path::new(path));
             }
-            self.entries.push(Entry::Info(scope));
-            return;
         }
-        // The remainder is one path, so spaces work with or without enclosing quotes.
-        let path = arg
-            .strip_prefix('"')
-            .and_then(|s| s.strip_suffix('"'))
-            .or_else(|| arg.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
-            .unwrap_or(arg);
-        match self.workspace.add_dir(std::path::Path::new(path)) {
+    }
+
+    /// Lists the working directory and the directories added to the scope.
+    pub(super) fn show_scope(&mut self) {
+        let mut scope = format!("Working directory: {}", self.workspace.cwd.display());
+        if self.workspace.additional_dirs.is_empty() {
+            scope.push_str("\nNo additional directories. Add one with /add-dir [path].");
+        } else {
+            scope.push_str("\nAdditional directories:");
+            for dir in &self.workspace.additional_dirs {
+                scope.push_str(&format!("\n  {}", dir.display()));
+            }
+        }
+        self.entries.push(Entry::Info(scope));
+    }
+
+    pub(super) fn add_dir_path(&mut self, path: &std::path::Path) {
+        match self.workspace.add_dir(path) {
             Ok(true) => {
                 let dir = self.workspace.additional_dirs.last().unwrap();
                 let note = if self.is_running() {
@@ -45,7 +57,8 @@ impl App {
                 self.save_session();
             }
             Ok(false) => self.entries.push(Entry::Info(format!(
-                "Directory is already in scope: {path}"
+                "Directory is already in scope: {}",
+                path.display()
             ))),
             Err(error) => self
                 .entries

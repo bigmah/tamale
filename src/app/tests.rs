@@ -121,8 +121,8 @@ async fn add_dir_lists_scope_and_accepts_spaces_and_quotes_during_a_turn() {
     };
     let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
     let (mut app, _rx) = App::new_with_channel(client, test_settings("test-model"), workspace);
-    app.command("/add-dir");
-    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("Usage: /add-dir")));
+    app.command("/add-dir list");
+    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("No additional directories")));
     app.command("/add-dir ../shared files");
     assert_eq!(
         app.workspace.additional_dirs,
@@ -144,7 +144,7 @@ async fn add_dir_lists_scope_and_accepts_spaces_and_quotes_during_a_turn() {
     app.interrupt();
     app.command("/clear");
     assert_eq!(app.workspace.additional_dirs.len(), 2);
-    app.command("/add-dir");
+    app.command("/add-dir list");
     assert!(
         matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("shared files") && t.contains("other files"))
     );
@@ -1263,6 +1263,66 @@ async fn without_a_backend_prompts_open_the_picker_and_stay_in_the_input() {
     assert!(app.is_current(Choice::Api));
     assert_eq!(app.settings.backend.kind, Kind::Api);
     assert_eq!(app.backend_label(), "Anthropic API");
+}
+
+#[tokio::test]
+async fn add_dir_browser_walks_the_tree_and_adds_the_highlighted_directory() {
+    let root = std::env::temp_dir().join(format!("tamale-browse-{}", session::new_id()));
+    for dir in ["project", "shared/nested", "zeta", ".hidden"] {
+        std::fs::create_dir_all(root.join(dir)).unwrap();
+    }
+    std::fs::write(root.join("file.txt"), "").unwrap();
+    let workspace = Workspace {
+        cwd: root.join("project"),
+        additional_dirs: Vec::new(),
+    };
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(client, test_settings("test-model"), workspace);
+
+    // It opens on the project's parent with the project highlighted; files and hidden
+    // directories aren't listed.
+    app.command("/add-dir");
+    let browser = app.dir_browser.as_ref().unwrap();
+    assert_eq!(browser.filtered(), ["project", "shared", "zeta"]);
+    assert_eq!(browser.highlighted(), root.join("project"));
+
+    let shown = screen(&mut app);
+    assert!(shown.contains("Add directory to scope"), "{shown}");
+    assert!(shown.contains("project/  in scope") && shown.contains("zeta/"), "{shown}");
+
+    // Typing filters (and keeps keys from the prompt); → opens, ← goes back up.
+    type_text(&mut app, "sha");
+    app.on_event(key(KeyCode::Right));
+    assert!(app.input.is_empty());
+    let browser = app.dir_browser.as_ref().unwrap();
+    assert_eq!(browser.filtered(), ["nested"]);
+    assert_eq!(browser.highlighted(), root.join("shared"), "row 0 is the directory itself");
+    app.on_event(key(KeyCode::Left));
+    assert_eq!(app.dir_browser.as_ref().unwrap().highlighted(), root.join("shared"));
+    app.on_event(key(KeyCode::Char('.')));
+    assert_eq!(app.dir_browser.as_ref().unwrap().filtered(), [".hidden"]);
+    app.on_event(key(KeyCode::Backspace));
+
+    // Enter adds the highlighted directory and closes the browser.
+    type_text(&mut app, "sha");
+    app.on_event(key(KeyCode::Right));
+    app.on_event(key(KeyCode::Down));
+    app.on_event(key(KeyCode::Enter));
+    assert!(app.dir_browser.is_none());
+    assert_eq!(
+        app.workspace.additional_dirs,
+        [root.join("shared/nested").canonicalize().unwrap()]
+    );
+
+    // Esc cancels without adding anything; a page asking gets the scope listed instead.
+    app.command("/add-dir");
+    app.on_event(key(KeyCode::Esc));
+    assert!(app.dir_browser.is_none());
+    assert_eq!(app.workspace.additional_dirs.len(), 1);
+    app.web_send("/add-dir".into());
+    assert!(app.dir_browser.is_none());
+    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("nested")));
+    let _ = std::fs::remove_dir_all(root);
 }
 
 fn key(code: KeyCode) -> Event {

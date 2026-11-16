@@ -165,6 +165,11 @@ impl App {
             return;
         }
 
+        if self.dir_browser.is_some() {
+            self.on_dir_browser_key(key, ctrl);
+            return;
+        }
+
         if self.effort_picker.is_some() {
             self.on_effort_picker_key(key, ctrl);
             return;
@@ -349,6 +354,8 @@ impl App {
         } else if let Some(picker) = &mut self.resume_picker {
             picker.filter.push_str(&text.replace('\n', " "));
             picker.selected = 0;
+        } else if self.dir_browser.is_some() {
+            self.on_dir_browser_paste(&text);
         } else if self.help_scroll.is_none()
             && self.effort_picker.is_none()
             && self.backend_picker.is_none()
