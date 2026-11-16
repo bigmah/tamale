@@ -581,7 +581,9 @@ struct StatusSheet: View {
                         if !status.backend.isEmpty { LabeledContent("Backend", value: status.backend) }
                         if !status.mode.isEmpty { LabeledContent("Permissions", value: status.mode) }
                         if let effort = status.effort { LabeledContent("Effort", value: effort) }
-                        if let goal = status.goal { LabeledContent("Goal", value: goal) }
+                        if let goal = status.goal {
+                            LabeledContent(status.goalState ?? "Goal", value: goal)
+                        }
                     }
                     LabeledContent("Key", value: row.account.name)
                     LabeledContent("Connection") {

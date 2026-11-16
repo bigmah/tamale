@@ -47,16 +47,30 @@
 - `/compact [focus]` summarizes the conversation to free context
 - `/goal <condition>` keeps the agent working until the condition holds, e.g.
   `/goal cargo test passes with no warnings`. After each turn a separate checker (a
-  subagent on the same backend and model) verifies the condition by reading files and
-  running commands, and answers `[goal met]` or `[goal not met]`. Its steps show in the
-  transcript (marked `↳`), and its tool calls follow your permission mode and rules, with
+  subagent on the same backend and model) verifies the condition requirement by
+  requirement, by reading files and running commands rather than trusting the agent's
+  report, and answers `[goal met]` or `[goal not met]`. Its steps show in the transcript
+  (marked `↳`), and its tool calls follow your permission mode and rules, with
   `write_file` and `edit_file` always denied. Until it confirms, the agent gets a
-  continuation prompt with the checker's findings, up to 20 turns. The agent can end a turn
-  with `[goal blocked]` when it needs you. Interrupts (Esc), errors (the agent's or the
-  checker's), `[goal blocked]` and the turn limit pause the goal; `/goal resume` continues
-  it, `/goal clear` drops it, and `/goal` alone shows it. The goal is shown above the input
-  while it is set. Messages you queue during a goal are sent before the next check.
-  `/clear` and `/resume` drop the goal.
+  continuation prompt with the checker's findings. Write conditions the checker can
+  verify: one measurable end state (a test or build that passes, a file that exists), and
+  any constraints that matter ("without changing the public API"). Conditions are limited
+  to 4,000 characters; put longer specs in a file and point the goal at it.
+  - The goal pauses when the agent ends a turn with `[goal blocked]` (it needs you), on
+    interrupts (Esc), after 3 turns in a row without a tool call (it looks stuck), after
+    20 turns without success, and when the checker gives no verdict. Failed turns and
+    checks are retried after 1, 5 and 15 minutes before the goal pauses.
+  - A paused goal continues when you send a message (the message is the next turn, with
+    the goal recalled for the agent) or with `/goal resume`. `/goal pause` holds it until
+    `/goal resume`, so you can talk about other things in between.
+  - `/goal` alone shows the goal, its turns, time, tokens and the checker's last findings.
+    `/goal clear` (or `stop`, `off`, `cancel`) drops it; setting a new goal replaces it.
+  - The goal is shown above the input (and in the web UI) with its state, turn count and
+    time. Messages you type during a goal reach the agent mid-turn, or go along with the
+    next continuation when typed while the checker runs. The checker is shown them too,
+    and counts their requests as part of the goal.
+  - The goal is saved with the session: `/resume` (and `tamale --continue`) brings it back
+    paused. `/clear` drops it.
 - `/backend` opens a backend picker; `/backend api|claude-code|codex|<provider>` (e.g. `deepseek`) switches directly, keeping the conversation
 - `/login` signs in to Claude Code or Codex (with their backends; see [Backends](backends.md))
 - `/add-dir [path]` adds a directory to the agent's scope; without a path it opens a file tree

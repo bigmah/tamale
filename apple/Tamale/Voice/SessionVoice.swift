@@ -264,6 +264,7 @@ final class SessionAgent {
             out["mode"] = s.mode
             out["queued_prompts"] = s.queued
             if let goal = s.goal { out["goal"] = goal }
+            if let state = s.goalState { out["goal_state"] = state }
             if s.window > 0 { out["context_used_percent"] = Int(Double(s.context) / Double(s.window) * 100) }
         }
         if let a = model.approval { out["waiting_for_permission"] = describe(a) }

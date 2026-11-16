@@ -24,6 +24,7 @@ impl App {
             history: self.history.clone(),
             entries,
             checkpoints,
+            goal: self.saved_goal(),
         };
         self.session_writer
             .get_or_insert_with(|| session::Writer::start(self.tx.clone()))
@@ -198,6 +199,7 @@ impl App {
         self.entries = saved.entries;
         self.checkpoints = saved.checkpoints;
         self.goal = None;
+        let saved_goal = saved.goal;
         self.permissions.lock().unwrap().clear_session();
         self.workspace.additional_dirs.clear();
         for dir in self
@@ -239,6 +241,7 @@ impl App {
             ));
         }
         self.entries.push(Entry::Info(note));
+        self.restore_goal(saved_goal);
     }
 
     pub(super) fn on_resume_picker_key(&mut self, key: KeyEvent, ctrl: bool) {

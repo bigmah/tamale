@@ -1117,7 +1117,7 @@ function applyStatus(s) {
   $('ctx-label').textContent = `${fmtTokens(s.context)} / ${fmtTokens(s.window)}`;
   $('ctx').title = `Context ${pct}% full · ↑${fmtTokens(s.input_tokens)} ↓${fmtTokens(s.output_tokens)} this session`;
   $('cost').textContent = s.cost > 0 ? `$${s.cost.toFixed(s.cost < 1 ? 3 : 2)}${s.cost_partial ? '+' : ''}` : '';
-  $('hint-left').textContent = s.goal ? `goal: ${s.goal}` : `via ${s.backend}`;
+  $('hint-left').textContent = s.goal ? `◎ ${s.goal_state || 'goal'}: ${s.goal}` : `via ${s.backend}`;
   $('queued').replaceChildren(...s.queued.map((q) => h('div', { class: 'queued-item', text: q })));
   // A long run that finished while you were away says so in the tab until you look.
   const ranLong = wasRunning && !s.running && state.runSince && Date.now() / 1000 - state.runSince >= 60;
@@ -1735,7 +1735,7 @@ const COMMANDS = [
   { name: '/thinking', args: '[on|off]', desc: 'Toggle adaptive thinking' },
   { name: '/permissions', args: '[mode]', desc: 'Show the rules, or set ask, accept-edits, auto' },
   { name: '/compact', args: '[focus]', desc: 'Summarize the conversation to free up context' },
-  { name: '/goal', args: '<condition>', desc: 'Keep working until the condition holds' },
+  { name: '/goal', args: '[<condition>|pause|resume|clear]', desc: 'Keep working until the condition holds' },
   { name: '/undo', desc: 'Restore files the last turn changed and drop it' },
   { name: '/add-dir', args: '[path]', desc: "Add a directory to the agent's scope" },
   { name: '/resume', args: '<n|id>', desc: 'Continue a saved session' },

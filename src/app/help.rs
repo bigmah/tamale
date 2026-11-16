@@ -17,7 +17,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ),
     (
         "/goal <condition>",
-        "Keep working, turn after turn, until the condition holds (/goal shows it; clear, resume)",
+        "Keep working, turn after turn, until a checker confirms the condition holds (/goal shows it; pause, resume, clear)",
     ),
     (
         "/compact [focus]",

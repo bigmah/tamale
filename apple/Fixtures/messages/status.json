@@ -13,6 +13,7 @@
     ],
     "effort": "high",
     "goal": "Fix login",
+    "goal_state": "goal 2/20 · 4m",
     "input_tokens": 50000,
     "mode": "default",
     "model": "claude-opus-4",

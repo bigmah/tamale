@@ -50,6 +50,27 @@ pub struct Session {
     /// Turns `/undo` and `/rewind` can return to; file snapshots live in `checkpoint_dir`.
     #[serde(default)]
     pub checkpoints: Vec<crate::checkpoint::Turn>,
+    /// The `/goal` that was being worked toward, restored (paused) on `/resume`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<Goal>,
+}
+
+/// A `/goal` as saved with its session.
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
+pub struct Goal {
+    pub condition: String,
+    /// Turns taken toward it so far.
+    pub turns: u32,
+    /// Seconds spent working on it so far.
+    pub elapsed: u64,
+    /// Tokens spent on it so far (uncached input plus output).
+    pub tokens: u64,
+    /// The checker's latest findings.
+    #[serde(default)]
+    pub last_check: Option<String>,
+    /// What the user said while it was worked on, which the checker is shown.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
 }
 
 /// The listing fields of a session; the (possibly large) history is skipped when parsing.
@@ -370,6 +391,7 @@ mod tests {
                 },
             ],
             checkpoints: Vec::new(),
+            goal: None,
             entries: vec![
                 Entry::User("hi".into()),
                 Entry::Tool {
@@ -403,6 +425,7 @@ mod tests {
             history: Vec::new(),
             entries: Vec::new(),
             checkpoints: Vec::new(),
+            goal: None,
         };
         save_in(&dir, &session).unwrap();
         assert_eq!(mode(&dir), 0o700);
@@ -500,6 +523,7 @@ mod perf_tests {
             history: vec![Message::user("x".repeat(1_000_000))],
             entries: vec![Entry::User("y".repeat(1_000_000))],
             checkpoints: Vec::new(),
+            goal: None,
         };
         for i in 0..30 {
             saved.id = format!("session-{i}");

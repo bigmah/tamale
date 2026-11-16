@@ -130,6 +130,8 @@ public struct SessionStatus: Codable, Equatable, Sendable {
     public var cost: Double
     public var costPartial: Bool
     public var goal: String?
+    /// Where the goal stands, as the terminal shows it: "goal 3/20 · 4m", "goal paused 3/20", ….
+    public var goalState: String?
     public var queued: [String]
 
     enum CodingKeys: String, CodingKey {
@@ -137,7 +139,7 @@ public struct SessionStatus: Codable, Equatable, Sendable {
         case step, steps, context, window, cost, goal, queued
         case stepSince = "step_since", stepKind = "step_kind", subSteps = "sub_steps"
         case signedIn = "signed_in", inputTokens = "input_tokens", outputTokens = "output_tokens"
-        case costPartial = "cost_partial"
+        case costPartial = "cost_partial", goalState = "goal_state"
     }
 
     public init(from decoder: Decoder) throws {
@@ -169,6 +171,7 @@ public struct SessionStatus: Codable, Equatable, Sendable {
         cost = get(.cost, 0)
         costPartial = get(.costPartial, false)
         goal = get(.goal, nil as String?)
+        goalState = get(.goalState, nil as String?)
         queued = get(.queued, [])
     }
 

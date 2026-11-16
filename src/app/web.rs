@@ -114,6 +114,7 @@ have it next time."
             cost: self.cost,
             cost_partial: self.cost_partial,
             goal: self.goal.as_ref().map(|g| g.condition.clone()),
+            goal_state: self.goal.as_ref().map(|g| g.label()),
             queued: self.queued_messages(),
             chef: self.is_chef(),
             asks: true,

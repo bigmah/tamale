@@ -187,6 +187,7 @@ fn messages(dir: &std::path::Path) -> Vec<(&'static str, Value)> {
         cost: 0.42,
         cost_partial: false,
         goal: Some("Fix login".into()),
+        goal_state: Some("goal 2/20 · 4m".into()),
         queued: vec!["then run the tests".into()],
         chef: false,
         asks: true,

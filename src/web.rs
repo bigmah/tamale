@@ -254,6 +254,9 @@ pub struct Status {
     pub cost: f64,
     pub cost_partial: bool,
     pub goal: Option<String>,
+    /// Where the goal stands, as the TUI shows it: `goal 3/20 · 4m`, `goal paused 3/20`, ….
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal_state: Option<String>,
     pub queued: Vec<String>,
     /// Whether this session is a tamale chef (see `crate::chef`).
     pub chef: bool,

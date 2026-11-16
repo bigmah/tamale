@@ -1454,30 +1454,51 @@ async fn messages_left_in_the_queue_are_sent_when_the_turn_ends() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// An app on a test backend for `/goal` tests, with helpers for what its turns do.
+fn goal_app() -> App {
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    app
+}
+
+fn goal_reply(app: &mut App, text: &str) {
+    app.on_agent(app.turn, AgentEvent::TextDelta(text.into()));
+    app.on_agent(app.turn, AgentEvent::Done);
+}
+
+/// A turn that uses a tool, as one making progress does.
+fn goal_work(app: &mut App, text: &str) {
+    app.on_agent(
+        app.turn,
+        AgentEvent::ToolCall {
+            name: "bash".into(),
+            summary: "cargo test".into(),
+            description: "Run the tests".into(),
+        },
+    );
+    goal_reply(app, text);
+}
+
+fn goal_checked(app: &mut App, answer: &str, failed: bool) {
+    app.on_agent(
+        app.turn,
+        AgentEvent::GoalChecked {
+            answer: answer.into(),
+            failed,
+        },
+    );
+}
+
 #[tokio::test]
 async fn goals_continue_until_the_checker_confirms_them() {
     let _env = SESSIONS_ENV.lock().await;
     let root = std::env::temp_dir().join(format!("tamale-goal-test-{}", session::new_id()));
     unsafe { std::env::set_var("TAMALE_SESSIONS_DIR", root.join("sessions")) };
-    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
-    let (mut app, _rx) = App::new_with_channel(
-        client,
-        test_settings("test-model"),
-        Workspace::current().unwrap(),
-    );
-    let reply = |app: &mut App, text: &str| {
-        app.on_agent(app.turn, AgentEvent::TextDelta(text.into()));
-        app.on_agent(app.turn, AgentEvent::Done);
-    };
-    let checked = |app: &mut App, answer: &str| {
-        app.on_agent(
-            app.turn,
-            AgentEvent::GoalChecked {
-                answer: answer.into(),
-                failed: false,
-            },
-        );
-    };
+    let mut app = goal_app();
 
     app.command("/goal all tests pass");
     assert!(app.is_running());
@@ -1486,7 +1507,7 @@ async fn goals_continue_until_the_checker_confirms_them() {
     assert!(screen(&mut app).contains("goal 1/20 all tests pass"));
 
     // The end of a turn starts the checker, which doesn't add to the conversation.
-    reply(&mut app, "All tests pass now.");
+    goal_reply(&mut app, "All tests pass now.");
     assert!(app.is_running());
     assert!(app.goal.as_ref().unwrap().checking);
     assert_eq!(app.checkpoints.len(), 1);
@@ -1502,56 +1523,225 @@ async fn goals_continue_until_the_checker_confirms_them() {
     );
 
     // Not met: the agent continues with the checker's findings.
-    checked(&mut app, "`parse` still fails.\n[goal not met]");
+    goal_checked(&mut app, "`parse` still fails.\n[goal not met]", false);
     assert!(app.is_running());
     assert_eq!(app.checkpoints.len(), 2);
-    assert!(matches!(app.entries.last(), Some(Entry::User(t))
-        if t.contains("turn 2 of 20") && t.contains("`parse` still fails.")));
+    assert!(matches!(app.entries.last(), Some(Entry::User(t)) if t.contains("turn 2 of 20")));
     assert!(format!("{:?}", app.history).contains("`parse` still fails."));
+    assert!(app.goal.as_ref().unwrap().last_check.as_ref().unwrap().contains("`parse`"));
 
-    // Blocked pauses without checking; resume continues.
-    reply(&mut app, "Which database should I use?\n[goal blocked]");
+    // Blocked pauses without checking; resume continues, counting on.
+    goal_reply(&mut app, "Which database should I use?\n[goal blocked]");
     assert!(!app.is_running());
     assert!(app.goal.as_ref().unwrap().paused);
     app.command("/goal resume");
     assert!(app.is_running());
+    assert_eq!(app.goal.as_ref().unwrap().turns, 3);
+    assert_eq!(app.goal.as_ref().unwrap().run_turns, 1);
 
     // An interrupt pauses too, also while checking.
-    reply(&mut app, "Done.");
+    goal_work(&mut app, "Done.");
     assert!(app.goal.as_ref().unwrap().checking);
     app.interrupt();
     let goal = app.goal.as_ref().unwrap();
     assert!(goal.paused && !goal.checking);
+    app.command("/goal");
+    assert!(matches!(app.entries.last(), Some(Entry::Info(t))
+        if t.contains("paused") && t.contains("3 turns") && t.contains("Last check:")));
     app.command("/goal resume");
 
-    reply(&mut app, "All 42 tests pass.");
-    checked(&mut app, "Ran cargo test: 42 passed.\n\n**[goal met]**");
+    goal_work(&mut app, "All 42 tests pass.");
+    goal_checked(&mut app, "Ran cargo test: 42 passed.\n\n**[goal met]**", false);
     assert!(!app.is_running());
     assert!(app.goal.is_none());
     let n = app.entries.len();
-    assert!(matches!(&app.entries[n - 2], Entry::Info(t) if t.starts_with("✓ Goal achieved")));
+    assert!(matches!(&app.entries[n - 2], Entry::Info(t)
+        if t.starts_with("✓ Goal achieved after 4 turns")));
     assert!(matches!(&app.entries[n - 1], Entry::Note(t) if t.contains("42 passed")));
     assert!(!screen(&mut app).contains("◎ goal"));
 
-    // Errors pause instead of looping, from the agent or the checker.
+    app.finish_saves().await;
+    unsafe { std::env::remove_var("TAMALE_SESSIONS_DIR") };
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn goals_retry_errors_then_pause() {
+    let _env = SESSIONS_ENV.lock().await;
+    let root = std::env::temp_dir().join(format!("tamale-goal-test-{}", session::new_id()));
+    unsafe { std::env::set_var("TAMALE_SESSIONS_DIR", root.join("sessions")) };
+    let mut app = goal_app();
+
+    // A failed turn is retried later, or now with /goal resume.
     app.command("/goal ship it");
     app.on_agent(app.turn, AgentEvent::Error("overloaded".into()));
     app.on_agent(app.turn, AgentEvent::Done);
     assert!(!app.is_running());
-    assert!(app.goal.as_ref().unwrap().paused);
+    let goal = app.goal.as_ref().unwrap();
+    assert!(!goal.paused && goal.retry.is_some());
+    assert!(matches!(app.entries.last(), Some(Entry::Info(t))
+        if t.contains("(overloaded)") && t.contains("Retrying in 1m (1/3)")));
+    assert!(screen(&mut app).contains("goal retrying 1/20 in"));
     app.command("/goal resume");
-    reply(&mut app, "Shipped.");
-    app.on_agent(
-        app.turn,
-        AgentEvent::GoalChecked {
-            answer: "Error: the subagent failed: overloaded".into(),
-            failed: true,
-        },
-    );
-    assert!(!app.is_running());
+    assert!(app.is_running());
+    assert!(app.goal.as_ref().unwrap().retry.is_none());
+
+    // So is a failed check, until the retries run out.
+    goal_work(&mut app, "Shipped.");
+    for _ in 0..3 {
+        goal_checked(&mut app, "Error: the subagent failed: overloaded", true);
+        assert!(!app.is_running());
+        assert!(app.goal.as_ref().unwrap().retry.is_some());
+        app.command("/goal resume");
+        assert!(app.goal.as_ref().unwrap().checking);
+    }
+    goal_checked(&mut app, "Error: the subagent failed: overloaded", true);
+    let goal = app.goal.as_ref().unwrap();
+    assert!(goal.paused && goal.retry.is_none());
+    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("failed 4 times")));
+
+    // A checker without a verdict pauses.
+    app.command("/goal resume");
+    goal_work(&mut app, "Shipped.");
+    goal_checked(&mut app, "Hmm, not sure.", false);
     assert!(app.goal.as_ref().unwrap().paused);
     app.command("/goal clear");
     assert!(app.goal.is_none());
+
+    app.finish_saves().await;
+    unsafe { std::env::remove_var("TAMALE_SESSIONS_DIR") };
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn goals_pause_when_stuck_and_resume_with_a_message() {
+    let _env = SESSIONS_ENV.lock().await;
+    let root = std::env::temp_dir().join(format!("tamale-goal-test-{}", session::new_id()));
+    unsafe { std::env::set_var("TAMALE_SESSIONS_DIR", root.join("sessions")) };
+    let mut app = goal_app();
+
+    // Turns without tool calls, again and again, pause the goal as stuck.
+    app.command("/goal the docs are clear");
+    for _ in 0..2 {
+        goal_reply(&mut app, "I think they're clear.");
+        goal_checked(&mut app, "They aren't.\n[goal not met]", false);
+    }
+    goal_reply(&mut app, "I think they're clear.");
+    assert!(!app.is_running());
+    assert!(app.goal.as_ref().unwrap().paused);
+    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("looks stuck")));
+
+    // A message resumes it, with the goal recalled for the model.
+    app.input = "Rewrite the intro first.".into();
+    app.cursor = app.input.len();
+    app.on_event(key(KeyCode::Enter));
+    assert!(app.is_running());
+    assert!(!app.goal.as_ref().unwrap().paused);
+    assert!(matches!(app.entries.last(), Some(Entry::User(t)) if t == "Rewrite the intro first."));
+    assert!(format!("{:?}", app.history).contains("resumes the paused goal"));
+    assert_eq!(app.goal.as_ref().unwrap().notes, ["Rewrite the intro first."]);
+
+    // Messages typed while the checker runs go along with the continuation.
+    goal_work(&mut app, "Rewrote the intro.");
+    assert!(app.goal.as_ref().unwrap().checking);
+    app.input = "Keep it short.".into();
+    app.cursor = app.input.len();
+    app.on_event(key(KeyCode::Enter));
+    assert_eq!(app.queued_messages(), ["Keep it short."]);
+    goal_checked(&mut app, "The outro is unclear.\n[goal not met]", false);
+    assert!(app.is_running());
+    assert!(matches!(app.entries.last(), Some(Entry::User(t)) if t == "Keep it short."));
+    let history = format!("{:?}", app.history);
+    assert!(history.contains("Keep it short.") && history.contains("The outro is unclear."));
+
+    // /goal pause holds it: a message doesn't resume it, /goal resume does.
+    app.command("/goal pause");
+    goal_work(&mut app, "Fixed the outro.");
+    assert!(!app.is_running(), "a paused goal isn't checked");
+    app.input = "What's left?".into();
+    app.cursor = app.input.len();
+    app.on_event(key(KeyCode::Enter));
+    assert!(app.goal.as_ref().unwrap().held);
+    goal_reply(&mut app, "Nothing much.");
+    assert!(!app.is_running());
+    app.command("/goal resume");
+    assert!(app.is_running() && !app.goal.as_ref().unwrap().paused);
+    // The checker hears what the user asked for, but not what was said while held.
+    assert_eq!(
+        app.goal.as_ref().unwrap().notes,
+        ["Rewrite the intro first.", "Keep it short."]
+    );
+
+    // Pausing while checking stops the checker.
+    goal_work(&mut app, "Done.");
+    assert!(app.goal.as_ref().unwrap().checking);
+    app.command("/goal pause");
+    assert!(!app.is_running());
+    assert!(!app.goal.as_ref().unwrap().checking);
+
+    // A new goal replaces the old one.
+    app.command("/goal the README is clear");
+    assert!(app.entries.iter().any(|e| matches!(e, Entry::Info(t)
+        if t == "Replaced goal: the docs are clear")));
+    assert_eq!(app.goal.as_ref().unwrap().condition, "the README is clear");
+
+    app.finish_saves().await;
+    unsafe { std::env::remove_var("TAMALE_SESSIONS_DIR") };
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn goals_stop_at_the_turn_limit() {
+    let _env = SESSIONS_ENV.lock().await;
+    let root = std::env::temp_dir().join(format!("tamale-goal-test-{}", session::new_id()));
+    unsafe { std::env::set_var("TAMALE_SESSIONS_DIR", root.join("sessions")) };
+    let mut app = goal_app();
+
+    app.command("/goal ship it");
+    for _ in 0..super::goal::MAX_TURNS {
+        goal_work(&mut app, "Working on it.");
+        goal_checked(&mut app, "Not yet.\n[goal not met]", false);
+    }
+    assert!(!app.is_running());
+    let goal = app.goal.as_ref().unwrap();
+    assert!(goal.paused);
+    assert_eq!(goal.turns, super::goal::MAX_TURNS);
+    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("20 turns")));
+
+    app.finish_saves().await;
+    unsafe { std::env::remove_var("TAMALE_SESSIONS_DIR") };
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn goals_are_saved_and_restored_paused() {
+    let _env = SESSIONS_ENV.lock().await;
+    let root = std::env::temp_dir().join(format!("tamale-goal-test-{}", session::new_id()));
+    unsafe { std::env::set_var("TAMALE_SESSIONS_DIR", root.join("sessions")) };
+    let mut app = goal_app();
+
+    app.command("/goal all tests pass");
+    goal_work(&mut app, "Fixed one.");
+    goal_checked(&mut app, "Two still fail.\n[goal not met]", false);
+    let id = app.session_id.clone();
+    let saved = app.saved_goal().unwrap();
+    assert_eq!(saved.condition, "all tests pass");
+    assert_eq!(saved.turns, 2);
+    assert_eq!(saved.last_check.as_deref(), Some("Two still fail.\n[goal not met]"));
+    app.task.take().unwrap().abort();
+    app.finish_saves().await;
+
+    let mut app = goal_app();
+    app.resume(&id);
+    let goal = app.goal.as_ref().expect("the goal comes back");
+    assert!(goal.paused && !goal.held);
+    assert_eq!((goal.condition.as_str(), goal.turns), ("all tests pass", 2));
+    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.starts_with("Goal restored")));
+    assert!(screen(&mut app).contains("goal paused · 2 turns all tests pass"));
+    app.command("/goal resume");
+    assert!(app.is_running());
+    assert_eq!(app.goal.as_ref().unwrap().turns, 3);
+    app.task.take().unwrap().abort();
 
     app.finish_saves().await;
     unsafe { std::env::remove_var("TAMALE_SESSIONS_DIR") };

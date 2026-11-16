@@ -915,25 +915,11 @@ impl App {
         let Some(goal) = &self.goal else {
             return;
         };
-        let (label, color) = if goal.checking {
-            (
-                format!(
-                    " ◎ goal checking {}/{} ",
-                    goal.turns,
-                    super::goal::MAX_TURNS
-                ),
-                Color::Magenta,
-            )
-        } else if goal.paused {
-            (
-                format!(" ◎ goal paused {}/{} ", goal.turns, super::goal::MAX_TURNS),
-                Color::DarkGray,
-            )
+        let label = format!(" ◎ {} ", goal.label());
+        let color = if goal.paused {
+            Color::DarkGray
         } else {
-            (
-                format!(" ◎ goal {}/{} ", goal.turns, super::goal::MAX_TURNS),
-                Color::Magenta,
-            )
+            Color::Magenta
         };
         let width = (area.width as usize).saturating_sub(label.width()).max(10);
         let first = goal.condition.lines().next().unwrap_or("");

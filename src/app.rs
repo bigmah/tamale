@@ -76,6 +76,8 @@ pub enum AppEvent {
     /// News of the session being driven, tagged with which time it was opened.
     #[cfg(unix)]
     Remote(u64, crate::remote::Event),
+    /// Time for a `/goal`'s scheduled retry (its id).
+    GoalRetry(u64),
     /// Time for a chef to look at its kitchen again.
     KitchenTick,
     /// The hub's list of sessions, as a chef's kitchen shows it.
@@ -546,12 +548,13 @@ impl App {
             self.command(&text);
             return;
         }
+        self.note_for_goal(&text);
         if self.is_running() {
             // Delivered with the next tool result, or sent when the turn ends.
             self.queued.lock().unwrap().push(text);
             return;
         }
-        self.send_prompt(text);
+        self.send_user_prompt(text);
     }
 
     /// Messages still queued, oldest first.
@@ -563,16 +566,22 @@ impl App {
     fn send_queued(&mut self) {
         let queued = std::mem::take(&mut *self.queued.lock().unwrap());
         if !queued.is_empty() {
-            self.send_prompt(queued.join("\n\n"));
+            self.send_user_prompt(queued.join("\n\n"));
         }
     }
 
-    fn send_prompt(&mut self, text: String) {
-        let prompt = if self.writes_for_web() {
-            format!("{text}{}", crate::web::ARTIFACT_PROMPT)
-        } else {
-            text.clone()
-        };
+    /// Sends what the user typed, which also resumes a paused `/goal`.
+    fn send_user_prompt(&mut self, text: String) {
+        if self.refuse_without_backend(&text) {
+            return;
+        }
+        let mut prompt = text.clone();
+        if self.writes_for_web() {
+            prompt.push_str(crate::web::ARTIFACT_PROMPT);
+        }
+        if let Some(reminder) = self.resume_goal_with_message() {
+            prompt.push_str(&reminder);
+        }
         self.send_prompt_as(text, prompt);
     }
 
@@ -726,6 +735,7 @@ impl App {
             }
             #[cfg(unix)]
             AppEvent::Remote(generation, event) => self.on_remote_event(generation, event),
+            AppEvent::GoalRetry(id) => self.on_goal_retry(id),
             AppEvent::KitchenTick => self.refresh_kitchen(),
             AppEvent::Kitchen(result) => self.on_kitchen(result),
             #[cfg(unix)]
@@ -946,8 +956,12 @@ impl App {
             }
             AgentEvent::Thread(_) | AgentEvent::Steered(_) => {}
             AgentEvent::GoalChecked { answer, failed } => {
-                self.save_session();
                 self.on_goal_checked(answer, failed);
+                self.save_session();
+                // Messages typed while the checker ran, unless a goal turn took them.
+                if !self.is_running() {
+                    self.send_queued();
+                }
             }
             AgentEvent::Done => {
                 self.task = None;
