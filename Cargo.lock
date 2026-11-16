@@ -2407,6 +2407,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pullspace-embed"
+version = "0.1.0"
+source = "git+https://github.com/bigmah/pullspace?rev=32b93e539f2d0ddcae71ac9821a5576074ad93f1#32b93e539f2d0ddcae71ac9821a5576074ad93f1"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3199,6 +3207,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1_smol"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3510,6 +3524,7 @@ dependencies = [
  "ignore",
  "libc",
  "pulldown-cmark",
+ "pullspace-embed",
  "qrcode",
  "ratatui",
  "regex",
@@ -3519,6 +3534,7 @@ dependencies = [
  "scraper",
  "serde",
  "serde_json",
+ "sha1_smol",
  "sha2",
  "snow",
  "syntect",
@@ -3537,6 +3553,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "base64 0.22.1",
  "futures",
  "getrandom 0.3.4",
  "libc",

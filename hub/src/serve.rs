@@ -31,6 +31,8 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router, ServiceExt};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -286,7 +288,7 @@ impl AgentLink {
 struct Got {
     status: u16,
     headers: Vec<(String, String)>,
-    body: String,
+    body: Vec<u8>,
 }
 
 struct Ticket {
@@ -1441,6 +1443,7 @@ async fn tunnel(
             name.as_str(),
             "content-type"
                 | "cache-control"
+                | "content-encoding"
                 | "content-security-policy"
                 | "referrer-policy"
         ) && let (Ok(n), Ok(v)) = (name.parse::<header::HeaderName>(), value.parse())
@@ -1928,8 +1931,16 @@ async fn agent_socket(hub: Arc<Hub>, key: state::Key, ip: IpAddr, ws: WebSocket)
                 status,
                 headers,
                 body,
+                base64,
             } => {
                 if let Some(waiting) = session.pending.remove(&r) {
+                    let body = if base64 {
+                        // Bytes tamale sent as text. Ones that don't decode are a broken page,
+                        // not a reason to drop the session.
+                        BASE64.decode(body).unwrap_or_default()
+                    } else {
+                        body.into_bytes()
+                    };
                     let _ = waiting.send(Got {
                         status,
                         headers,
@@ -2505,6 +2516,7 @@ mod tests {
                     ),
                     ("set-cookie".into(), "th=x; Domain=hub.localhost".into()),
                 ],
+                base64: false,
             };
             agent
                 .send(tungstenite::Message::Text(
@@ -2521,6 +2533,47 @@ mod tests {
                 "default-src 'self'"
             );
             assert_eq!(page.text().await.unwrap(), "<p>page");
+
+            // Bytes come as base64 and go out as they were, compressed or not.
+            let module = tokio::spawn({
+                // Its own client: a workspace build gives reqwest gzip, which would decode
+                // the body and drop the header this checks.
+                let http = reqwest::Client::builder().no_gzip().build().unwrap();
+                let (base, host, ts) = (base.clone(), session_host.clone(), ts.clone());
+                async move {
+                    http.get(format!("{base}/pullspace/pullspace_bg.wasm"))
+                        .header("host", host)
+                        .header("cookie", ts)
+                        .send()
+                        .await
+                        .unwrap()
+                }
+            });
+            let get: ToAgent = serde_json::from_str(&next_text(&mut agent).await).unwrap();
+            let ToAgent::Get { r, path } = get else {
+                panic!("{get:?}")
+            };
+            assert_eq!(path, "/pullspace/pullspace_bg.wasm");
+            let got = ToHub::Got {
+                r,
+                status: 200,
+                body: BASE64.encode([0x1f, 0x8b, 0, 0xff]),
+                headers: vec![
+                    ("content-type".into(), "application/wasm".into()),
+                    ("content-encoding".into(), "gzip".into()),
+                ],
+                base64: true,
+            };
+            agent
+                .send(tungstenite::Message::Text(
+                    serde_json::to_string(&got).unwrap().into(),
+                ))
+                .await
+                .unwrap();
+            let module = module.await.unwrap();
+            assert_eq!(module.status(), 200);
+            assert_eq!(module.headers()["content-encoding"], "gzip");
+            assert_eq!(module.bytes().await.unwrap().as_ref(), [0x1f, 0x8b, 0, 0xff]);
 
             // Paths outside the tunnel never reach tamale.
             let r = http

@@ -17,6 +17,7 @@ pub mod e2e;
 mod files;
 #[cfg(test)]
 mod fixtures;
+mod pullspace;
 mod relay;
 mod render;
 
@@ -421,11 +422,16 @@ struct Asset {
     status: StatusCode,
     headers: Vec<(HeaderName, &'static str)>,
     body: String,
+    /// Bytes to send instead of `body`, for files that aren't text.
+    bytes: Option<&'static [u8]>,
 }
 
 impl IntoResponse for Asset {
     fn into_response(self) -> Response {
-        let mut response = (self.status, self.body).into_response();
+        let mut response = match self.bytes {
+            Some(bytes) => (self.status, bytes).into_response(),
+            None => (self.status, self.body).into_response(),
+        };
         for (name, value) in self.headers {
             response
                 .headers_mut()
@@ -461,8 +467,35 @@ fn asset(shared: &Shared, path: &str) -> Asset {
             status: StatusCode::OK,
             headers,
             body: body.to_string(),
+            bytes: None,
         }
     };
+    // The review panel: pullspace's bundle, from the pullspace-embed crate.
+    if let Some(file) = pullspace_embed::file(path) {
+        let mut headers = vec![
+            (header::CONTENT_TYPE, file.content_type),
+            (
+                header::CACHE_CONTROL,
+                if file.immutable {
+                    "private, max-age=31536000, immutable"
+                } else {
+                    "no-store"
+                },
+            ),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            (header::REFERRER_POLICY, "no-referrer"),
+            (header::CONTENT_SECURITY_POLICY, pullspace_embed::CSP),
+        ];
+        if let Some(encoding) = file.encoding {
+            headers.push((header::CONTENT_ENCODING, encoding));
+        }
+        return Asset {
+            status: StatusCode::OK,
+            headers,
+            body: String::new(),
+            bytes: Some(file.body),
+        };
+    }
     match path {
         "/" => ok(
             "text/html; charset=utf-8",
@@ -503,6 +536,7 @@ fn asset(shared: &Shared, path: &str) -> Asset {
                     status: StatusCode::NOT_FOUND,
                     headers: vec![(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
                     body: "No such artifact; it may be from an earlier run.".into(),
+                    bytes: None,
                 },
             }
         }
@@ -545,6 +579,8 @@ impl Server {
             .route("/app.js", get(script))
             .route("/noise.js", get(noise_script))
             .route("/artifact/{id}", get(artifact))
+            .route("/pullspace/", get(pullspace_file))
+            .route("/pullspace/{file}", get(pullspace_file))
             .with_state(shared.clone());
         let task = tokio::spawn(async move {
             let _ = axum::serve(listener, router).await;
@@ -980,6 +1016,23 @@ async fn artifact(
     asset(&shared, &format!("/artifact/{id}")).into_response()
 }
 
+/// The review panel's frame: pullspace (see [`pullspace`]), served only to this
+/// server's page, here and through a hub alike.
+async fn pullspace_file(
+    State(shared): State<Arc<Shared>>,
+    file: Option<Path<String>>,
+    headers: HeaderMap,
+) -> Response {
+    if !shared.own_host(&headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let path = format!("/pullspace/{}", file.map(|f| f.0).unwrap_or_default());
+    if !tamale_hub_protocol::tunnelled_path(&path) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    asset(&shared, &path).into_response()
+}
+
 async fn socket(
     State(shared): State<Arc<Shared>>,
     uri: Uri,
@@ -1125,6 +1178,16 @@ fn handle(shared: &Arc<Shared>, id: u64, request: Value) {
         }
         "diff" => reply(Box::new(files::diff)),
         "diff_stat" => reply(Box::new(files::diff_stat)),
+        // The review panel's two questions (see `pullspace`).
+        "ps_snapshot" => reply(Box::new(pullspace::snapshot)),
+        "ps_blobs" => {
+            let wants: Vec<pullspace_embed::protocol::Want> = request
+                .get("wants")
+                .cloned()
+                .and_then(|wants| serde_json::from_value(wants).ok())
+                .unwrap_or_default();
+            reply(Box::new(move |roots| pullspace::blobs(roots, &wants)));
+        }
         "older" => {
             let before = request.get("before").and_then(Value::as_u64).unwrap_or(0);
             let _ = shared.events.send(WebEvent::Older {
@@ -1593,6 +1656,10 @@ mod tests {
 
     #[tokio::test]
     async fn relayed_tabs_get_the_same_session_and_pages_as_local_ones() {
+        // The review panel's files are among the pages a hub tunnels.
+        for path in pullspace_embed::paths() {
+            assert!(tamale_hub_protocol::tunnelled_path(&path), "{path}");
+        }
         use tamale_hub_protocol::{ToAgent, ToHub};
         // A stand-in hub: welcomes the agent, opens one channel, asks for the page.
         let (frames_tx, mut frames) = mpsc::unbounded_channel::<ToHub>();
@@ -1613,6 +1680,7 @@ mod tests {
                         ws.send(send(&ToAgent::Open { c: 7 })).await.unwrap();
                         ws.send(send(&ToAgent::Get { r: 1, path: "/".into() })).await.unwrap();
                         ws.send(send(&ToAgent::Get { r: 2, path: "/ws".into() })).await.unwrap();
+                        ws.send(send(&ToAgent::Get { r: 3, path: "/pullspace/pullspace_bg.wasm".into() })).await.unwrap();
                         while let Some(Ok(Message::Text(t))) = ws.next().await {
                             let _ = frames_tx.send(serde_json::from_str(&t).unwrap());
                         }
@@ -1644,11 +1712,22 @@ mod tests {
 
         let mut got_page = false;
         let mut got_404 = false;
+        let mut got_module = false;
         let mut got_entries = false;
         let mut got_status = false;
-        while !(got_page && got_404 && got_entries && got_status) {
+        while !(got_page && got_404 && got_module && got_entries && got_status) {
             match next(&mut frames).await {
-                ToHub::Got { r: 1, status, headers, body } => {
+                ToHub::Got { r: 3, status, headers, body, base64 } => {
+                    // The review panel's module: bytes, so base64, and gzipped.
+                    use base64::Engine;
+                    assert_eq!(status, 200);
+                    assert!(base64);
+                    let bytes = base64::engine::general_purpose::STANDARD.decode(body).unwrap();
+                    assert_eq!(bytes, pullspace_embed::file("/pullspace/pullspace_bg.wasm").unwrap().body);
+                    assert!(headers.iter().any(|(k, v)| k == "content-encoding" && v == "gzip"));
+                    got_module = true;
+                }
+                ToHub::Got { r: 1, status, headers, body, .. } => {
                     assert_eq!(status, 200);
                     assert!(body.contains("<script type=\"module\" src=\"/app.js\">"));
                     assert!(headers.iter().any(|(k, v)| k == "content-security-policy" && v == PAGE_CSP));
@@ -1959,7 +2038,7 @@ mod tests {
                     assert!(body.is_empty());
                     got += 1;
                 }
-                ToHub::Got { r: 2, status, headers, body } => {
+                ToHub::Got { r: 2, status, headers, body, .. } => {
                     assert_eq!(status, 200);
                     assert!(body.contains("tamaleArtifactHtml"));
                     let csp = &headers.iter().find(|(k, _)| k == "content-security-policy").unwrap().1;
@@ -2210,6 +2289,76 @@ document.getElementById('m').innerHTML = html;
     /// connects to the hub at `TAMALE_HUB_URL` with `TAMALE_HUB_KEY`, end-to-end encrypted,
     /// prints `SID=<sid>`, and answers each prompt with a reply and an artifact until
     /// `TAMALE_FAKE_SECONDS` (default 120) pass.
+    /// A page with the review panel, on a repository with changes (TAMALE_FAKE_ROOT, or
+    /// one made up), for trying pullspace in a browser: prints the address, serves for
+    /// TAMALE_FAKE_SECONDS.
+    #[tokio::test]
+    #[ignore]
+    async fn fake_review_page() {
+        let seconds: u64 = std::env::var("TAMALE_FAKE_SECONDS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(120);
+        let repo = match std::env::var("TAMALE_FAKE_ROOT") {
+            Ok(root) => PathBuf::from(root),
+            Err(_) => {
+                let repo = std::env::temp_dir().join(format!("tamale-review-{}", crate::session::new_id()));
+                std::fs::create_dir_all(repo.join("src")).unwrap();
+                let body: Vec<String> = (1..=60).map(|i| format!("fn line_{i}() {{}}")).collect();
+                std::fs::write(repo.join("src/main.rs"), body.join("\n") + "\n").unwrap();
+                std::fs::write(repo.join("gone.txt"), "going\n").unwrap();
+                let git = |args: &[&str]| {
+                    let done = std::process::Command::new("git").arg("-C").arg(&repo).args(args).output().unwrap();
+                    assert!(done.status.success(), "git {args:?}");
+                };
+                git(&["init", "-q"]);
+                git(&["add", "."]);
+                git(&["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qm", "first"]);
+                let mut changed = body.clone();
+                changed[29] = "fn line_thirty_changed() {}".into();
+                std::fs::write(repo.join("src/main.rs"), changed.join("\n") + "\n").unwrap();
+                std::fs::remove_file(repo.join("gone.txt")).unwrap();
+                std::fs::write(repo.join("new.txt"), "brand new\n").unwrap();
+                repo
+            }
+        };
+        let mut server = Server::start(false).await.unwrap();
+        let entries = vec![Entry::Info("A stand-in session for the review panel.".into())];
+        let mut v = view(&entries);
+        v.roots = vec![repo.clone()];
+        server.sync(v);
+        println!("URL={}", server.url);
+        // With a hub (TAMALE_HUB_URL, TAMALE_HUB_KEY), encrypted, and a link into it.
+        if let (Ok(hub), Ok(key)) = (std::env::var("TAMALE_HUB_URL"), std::env::var("TAMALE_HUB_KEY")) {
+            use base64::Engine;
+            let key = tamale_hub_protocol::decode_key(&key).expect("a key");
+            let token = tamale_hub_protocol::auth_value(&key);
+            server.connect_hub(&hub, &token, Label::default(), Some(e2e::Keys::from_key(&key)));
+            loop {
+                match server.events.recv().await.unwrap() {
+                    WebEvent::Hub(Ok(_)) => break,
+                    WebEvent::Hub(Err(e)) => panic!("{e}"),
+                    _ => {}
+                }
+            }
+            let origin = hub.replacen("wss://", "https://", 1).replacen("ws://", "http://", 1);
+            let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
+            let r = http.post(format!("{origin}/api/tokens")).header("origin", &origin)
+                .json(&json!({ "add": token })).send().await.unwrap();
+            let th = r.headers()["set-cookie"].to_str().unwrap().split(';').next().unwrap().to_string();
+            let ticket: Value = http.post(format!("{origin}/api/ticket")).header("origin", &origin)
+                .header("cookie", &th).json(&json!({ "sid": relay::sid() })).send().await.unwrap().json().await.unwrap();
+            let psk = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(tamale_hub_protocol::e2e_secret(&key));
+            println!("HUB_URL={}#k={psk}", ticket["url"].as_str().unwrap());
+        }
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(seconds);
+        while let Ok(Some(event)) = tokio::time::timeout_at(deadline, server.events.recv()).await {
+            if let WebEvent::Connected(id) = event {
+                server.welcome(id);
+            }
+        }
+    }
+
     #[tokio::test]
     #[ignore]
     async fn fake_session_for_the_apple_app() {

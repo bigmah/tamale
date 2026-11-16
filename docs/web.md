@@ -80,6 +80,17 @@ back to the terminal, and `Ctrl+C` quits. Any number of tabs can be open.
   folded lines, `o` opens the file, `r` refreshes, `q` or `Esc` closes. `v` starts a
   selection (or drag the line numbers); `Enter` or `a` quotes it into the prompt, `y` copies
   it. `n` stays with the viewer even while an approval is waiting.
+- **Review.** `/review` (or the panel button left of the code browser's) opens
+  [pullspace](https://github.com/bigmah/pullspace), an IDE-style code reviewer, on your
+  uncommitted changes: the working tree (staged, unstaged and untracked files) against
+  `HEAD`. It has the whole repository beside the diff, with a file tree, search across the
+  repository, go to definition and find references. It runs in the page as WebAssembly and
+  never talks to GitHub; tamale hands it the files over the page's socket, and it reads them
+  again after each tool result. Click a line number and press **Ask** to quote that line
+  into the prompt. The chat steps aside for the width (the button beside ✕ brings it back).
+  It works through a hub too: pullspace's files come through the tunnel like the page's
+  (the module gzipped, about 2 MB, cached by the browser), and the repository's files over
+  the session's socket, end-to-end encrypted like everything else on it.
 - **Artifacts.** During a web session replies are brief: a few sentences, or a list of at
   most 10 items. A longer answer (more than 10 items, or tables, diagrams or long code) comes
   as a sentence or three of summary followed by an HTML artifact that carries all of it: a
@@ -129,3 +140,19 @@ only the entries that changed since the last one, at most every 40 ms. File read
 and searches are answered by the server task itself (`src/web/files.rs`). The page is
 plain HTML, CSS and JavaScript (`src/web/index.html`, `app.css`, `app.js`). It is
 embedded in the binary, so there is no build step.
+
+**The review panel** is pullspace's own WebAssembly build, from the `pullspace-embed` crate
+in [pullspace's repository](https://github.com/bigmah/pullspace) (`crates/embed`). The crate
+carries the built bundle, checked in there, and the types of the messages between the frame
+and its page, so building tamale needs no wasm toolchain. tamale serves the bundle at
+`/pullspace/` (to this server's page only, with the crate's CSP, which keeps it from reaching
+anything but this server; a hub tunnels these paths too, with the module's bytes sent as
+base64 in the `got` frame). It runs in a same-origin frame as `/pullspace/?embed` and asks the
+page for `snapshot` (each side's files as git blob hashes) and `blobs` (their bytes) over
+`postMessage`; the page forwards them as `ps_snapshot` and `ps_blobs` (`src/web/pullspace.rs`),
+which run git as `/diff` does and hash working-tree files themselves.
+To change the panel, change pullspace, run its `crates/embed/build.sh` (it needs the `dx`
+CLI) and commit the bundle there, then point tamale's `pullspace-embed` dependency at that
+commit. `cargo test --bin tamale fake_review_page -- --ignored --nocapture` serves a page
+with the panel on a made-up repository (or `TAMALE_FAKE_ROOT`) to try it in a browser; with
+`TAMALE_HUB_URL` and `TAMALE_HUB_KEY` it also connects to that hub and prints a link in.

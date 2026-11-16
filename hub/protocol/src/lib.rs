@@ -145,7 +145,14 @@ pub fn valid_mid(mid: &str) -> bool {
 pub fn tunnelled_path(path: &str) -> bool {
     matches!(
         path,
-        "/" | "/app.js" | "/app.css" | "/noise.js" | "/artifact-frame"
+        "/" | "/app.js"
+            | "/app.css"
+            | "/noise.js"
+            | "/artifact-frame"
+            // The review panel: pullspace, in a frame (see tamale's `src/web/pullspace.rs`).
+            | "/pullspace/"
+            | "/pullspace/pullspace.js"
+            | "/pullspace/pullspace_bg.wasm"
     ) || path
         .strip_prefix("/artifact/")
         .is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric()))
@@ -204,6 +211,9 @@ pub enum ToHub {
         status: u16,
         headers: Vec<(String, String)>,
         body: String,
+        /// `body` is base64, for bytes that aren't text (pullspace's WebAssembly).
+        #[serde(default, skip_serializing_if = "is_false")]
+        base64: bool,
     },
     /// What the session list shows, sent whenever it changes.
     Status {
@@ -352,9 +362,21 @@ mod tests {
             status: 200,
             headers: vec![("content-type".into(), "text/html".into())],
             body: "<p>".into(),
+            base64: false,
         };
         let text = serde_json::to_string(&got).unwrap();
+        assert!(!text.contains("base64"), "{text}");
         assert_eq!(serde_json::from_str::<ToHub>(&text).unwrap(), got);
+        let bytes = ToHub::Got {
+            r: 4,
+            status: 200,
+            headers: Vec::new(),
+            body: "AGFzbQ==".into(),
+            base64: true,
+        };
+        let text = serde_json::to_string(&bytes).unwrap();
+        assert!(text.contains(r#""base64":true"#), "{text}");
+        assert_eq!(serde_json::from_str::<ToHub>(&text).unwrap(), bytes);
 
         let end = serde_json::to_string(&ToHub::End).unwrap();
         assert_eq!(end, r#"{"t":"end"}"#);
@@ -390,6 +412,8 @@ mod tests {
         assert!(tunnelled_path("/") && tunnelled_path("/app.js"));
         assert!(tunnelled_path("/artifact/9f2c"));
         assert!(tunnelled_path("/noise.js") && tunnelled_path("/artifact-frame"));
+        assert!(tunnelled_path("/pullspace/") && tunnelled_path("/pullspace/pullspace_bg.wasm"));
+        assert!(!tunnelled_path("/pullspace/../app.js") && !tunnelled_path("/pullspace/x"));
         assert!(!tunnelled_path("/artifact/../x") && !tunnelled_path("/artifact/"));
         assert!(!tunnelled_path("/ws") && !tunnelled_path("/etc/passwd"));
     }

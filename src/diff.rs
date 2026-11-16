@@ -115,7 +115,7 @@ impl Target {
 /// git in `dir`. A repository's own config can name programs for git to run, and an unpacked
 /// archive brings its `.git/config` along. tamale loads the diff unasked, at startup and after
 /// each turn, so here git runs none of them: see also [`filters_off`] and `--ignore-submodules`.
-fn git_command(dir: &Path) -> Command {
+pub(crate) fn git_command(dir: &Path) -> Command {
     let mut command = Command::new("git");
     command
         .arg("-C")
@@ -152,7 +152,7 @@ fn repository_filters(listing: &str) -> Vec<&str> {
 
 /// Arguments for git that turn off the filters a repository's own config defines, which it
 /// would otherwise run on changed files. Files they'd clean show as they are instead.
-fn filters_off(dir: &Path) -> Result<Vec<String>> {
+pub(crate) fn filters_off(dir: &Path) -> Result<Vec<String>> {
     let listed = git(
         dir,
         &[

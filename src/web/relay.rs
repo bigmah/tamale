@@ -767,7 +767,18 @@ It may be a browser with an old key, or someone guessing; tamale is slowing them
                     status: axum::http::StatusCode::NOT_FOUND,
                     headers: Vec::new(),
                     body: String::new(),
+                    bytes: None,
                 }
+            };
+            let (body, base64) = match asset.bytes {
+                Some(bytes) => {
+                    use base64::Engine;
+                    (
+                        base64::engine::general_purpose::STANDARD.encode(bytes),
+                        true,
+                    )
+                }
+                None => (asset.body, false),
             };
             Some(ToHub::Got {
                 r,
@@ -777,7 +788,8 @@ It may be a browser with an old key, or someone guessing; tamale is slowing them
                     .into_iter()
                     .map(|(name, value)| (name.as_str().to_string(), value.to_string()))
                     .collect(),
-                body: asset.body,
+                body,
+                base64,
             })
         }
         ToAgent::Welcome { .. } => None,

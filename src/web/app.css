@@ -1412,12 +1412,23 @@ body.chef .msg.user { border-color: rgba(242, 169, 59, 0.18); }
   @keyframes kslide { from { transform: translateX(30px); opacity: 0; } to { transform: none; opacity: 1; } }
 }
 
+/* ---------- the review panel: pullspace in a frame ---------- */
+
+.review { display: flex; flex-direction: column; flex: 1; min-width: 0; background: var(--bg); animation: fadein 140ms var(--ease); }
+.main.with-review .chat { flex: 0 0 var(--chat-w); min-width: 340px; border-right: 1px solid var(--border); }
+.main.with-review.review-full .chat { display: none; }
+.review-hdr { display: flex; align-items: center; gap: 8px; height: 34px; flex: none; padding: 0 6px 0 12px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--fg-dim); }
+.review-title { color: var(--fg); font-weight: 600; }
+.review-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.review-frame { flex: 1; display: block; width: 100%; min-height: 0; border: 0; background: var(--bg); }
+
 /* ---------- narrow windows: the code browser takes the whole width ---------- */
 
 @media (max-width: 980px) {
   .main.with-code .chat { display: none; }
   .main.with-code .splitter { display: none; }
-  #diff-full { display: none; }
+  .main.with-review .chat { display: none; }
+  #diff-full, #review-chat { display: none; }
   .meters .ctx, .meters .cost { display: none; }
   .side { width: 210px; }
 }

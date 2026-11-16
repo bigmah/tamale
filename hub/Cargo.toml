@@ -6,6 +6,7 @@ description = "A self-hosted relay that makes tamale sessions reachable from any
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
 axum = { version = "0.8", default-features = false, features = ["ws", "http1", "tokio", "json", "query"] }
 futures = "0.3"
 getrandom = "0.3"

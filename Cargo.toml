@@ -25,6 +25,9 @@ rig-core = "0.42"
 scraper = "0.20"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+sha1_smol = "1.0.1"
+# The review panel: pullspace's built bundle and its host protocol (src/web/pullspace.rs).
+pullspace-embed = { git = "https://github.com/bigmah/pullspace", rev = "32b93e539f2d0ddcae71ac9821a5576074ad93f1" }
 tamale-web-protocol = { path = "web/protocol" }
 tamale-hub-protocol = { path = "hub/protocol" }
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "regex-fancy"] }

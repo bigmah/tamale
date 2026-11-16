@@ -526,6 +526,7 @@ function onMessage(m) {
     case 'question':
       return applyQuestion(m.question);
     case 'roots':
+      reviewChanged();
       request('diff_stat');
       if (inChanges()) request('diff');
       return request('tree');
@@ -535,6 +536,9 @@ function onMessage(m) {
     case 'diff_stat':
       if (m.seq === latest.diff_stat) applyStat(m.files, m.added, m.removed);
       return;
+    case 'ps_snapshot':
+    case 'ps_blobs':
+      return reviewReply(m);
     case 'tree':
       if (m.seq === latest.tree) applyTree(m.roots);
       return;
@@ -1722,6 +1726,7 @@ function submit() {
 const COMMANDS = [
   { name: '/code', args: '[path]', desc: 'Browse the code beside the chat', local: true },
   { name: '/diff', desc: 'Review uncommitted changes', local: true },
+  { name: '/review', desc: 'Review uncommitted changes in pullspace', local: true },
   { name: '/files', desc: 'Go to a file by name', local: true },
   { name: '/search', args: '<text>', desc: 'Search the code for text', local: true },
   { name: '/help', desc: 'Commands and shortcuts', local: true },
@@ -1770,6 +1775,9 @@ function runLocal(text) {
           setFind(arg);
         } else toast('The file list is still loading.');
       } else toggleCode();
+      return true;
+    case '/review':
+      toggleReview();
       return true;
     case '/diff':
       if (arg) toast('`/diff` here shows uncommitted changes; other comparisons are in the terminal.', 7000);
@@ -1957,6 +1965,7 @@ function saveCode() {
 }
 
 function openCode(focusFind = false) {
+  closeReview({ focus: false });
   if (!code.open) {
     code.open = true;
     $('main').classList.add('with-code');
@@ -2052,6 +2061,7 @@ function afterToolResult() {
   clearTimeout(refreshTimer);
   refreshTimer = setTimeout(() => {
     request('tree');
+    reviewChanged();
     // The whole diff only for someone looking at it; the button needs just the counts.
     if (inChanges()) request('diff');
     else request('diff_stat');
@@ -2059,6 +2069,133 @@ function afterToolResult() {
     if (code.open && code.mode !== 'changes' && tab) loadFile(tab.root, tab.path, { quiet: true });
   }, 400);
 }
+
+// ---------------------------------------------------------------- review panel
+
+/**
+ * pullspace (src/web/pullspace.rs) in a frame, reviewing the working tree against HEAD.
+ * The frame asks for snapshots and blobs over postMessage; this forwards them over the
+ * socket (sealed, on an encrypted session) and posts the replies back, and tells it when
+ * files may have changed. Its files come from tamale like this page's, through a hub too.
+ */
+const review = {
+  open: false,
+  frame: null,
+  /** The chat hidden, for the width. */
+  full: store.get('reviewFull', true),
+  /** Socket seq → the frame's request id. */
+  pending: new Map(),
+  /** Files may have changed while the panel was closed. */
+  stale: false,
+};
+const REVIEW_TIMEOUT = 60_000;
+
+function syncReviewLayout() {
+  $('main').classList.toggle('with-review', review.open);
+  $('main').classList.toggle('review-full', review.open && review.full);
+  $('toggle-review').classList.toggle('on', review.open);
+  $('review-chat').innerHTML = review.full ? ICON.chat : ICON.expand;
+  $('review-chat').title = review.full ? 'Show the chat beside the review' : 'Hide the chat';
+}
+
+function openReview() {
+  if (code.open) closeCode();
+  review.open = true;
+  $('review').hidden = false;
+  if (!review.frame) {
+    review.frame = h('iframe', { class: 'review-frame', src: '/pullspace/?embed', title: 'pullspace' });
+    $('review').append(review.frame);
+    review.stale = false;
+  } else if (review.stale) {
+    review.stale = false;
+    reviewEvent('changed');
+  }
+  syncReviewLayout();
+  review.frame.focus();
+}
+
+/** Hides the panel; the frame stays, so it comes back where it was. */
+function closeReview({ focus = true } = {}) {
+  if (!review.open) return;
+  review.open = false;
+  $('review').hidden = true;
+  syncReviewLayout();
+  if (focus) focusPrompt();
+}
+
+const toggleReview = () => (review.open ? closeReview() : openReview());
+$('toggle-review').onclick = toggleReview;
+$('review-close').onclick = () => closeReview();
+$('review-chat').onclick = () => {
+  review.full = !review.full;
+  store.set('reviewFull', review.full);
+  syncReviewLayout();
+};
+
+function reviewPost(message) {
+  review.frame?.contentWindow?.postMessage({ ps: 1, ...message }, location.origin);
+}
+
+function reviewEvent(event) {
+  if (!review.frame) return;
+  if (review.open) reviewPost({ event });
+  else review.stale = true;
+}
+/** After the agent changed files: the review reads them again (when it's looking). */
+const reviewChanged = () => reviewEvent('changed');
+
+function reviewAsk(id, t, body) {
+  const s = ++seq;
+  review.pending.set(s, id);
+  if (!send({ t, seq: s, ...body }, true)) {
+    review.pending.delete(s);
+    return reviewPost({ id, error: 'Not connected to tamale.' });
+  }
+  setTimeout(() => {
+    if (review.pending.delete(s)) reviewPost({ id, error: 'tamale took too long to answer.' });
+  }, REVIEW_TIMEOUT);
+}
+
+function reviewReply(m) {
+  const id = review.pending.get(m.seq);
+  if (id == null) return;
+  review.pending.delete(m.seq);
+  reviewPost(m.error ? { id, error: m.error } : { id, body: m.body });
+}
+
+/** A line the reader asked about, quoted into the prompt. */
+function reviewQuote(body) {
+  const path = String(body?.path ?? '');
+  const line = Number(body?.line);
+  if (!path || !Number.isFinite(line)) return;
+  const text = typeof body.text === 'string' ? body.text.replace(/\r$/, '') : null;
+  const quote = text == null
+    ? `In \`${path}\` (line ${line}):\n\n`
+    : `In \`${path}\` (line ${line}):\n\`\`\`\n${text}\n\`\`\`\n\n`;
+  if (matchMedia('(max-width: 980px)').matches) closeReview({ focus: false });
+  else if (review.full) {
+    review.full = false;
+    syncReviewLayout();
+  }
+  appendToInput(quote);
+}
+
+addEventListener('message', (ev) => {
+  if (!review.frame || ev.source !== review.frame.contentWindow || ev.origin !== location.origin) return;
+  const m = ev.data;
+  if (!m || typeof m !== 'object' || m.ps !== 1) return;
+  if (m.t === 'quote') return reviewQuote(m.body);
+  if (typeof m.id !== 'number') return;
+  if (m.t === 'snapshot') return reviewAsk(m.id, 'ps_snapshot', {});
+  if (m.t === 'blobs') {
+    const wants = (Array.isArray(m.body?.wants) ? m.body.wants : [])
+      .slice(0, 1024)
+      .filter((w) => typeof w?.sha === 'string' && typeof w?.path === 'string')
+      .map(({ sha, path }) => ({ sha, path }));
+    return reviewAsk(m.id, 'ps_blobs', { wants });
+  }
+  reviewPost({ id: m.id, error: `tamale doesn't answer "${m.t}"` });
+});
 
 // ---- sidebar: tree, filtered list, search results
 
