@@ -262,14 +262,25 @@ Cache-Control: no-cache\r\nConnection: close\r\n\r\n",
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
+    // Clients that pass a progress token (Claude Code does) only count progress
+    // notifications as activity; SSE comments alone don't reset their idle timeouts.
+    let token = params
+        .get("_meta")
+        .and_then(|m| m.get("progressToken"))
+        .cloned();
     let call = tools.call(name, args);
     tokio::pin!(call);
     let mut keepalive = tokio::time::interval(KEEPALIVE);
     keepalive.tick().await;
+    let mut ticks = 0u64;
     let (output, is_error) = loop {
         tokio::select! {
             result = &mut call => break result,
-            _ = keepalive.tick() => stream.write_all(b": keepalive\n\n").await?,
+            _ = keepalive.tick() => {
+                ticks += 1;
+                stream.write_all(&keepalive_event(token.as_ref(), ticks)).await?;
+                stream.flush().await?;
+            }
         }
     };
     let reply = json!({
@@ -285,6 +296,22 @@ Cache-Control: no-cache\r\nConnection: close\r\n\r\n",
         .await?;
     stream.flush().await?;
     Ok(())
+}
+
+/// What's sent every [`KEEPALIVE`] while a tool runs: a progress notification when the
+/// client gave a token (`progress` has to increase each time), else an SSE comment.
+fn keepalive_event(token: Option<&Value>, ticks: u64) -> Vec<u8> {
+    match token {
+        Some(token) => {
+            let note = json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/progress",
+                "params": { "progressToken": token, "progress": ticks, "message": "running" },
+            });
+            format!("event: message\ndata: {note}\n\n").into_bytes()
+        }
+        None => b": keepalive\n\n".to_vec(),
+    }
 }
 
 fn rpc_error(id: Value, code: i64, message: &str) -> Value {
@@ -308,4 +335,22 @@ async fn write_response(stream: &mut TcpStream, status: &str, body: Option<&Valu
         )
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keepalives_are_progress_notifications_when_the_client_asks() {
+        let event = String::from_utf8(keepalive_event(Some(&json!(7)), 3)).unwrap();
+        let data = event.strip_prefix("event: message\ndata: ").unwrap();
+        let note: Value = serde_json::from_str(data.trim_end()).unwrap();
+        assert_eq!(note["method"], "notifications/progress");
+        assert_eq!(note["params"]["progressToken"], 7);
+        assert_eq!(note["params"]["progress"], 3);
+        assert!(note.get("id").is_none());
+
+        assert_eq!(keepalive_event(None, 3), b": keepalive\n\n");
+    }
 }

@@ -433,7 +433,9 @@ backend.claude_path if it isn't on PATH",
         cmd.env(mcp::TOKEN_ENV, &bridge.token)
             .env("CLAUDE_CODE_MAX_OUTPUT_TOKENS", run.max_tokens.to_string())
             // Tool calls can wait on an approval prompt or a long command.
-            .env("MCP_TOOL_TIMEOUT", "86400000");
+            .env("MCP_TOOL_TIMEOUT", "86400000")
+            // Newer versions also abort a call after 300s without progress (0 disables).
+            .env("CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT", "0");
         if run.reasoning.thinking == Thinking::Off {
             cmd.env("MAX_THINKING_TOKENS", "0");
         }
