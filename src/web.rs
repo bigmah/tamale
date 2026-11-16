@@ -1,4 +1,4 @@
-//! `/web`: a chat-first browser UI for the session, with a code browser beside it.
+//! `/web`: a chat-first browser UI for the session, with pullspace beside it for the code.
 //!
 //! Unlike `/browser`, which mirrors the terminal's cells, this sends the conversation
 //! itself as JSON over a WebSocket: entries (assistant markdown already rendered to

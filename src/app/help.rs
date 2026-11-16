@@ -85,7 +85,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ),
     (
         "/web [local|off]",
-        "Open a chat-first web UI on your Wi-Fi with a code browser (/code there); /web local keeps it to this machine, /web off stops it (ctrl+o or the Web tab opens it too)",
+        "Open a chat-first web UI on your Wi-Fi with pullspace for the code (/review there); /web local keeps it to this machine, /web off stops it (ctrl+o or the Web tab opens it too)",
     ),
     (
         "/remote [off|<key>]",

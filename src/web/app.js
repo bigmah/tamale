@@ -1,9 +1,9 @@
-// tamale's web UI: the conversation first, with a code browser beside it (/code).
+// tamale's web UI: the conversation first, with pullspace beside it for the code (/review).
 //
 // One WebSocket carries everything (see src/web.rs). tamale sends the session as JSON:
 // `entries` (from an index on, replacing what was there), `status`, `approval` and `question`.
-// The page sends prompts, interrupts and approvals, and asks for the file tree, files
-// and searches, whose replies carry the request's `seq` so stale ones are dropped.
+// The page sends prompts, interrupts and approvals, and asks for what pullspace and the
+// artifacts gallery need, whose replies carry the request's `seq`.
 
 import { Handshake, fromBase64, supported, toBase64 } from '/noise.js';
 
@@ -195,10 +195,6 @@ const state = {
   questionAt: 0,
   answers: [],
   asking: 0,
-  /** From the server's `tree`: [{ name, path, files, total }]. */
-  roots: [],
-  fileSets: [],
-  treeLoaded: false,
   /** When the current run began (unix seconds), and whether one finished out of sight. */
   runSince: null,
   doneUnseen: false,
@@ -334,7 +330,6 @@ function ready() {
   downTimer = null;
   if (ending.due) return endSession();
   setConn('live', e2e ? 'Connected to tamale, end-to-end encrypted' : 'Connected to tamale');
-  request('tree');
   for (const id of artifactsDue.keys()) send({ t: 'artifact', id }, true);
 }
 
@@ -526,27 +521,10 @@ function onMessage(m) {
     case 'question':
       return applyQuestion(m.question);
     case 'roots':
-      reviewChanged();
-      request('diff_stat');
-      if (inChanges()) request('diff');
-      return request('tree');
-    case 'diff':
-      if (m.seq === latest.diff) applyDiff(m);
-      return;
-    case 'diff_stat':
-      if (m.seq === latest.diff_stat) applyStat(m.files, m.added, m.removed);
-      return;
+      return reviewChanged();
     case 'ps_snapshot':
     case 'ps_blobs':
       return reviewReply(m);
-    case 'tree':
-      if (m.seq === latest.tree) applyTree(m.roots);
-      return;
-    case 'file':
-      return onFile(m);
-    case 'grep':
-      if (m.seq === latest.grep) applyGrep(m);
-      return;
     case 'artifacts':
       if (m.seq === latest.artifacts) applyArtifacts(m.sessions);
       return;
@@ -674,8 +652,6 @@ thread.addEventListener('click', (ev) => {
   if (ev.target.closest('.tools-more')) queueMicrotask(updateGroups);
 });
 
-const FILE_TOOLS = new Set(['read_file', 'write_file', 'edit_file']);
-
 function patchTool(node, e) {
   const pending = e.output == null;
   node._entry = e;
@@ -686,12 +662,11 @@ function patchTool(node, e) {
   const summary = e.summary.split('\n')[0];
   // The summary is usually the description's subject ("Read src/main.rs"); skip it then.
   const showSummary = summary && !e.description.includes(summary);
-  const canOpen = FILE_TOOLS.has(e.name) && summary;
   let head = node.querySelector('.tool-head');
   if (!head) {
     head = h('button', {
       class: 'tool-head',
-      onclick: (ev) => ev.target.closest('.tool-open') || toggleTool(node),
+      onclick: () => toggleTool(node),
     });
     node.append(head);
   }
@@ -700,8 +675,6 @@ function patchTool(node, e) {
     `<span class="tool-icon">${e.error ? ICON.cross : ICON.check}</span>` +
     `<span class="tool-desc">${esc(e.description)}</span>` +
     `<span class="tool-sum">${showSummary ? esc(summary) : ''}</span>` +
-    (canOpen && e.name !== 'read_file' ? `<span class="tool-open" data-diff="${esc(summary)}">± diff</span>` : '') +
-    (canOpen ? `<span class="tool-open" data-path="${esc(summary)}">${ICON.open}open</span>` : '') +
     `<span class="tool-chev">${ICON.chev}</span>`;
   if (node.classList.contains('open')) renderToolOutput(node);
 }
@@ -975,7 +948,7 @@ addEventListener('keydown', (ev) => {
   }
 }, true);
 
-/** Copy buttons on code blocks, and file paths in `code` linked to the code browser. */
+/** Copy buttons on code blocks. */
 function decorate(node) {
   const blocks = node.matches('.codeblock') ? [node] : node.querySelectorAll('.codeblock');
   for (const block of blocks) {
@@ -991,56 +964,6 @@ function decorate(node) {
     };
     block.append(button);
   }
-  linkPaths(node);
-}
-
-function linkPaths(node) {
-  if (!state.treeLoaded) return;
-  for (const code of node.querySelectorAll('code:not(pre code)')) {
-    const target = resolvePath(code.textContent);
-    code.classList.toggle('pathlink', !!target);
-    if (target) code.title = `Open ${target.path}${target.line ? `:${target.line}` : ''}`;
-  }
-}
-
-thread.addEventListener('click', (ev) => {
-  const link = ev.target.closest('.pathlink, .tool-open');
-  if (!link) return;
-  ev.stopPropagation();
-  if (link.dataset.diff) return openChanges(link.dataset.diff);
-  const text = link.dataset.path ?? link.textContent;
-  const target = resolvePath(text);
-  if (target) openFile(target.root, target.path, target.line);
-  else toast(`\`${text}\` isn't a file in the workspace.`);
-});
-
-/**
- * A file the text names: a workspace-relative or absolute path, optionally with
- * `:line`, `:line-line` or `#Lline`. Null if no such file is known.
- */
-function resolvePath(raw) {
-  let text = raw.trim().replace(/^['"`]|['"`]$/g, '');
-  let line = null;
-  const m = text.match(/^(.*?)(?::(\d+)(?:[-–:]\d+)?|#L(\d+)(?:-L?\d+)?)$/);
-  if (m) {
-    text = m[1];
-    line = Number(m[2] ?? m[3]);
-  }
-  if (!text || /\s/.test(text) || text.length > 400) return null;
-  for (const [root, r] of state.roots.entries()) {
-    let rel = text;
-    if (rel.startsWith(r.path + '/')) rel = rel.slice(r.path.length + 1);
-    rel = rel.replace(/^\.\//, '');
-    if (state.fileSets[root].has(rel)) return { root, path: rel, line };
-  }
-  // A path the agent shortened, if exactly one file ends with it.
-  if (text.includes('/')) {
-    const found = [];
-    for (const [root, r] of state.roots.entries())
-      for (const f of r.files) if (f.endsWith('/' + text)) found.push({ root, path: f, line });
-    if (found.length === 1) return found[0];
-  }
-  return null;
 }
 
 // ---------------------------------------------------------------- activity
@@ -1405,7 +1328,6 @@ function applyApproval(a) {
   state.approval = a;
   const node = $('approval');
   node.hidden = !a;
-  syncDiffLayout();
   updateActivity();
   if (!a) {
     node.replaceChildren();
@@ -1485,7 +1407,6 @@ function applyQuestion(q) {
   if (q && had && JSON.stringify(q) === JSON.stringify(had)) return;
   state.question = q;
   node.hidden = !q;
-  syncDiffLayout();
   updateActivity();
   input.placeholder = q ? 'Or reply in your own words…' : promptPlaceholder();
   if (!q) {
@@ -1724,11 +1645,7 @@ function submit() {
 
 /** Commands, in the order the menu offers them; `local` ones run in the page. */
 const COMMANDS = [
-  { name: '/code', args: '[path]', desc: 'Browse the code beside the chat', local: true },
-  { name: '/diff', desc: 'Review uncommitted changes', local: true },
-  { name: '/review', desc: 'Review uncommitted changes in pullspace', local: true },
-  { name: '/files', desc: 'Go to a file by name', local: true },
-  { name: '/search', args: '<text>', desc: 'Search the code for text', local: true },
+  { name: '/review', desc: 'Browse the code and its uncommitted changes in pullspace', local: true },
   { name: '/help', desc: 'Commands and shortcuts', local: true },
   { name: '/model', args: '<id>', desc: 'Switch models, e.g. claude-opus-5-5' },
   { name: '/effort', args: '<level>', desc: 'low, medium, high, xhigh, max or default' },
@@ -1765,32 +1682,13 @@ function runLocal(text) {
   const [name, ...rest] = text.split(/\s+/);
   const arg = text.slice(name.length).trim();
   switch (name) {
+    // pullspace is the page's code browser and diff viewer, so these open it too.
+    case '/review':
     case '/code':
     case '/browse':
-      if (arg) {
-        const target = resolvePath(arg);
-        if (target) openFile(target.root, target.path, target.line);
-        else if (state.treeLoaded) {
-          openCode();
-          setFind(arg);
-        } else toast('The file list is still loading.');
-      } else toggleCode();
-      return true;
-    case '/review':
-      toggleReview();
-      return true;
     case '/diff':
-      if (arg) toast('`/diff` here shows uncommitted changes; other comparisons are in the terminal.', 7000);
-      openChanges();
-      return true;
     case '/files':
-      openPicker(arg);
-      return true;
-    case '/search':
-    case '/grep':
-      openCode();
-      setMode('search');
-      setFind(arg, true);
+      toggleReview();
       return true;
     case '/help':
       openHelp();
@@ -1938,136 +1836,11 @@ function appendToInput(text) {
   input.scrollTop = input.scrollHeight;
 }
 
-// ---------------------------------------------------------------- code browser
-
-const code = {
-  open: false,
-  mode: 'files',
-  /** Open folders, as `root:dir/path`. */
-  expanded: new Set(store.get('expanded', [])),
-  /** Open files: [{ root, path }], and which one shows. */
-  tabs: store.get('tabs', []),
-  active: store.get('active', -1),
-  /** Loaded files by `root:path`: { lines, syntax, error }. */
-  files: new Map(),
-  /** Selected lines of the file showing: { a, b } (1-based, unordered). */
-  sel: null,
-  matches: [],
-};
-const fileKey = (root, path) => `${root}:${path}`;
-const activeTab = () => code.tabs[code.active];
-
-function saveCode() {
-  store.set('codeOpen', code.open);
-  store.set('tabs', code.tabs);
-  store.set('active', code.active);
-  store.set('expanded', [...code.expanded].slice(-400));
-}
-
-function openCode(focusFind = false) {
-  closeReview({ focus: false });
-  if (!code.open) {
-    code.open = true;
-    $('main').classList.add('with-code');
-    $('code').hidden = false;
-    $('splitter').hidden = false;
-    syncDiffLayout();
-    renderSide();
-    renderTabs();
-    renderView();
-    saveCode();
-    if (code.mode === 'changes') $('codewrap').scrollTop = changes.top;
-  }
-  if (focusFind) $('find').focus();
-}
-
-function closeCode() {
-  if (!code.open) return;
-  changes.top = $('codewrap').scrollTop;
-  code.open = false;
-  syncDiffLayout();
-  $('main').classList.remove('with-code');
-  $('code').hidden = true;
-  $('splitter').hidden = true;
-  saveCode();
-  focusPrompt();
-}
-
-function toggleCode() {
-  if (inChanges()) setMode('files');
-  else if (code.open) closeCode();
-  else openCode(!activeTab());
-}
-$('toggle-code').onclick = toggleCode;
-$('close-code').onclick = closeCode;
-$('code-refresh').onclick = () => {
-  request('tree');
-  if (inChanges()) return request('diff');
-  const tab = activeTab();
-  if (tab) loadFile(tab.root, tab.path);
-};
-
-// The splitter between chat and code, its position kept as a share of the width.
-{
-  const splitter = $('splitter');
-  const main = $('main');
-  const saved = store.get('chatWidth', null);
-  if (saved) main.style.setProperty('--chat-w', `${saved}%`);
-  splitter.addEventListener('pointerdown', (ev) => {
-    ev.preventDefault();
-    splitter.setPointerCapture(ev.pointerId);
-    splitter.classList.add('drag');
-    document.body.classList.add('resizing');
-    const box = main.getBoundingClientRect();
-    const move = (e) => {
-      const px = Math.min(Math.max(e.clientX - box.left, 340), box.width - 420);
-      const pct = (px / box.width) * 100;
-      main.style.setProperty('--chat-w', `${pct}%`);
-      store.set('chatWidth', pct);
-    };
-    const up = () => {
-      splitter.classList.remove('drag');
-      document.body.classList.remove('resizing');
-      splitter.removeEventListener('pointermove', move);
-      splitter.removeEventListener('pointerup', up);
-    };
-    splitter.addEventListener('pointermove', move);
-    splitter.addEventListener('pointerup', up);
-  });
-}
-
-function applyTree(roots) {
-  state.roots = roots;
-  state.fileSets = roots.map((r) => new Set(r.files));
-  state.treeLoaded = true;
-  // Tabs of files that are gone are closed.
-  const before = code.tabs.length;
-  const active = activeTab();
-  code.tabs = code.tabs.filter((t) => state.fileSets[t.root]?.has(t.path));
-  if (code.tabs.length !== before) code.active = active ? Math.max(0, code.tabs.indexOf(active)) : code.tabs.length - 1;
-  if (code.active >= code.tabs.length) code.active = code.tabs.length - 1;
-  for (const node of state.nodes) if (node?.classList.contains('prose')) linkPaths(node);
-  if (code.open) {
-    renderSide();
-    renderTabs();
-    if (code.tabs.length !== before) renderView();
-  }
-  if (!$('picker').hidden) renderPicker();
-}
-
 /** After the agent ran a tool: files may have changed. */
 let refreshTimer;
 function afterToolResult() {
   clearTimeout(refreshTimer);
-  refreshTimer = setTimeout(() => {
-    request('tree');
-    reviewChanged();
-    // The whole diff only for someone looking at it; the button needs just the counts.
-    if (inChanges()) request('diff');
-    else request('diff_stat');
-    const tab = activeTab();
-    if (code.open && code.mode !== 'changes' && tab) loadFile(tab.root, tab.path, { quiet: true });
-  }, 400);
+  refreshTimer = setTimeout(reviewChanged, 400);
 }
 
 // ---------------------------------------------------------------- review panel
@@ -2095,11 +1868,10 @@ function syncReviewLayout() {
   $('main').classList.toggle('review-full', review.open && review.full);
   $('toggle-review').classList.toggle('on', review.open);
   $('review-chat').innerHTML = review.full ? ICON.chat : ICON.expand;
-  $('review-chat').title = review.full ? 'Show the chat beside the review' : 'Hide the chat';
+  $('review-chat').title = review.full ? 'Show the chat beside pullspace' : 'Hide the chat';
 }
 
 function openReview() {
-  if (code.open) closeCode();
   review.open = true;
   $('review').hidden = false;
   if (!review.frame) {
@@ -2197,1166 +1969,6 @@ addEventListener('message', (ev) => {
   reviewPost({ id: m.id, error: `tamale doesn't answer "${m.t}"` });
 });
 
-// ---- sidebar: tree, filtered list, search results
-
-function setMode(mode, { focus = true } = {}) {
-  const wasChanges = code.mode === 'changes';
-  if (wasChanges && mode !== 'changes') {
-    changes.top = $('codewrap').scrollTop;
-    changes.anchor = null;
-  }
-  code.mode = mode;
-  syncDiffLayout();
-  for (const b of $('seg').children) b.classList.toggle('on', b.dataset.mode === mode);
-  const find = $('find');
-  if (mode === 'changes') {
-    renderSide();
-    showDiff({ keepPlace: true });
-    $('codewrap').scrollTop = changes.top;
-    request('diff');
-    return focusChanges();
-  }
-  find.placeholder = mode === 'files' ? 'Filter files…' : 'Search the code…  ⏎';
-  find.value = mode === 'files' ? '' : code.query ?? '';
-  renderSide();
-  if (wasChanges) {
-    $('copy-path').hidden = false;
-    renderView();
-  }
-  if (focus) find.focus();
-}
-for (const b of $('seg').children) b.onclick = () => setMode(b.dataset.mode);
-
-function setFind(text, run = false) {
-  const find = $('find');
-  find.value = text;
-  find.focus();
-  if (code.mode === 'search' && run && text) runSearch(text);
-  else renderSide();
-}
-
-let findTimer;
-$('find').addEventListener('input', () => {
-  if (code.mode === 'files') return renderSide();
-  clearTimeout(findTimer);
-  const q = $('find').value;
-  if (q.length >= 3) findTimer = setTimeout(() => runSearch(q), 350);
-});
-$('find').addEventListener('keydown', (ev) => {
-  if (ev.key === 'Enter') {
-    if (code.mode === 'search') runSearch($('find').value);
-    else $('tree').querySelector('.row:not(.dir)')?.click();
-  }
-  if (ev.key === 'Escape' && $('find').value) {
-    ev.stopPropagation();
-    $('find').value = '';
-    renderSide();
-  }
-});
-
-function runSearch(query) {
-  if (!query.trim()) return;
-  code.query = query;
-  $('tree').innerHTML = '<div class="tree-note">Searching…</div>';
-  request('grep', { query });
-}
-
-function applyGrep(m) {
-  code.matches = m.matches;
-  code.truncated = m.truncated;
-  if (code.mode === 'search') renderSide();
-}
-
-function renderSide() {
-  if (!code.open) return;
-  const tree = $('tree');
-  if (code.mode === 'changes') return renderChangesSide(tree);
-  if (!state.treeLoaded) {
-    tree.innerHTML = '<div class="tree-note">Loading files…</div>';
-    return;
-  }
-  if (code.mode === 'search') return renderMatches(tree);
-  const q = $('find').value.trim();
-  if (q) return renderFiltered(tree, q);
-  const rows = [];
-  const multi = state.roots.length > 1;
-  state.roots.forEach((r, ri) => {
-    const node = buildTree(r);
-    if (multi) {
-      // Roots start open; `${ri}:!` marks one closed.
-      const open = !code.expanded.has(`${ri}:!`);
-      rows.push(dirRow(r.name, `${ri}:!`, 0, open, 'rootrow'));
-      if (open) treeRows(rows, node, ri, '', 1);
-    } else treeRows(rows, node, ri, '', 0);
-    if (r.total > r.files.length) rows.push(`<div class="tree-note">${r.total - r.files.length} more files not listed.</div>`);
-  });
-  tree.innerHTML = rows.join('') || '<div class="tree-note">No files.</div>';
-  tree.querySelector('.row.on')?.scrollIntoView({ block: 'nearest' });
-}
-
-const treeCache = new WeakMap();
-function buildTree(root) {
-  if (treeCache.has(root)) return treeCache.get(root);
-  const top = { dirs: new Map(), files: [] };
-  for (const path of root.files) {
-    const parts = path.split('/');
-    let node = top;
-    for (const part of parts.slice(0, -1)) {
-      if (!node.dirs.has(part)) node.dirs.set(part, { dirs: new Map(), files: [] });
-      node = node.dirs.get(part);
-    }
-    node.files.push(parts[parts.length - 1]);
-  }
-  treeCache.set(root, top);
-  return top;
-}
-
-function dirRow(name, key, depth, open, extra = '') {
-  return (
-    `<button class="row dir ${extra}${open ? ' open' : ''}" data-toggle="${esc(key)}" data-depth="${depth}">` +
-    `<span class="arrow">${ICON.chev}</span><span class="rname">${esc(name)}</span></button>`
-  );
-}
-
-function treeRows(rows, node, root, prefix, depth) {
-  const tab = activeTab();
-  const dirs = [...node.dirs.keys()].sort((a, b) => a.localeCompare(b));
-  for (const name of dirs) {
-    const path = prefix + name;
-    // Folders with a single folder inside read as one row, like `src/app`.
-    let label = name;
-    let child = node.dirs.get(name);
-    let full = path;
-    while (child.files.length === 0 && child.dirs.size === 1) {
-      const [only] = child.dirs.keys();
-      label += '/' + only;
-      full += '/' + only;
-      child = child.dirs.get(only);
-    }
-    const fullKey = `${root}:${full}`;
-    const open = code.expanded.has(fullKey);
-    rows.push(dirRow(label, fullKey, depth, open));
-    if (open) treeRows(rows, child, root, full + '/', depth + 1);
-  }
-  for (const name of [...node.files].sort((a, b) => a.localeCompare(b))) {
-    const path = prefix + name;
-    const on = tab && tab.root === root && tab.path === path;
-    rows.push(
-      `<button class="row${on ? ' on' : ''}" data-root="${root}" data-path="${esc(path)}" data-depth="${depth}">` +
-        `<span class="arrow"></span><span class="rname">${esc(name)}</span></button>`,
-    );
-  }
-}
-
-$('tree').addEventListener('click', (ev) => {
-  const row = ev.target.closest('[data-toggle], [data-path]');
-  if (!row) return;
-  if (row.dataset.toggle) {
-    const key = row.dataset.toggle;
-    if (code.expanded.has(key)) code.expanded.delete(key);
-    else code.expanded.add(key);
-    saveCode();
-    renderSide();
-  } else openFile(Number(row.dataset.root), row.dataset.path, Number(row.dataset.line) || null);
-});
-// Rows are indented with a style, which the page's CSP doesn't allow inline.
-new MutationObserver(() => {
-  for (const row of $('tree').querySelectorAll('[data-depth]')) row.style.paddingLeft = `${6 + row.dataset.depth * 14}px`;
-}).observe($('tree'), { childList: true });
-
-/** A subsequence match of `q` in `path`, preferring the file name, word starts and runs. */
-function fuzzy(q, path) {
-  const lower = path.toLowerCase();
-  const base = path.lastIndexOf('/') + 1;
-  const attempt = (from) => {
-    const hits = [];
-    let score = 0;
-    let qi = 0;
-    let last = -2;
-    for (let i = from; i < lower.length && qi < q.length; i++) {
-      if (lower[i] !== q[qi]) continue;
-      let s = 1;
-      if (i === last + 1) s += 5;
-      if (i === base || '/_-. '.includes(path[i - 1] ?? '/')) s += 3;
-      if (i >= base) s += 2;
-      score += s;
-      hits.push(i);
-      last = i;
-      qi++;
-    }
-    return qi === q.length ? { score, hits } : null;
-  };
-  const inName = attempt(base);
-  const found = inName ? { score: inName.score + 10, hits: inName.hits } : attempt(0);
-  if (found) found.score -= path.length * 0.03;
-  return found;
-}
-
-function marked(text, hits, offset = 0) {
-  const set = new Set(hits.map((i) => i - offset));
-  let out = '';
-  for (let i = 0; i < text.length; i++) out += set.has(i) ? `<b>${esc(text[i])}</b>` : esc(text[i]);
-  return out;
-}
-
-function searchFiles(query, limit) {
-  const q = query.toLowerCase().replace(/\s+/g, '');
-  const found = [];
-  state.roots.forEach((r, root) => {
-    for (const path of r.files) {
-      const m = fuzzy(q, path);
-      if (m) found.push({ root, path, ...m });
-    }
-  });
-  return found.sort((a, b) => b.score - a.score).slice(0, limit);
-}
-
-function fileLabel(f) {
-  const base = f.path.lastIndexOf('/') + 1;
-  const dir = f.path.slice(0, base);
-  const multi = state.roots.length > 1;
-  return {
-    name: marked(f.path.slice(base), f.hits ?? [], base),
-    dir: esc((multi ? `${state.roots[f.root].name}/` : '') + dir),
-  };
-}
-
-function renderFiltered(tree, q) {
-  const found = searchFiles(q, 200);
-  tree.innerHTML = found.length
-    ? found
-        .map((f) => {
-          const { name, dir } = fileLabel(f);
-          return (
-            `<button class="row" data-root="${f.root}" data-path="${esc(f.path)}" data-depth="0">` +
-            `<span class="rname">${name}</span><span class="rdir">${dir}</span></button>`
-          );
-        })
-        .join('')
-    : '<div class="tree-note">No files match.</div>';
-}
-
-function renderMatches(tree) {
-  if (!code.query) {
-    tree.innerHTML = '<div class="tree-note">Type to search every file in the workspace. Smart case: a capital letter makes it case-sensitive.</div>';
-    return;
-  }
-  if (!code.matches.length) {
-    tree.innerHTML = `<div class="tree-note">Nothing matches “${esc(code.query)}”.</div>`;
-    return;
-  }
-  const rows = [];
-  let last = '';
-  const qlen = code.query.length;
-  for (const m of code.matches) {
-    const key = fileKey(m.root, m.path);
-    if (key !== last) {
-      last = key;
-      const slash = m.path.lastIndexOf('/') + 1;
-      rows.push(`<div class="hitfile" title="${esc(m.path)}">${esc(m.path.slice(slash))}<span>${esc(m.path.slice(0, slash))}</span></div>`);
-    }
-    const chars = [...m.text];
-    const text =
-      esc(chars.slice(0, m.col).join('')) +
-      `<mark>${esc(chars.slice(m.col, m.col + qlen).join(''))}</mark>` +
-      esc(chars.slice(m.col + qlen).join(''));
-    rows.push(
-      `<button class="hit" data-root="${m.root}" data-path="${esc(m.path)}" data-line="${m.line}">` +
-        `<span class="hn">${m.line}</span><span class="ht">${text}</span></button>`,
-    );
-  }
-  if (code.truncated) rows.push('<div class="tree-note">Showing the first matches; narrow the search for more.</div>');
-  tree.innerHTML = rows.join('');
-}
-
-// ---- tabs and the viewer
-
-function openFile(root, path, line = null) {
-  openCode();
-  if (code.mode === 'changes') setMode('files', { focus: false });
-  let i = code.tabs.findIndex((t) => t.root === root && t.path === path);
-  if (i < 0) {
-    code.tabs.push({ root, path });
-    if (code.tabs.length > 12) code.tabs.splice(code.tabs.findIndex((_, j) => j !== code.tabs.length - 1), 1);
-    i = code.tabs.findIndex((t) => t.root === root && t.path === path);
-  }
-  // Reveal it in the tree.
-  const parts = path.split('/');
-  for (let d = 1; d < parts.length; d++) code.expanded.add(`${root}:${parts.slice(0, d).join('/')}`);
-  code.expanded.delete(`${root}:!`);
-  const changed = code.active !== i;
-  code.active = i;
-  if (changed) code.sel = line ? { a: line, b: line } : null;
-  else if (line) code.sel = { a: line, b: line };
-  code.pendingLine = line;
-  saveCode();
-  renderTabs();
-  renderView();
-  if (code.mode === 'files' && !$('find').value) renderSide();
-  loadFile(root, path, { quiet: code.files.has(fileKey(root, path)) });
-}
-
-function closeTab(i) {
-  code.tabs.splice(i, 1);
-  if (code.active >= i) code.active = Math.max(code.tabs.length ? 0 : -1, code.active - 1);
-  code.sel = null;
-  saveCode();
-  renderTabs();
-  renderView();
-  renderSide();
-}
-
-function loadFile(root, path, { quiet = false } = {}) {
-  request('open', { root, path }, `file:${fileKey(root, path)}`);
-  if (!quiet && !code.files.has(fileKey(root, path))) renderView();
-}
-
-function onFile(m) {
-  const key = fileKey(m.root, m.path);
-  if (m.seq !== latest[`file:${key}`]) return;
-  const prev = code.files.get(key);
-  code.files.set(key, m);
-  const tab = activeTab();
-  if (!tab || fileKey(tab.root, tab.path) !== key) return;
-  // An unchanged reload leaves the view (and its scroll position) alone.
-  if (prev && !code.pendingLine && JSON.stringify(prev.lines) === JSON.stringify(m.lines) && prev.error === m.error) return;
-  renderView({ keepScroll: !!prev });
-}
-
-function renderTabs() {
-  const strip = $('tabs');
-  const counts = {};
-  for (const t of code.tabs) {
-    const name = t.path.split('/').pop();
-    counts[name] = (counts[name] ?? 0) + 1;
-  }
-  strip.replaceChildren(
-    ...code.tabs.map((t, i) => {
-      const parts = t.path.split('/');
-      const name = parts.pop();
-      // Same-named files say which folder they are in.
-      const label = counts[name] > 1 && parts.length ? `${name} · ${parts.pop()}` : name;
-      return h(
-        'button',
-        {
-          class: `tab${i === code.active ? ' on' : ''}`,
-          title: t.path,
-          onclick: () => openFile(t.root, t.path),
-          onauxclick: (ev) => ev.button === 1 && closeTab(i),
-        },
-        h('span', { text: label }),
-        h('span', {
-          class: 'tabx',
-          html: ICON.close,
-          onclick: (ev) => {
-            ev.stopPropagation();
-            closeTab(i);
-          },
-        }),
-      );
-    }),
-  );
-  strip.querySelector('.tab.on')?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
-}
-
-function renderView({ keepScroll = false } = {}) {
-  if (code.mode === 'changes') return showDiff({ keepPlace: true });
-  const wrap = $('codewrap');
-  const tab = activeTab();
-  $('copy-path').hidden = !tab;
-  if (!tab) {
-    $('crumbs').textContent = '';
-    $('vmeta').textContent = '';
-    $('ask').hidden = true;
-    wrap.innerHTML =
-      '<div class="code-empty"><div class="big">Pick a file to read</div>' +
-      '<div><kbd>⌘P</kbd> go to file · <code>/search</code> text · click a path in the chat</div></div>';
-    return;
-  }
-  const slash = tab.path.lastIndexOf('/') + 1;
-  const rootName = state.roots.length > 1 ? `${state.roots[tab.root]?.name ?? ''}/` : '';
-  // The crumbs are right-to-left so long paths lose their start; the bidi mark keeps
-  // the slashes where they belong.
-  $('crumbs').innerHTML = `\u200e${esc(rootName + tab.path.slice(0, slash))}<b>${esc(tab.path.slice(slash))}</b>\u200e`;
-  const file = code.files.get(fileKey(tab.root, tab.path));
-  if (!file) {
-    $('vmeta').textContent = '';
-    wrap.innerHTML = '<div class="code-empty">Opening…</div>';
-    return;
-  }
-  if (file.error) {
-    $('vmeta').textContent = '';
-    wrap.innerHTML = `<div class="code-empty"><div class="big">${esc(file.error)}</div></div>`;
-    return;
-  }
-  $('vmeta').textContent = `${file.syntax ?? 'Plain text'} · ${file.lines.length} lines`;
-  const top = wrap.scrollTop;
-  const rows = file.lines.map((l, i) => `<div class="cl"><span class="ln">${i + 1}</span><span class="lc">${l || ' '}</span></div>`);
-  wrap.innerHTML = `<div class="codeview">${rows.join('')}</div>`;
-  paintSelection();
-  if (code.pendingLine) {
-    const row = wrap.firstChild.children[code.pendingLine - 1];
-    if (row) {
-      row.scrollIntoView({ block: 'center' });
-      row.classList.add('flash');
-    }
-    code.pendingLine = null;
-  } else if (keepScroll) wrap.scrollTop = top;
-  else wrap.scrollTop = 0;
-}
-
-function paintSelection() {
-  if (code.mode === 'changes') return;
-  const view = $('codewrap').querySelector('.codeview');
-  if (!view) return;
-  for (const row of view.querySelectorAll('.cl.sel')) row.classList.remove('sel');
-  const ask = $('ask');
-  if (!code.sel) {
-    ask.hidden = true;
-    return;
-  }
-  const [a, b] = [Math.min(code.sel.a, code.sel.b), Math.max(code.sel.a, code.sel.b)];
-  for (let n = a; n <= b; n++) view.children[n - 1]?.classList.add('sel');
-  ask.hidden = false;
-  ask.innerHTML = `Ask about ${a === b ? `line ${a}` : `lines ${a}–${b}`} <kbd>⌘⏎</kbd>`;
-}
-
-// Line numbers select: click a line, shift-click or drag for a range.
-{
-  const wrap = $('codewrap');
-  let dragging = false;
-  const lineOf = (target) => {
-    const row = target.closest?.('.cl');
-    return row ? [...row.parentNode.children].indexOf(row) + 1 : 0;
-  };
-  wrap.addEventListener('mousedown', (ev) => {
-    if (!ev.target.classList.contains('ln')) return;
-    ev.preventDefault();
-    const n = lineOf(ev.target);
-    if (ev.shiftKey && code.sel) code.sel.b = n;
-    else if (code.sel && code.sel.a === n && code.sel.b === n) code.sel = null;
-    else code.sel = { a: n, b: n };
-    dragging = !!code.sel;
-    paintSelection();
-  });
-  wrap.addEventListener('mouseover', (ev) => {
-    if (!dragging) return;
-    const n = lineOf(ev.target);
-    if (n && n !== code.sel.b) {
-      code.sel.b = n;
-      paintSelection();
-    }
-  });
-  addEventListener('mouseup', () => (dragging = false));
-}
-
-/** Quotes the selected lines into the prompt, the way the terminal's diff viewer does. */
-function askAboutSelection() {
-  if (code.mode === 'changes') return askAboutChanges();
-  const tab = activeTab();
-  const view = $('codewrap').querySelector('.codeview');
-  if (!tab || !code.sel || !view) return;
-  const [a, b] = [Math.min(code.sel.a, code.sel.b), Math.max(code.sel.a, code.sel.b)];
-  const lines = [];
-  for (let n = a; n <= b; n++) lines.push(view.children[n - 1]?.querySelector('.lc').textContent ?? '');
-  const ext = tab.path.includes('.') ? tab.path.split('.').pop() : '';
-  const root = state.roots[tab.root];
-  const path = tab.root === 0 ? tab.path : `${root.path}/${tab.path}`;
-  const range = a === b ? `line ${a}` : `lines ${a}–${b}`;
-  appendToInput(`In \`${path}\` (${range}):\n\`\`\`${ext}\n${lines.join('\n').replace(/\u00a0/g, ' ')}\n\`\`\`\n\n`);
-}
-$('ask').onclick = askAboutSelection;
-
-$('copy-path').onclick = () => {
-  const tab = activeTab();
-  if (tab) copyText(tab.path, `Copied \`${tab.path}\`.`);
-};
-
-// ---------------------------------------------------------------- changes
-
-/**
- * The code panel's Changes mode: the terminal's `/diff` viewer for the page. A tree of the
- * changed files, and the selected file's diff with unchanged lines folded.
- */
-const changes = {
-  /** Null until the first reply; each file gets `lines` and `breaks` (see `applyDiff`). */
-  files: null,
-  error: null,
-  label: '',
-  path: null,
-  /** A path to show when the next reply comes, from a step in the chat. */
-  want: null,
-  /** Opened unchanged lines per file: { all, lines: Set of new line numbers }. */
-  reveal: new Map(),
-  collapsed: new Set(),
-  rows: [],
-  cursor: 0,
-  /** Where a selection started, or null. */
-  anchor: null,
-  /** Where the view was when the panel closed. */
-  top: 0,
-  /** Whether the chat steps aside for the diff, as the terminal's Diff tab does. */
-  full: store.get('diffFull', true),
-};
-const DIFF_CONTEXT = 3;
-const DIFF_EXPAND = 20;
-
-const inChanges = () => code.open && code.mode === 'changes';
-const changesFile = () => changes.files?.find((f) => f.path === changes.path);
-
-/** The panel takes the whole width, unless the chat has something to ask. */
-const diffIsFull = () => inChanges() && changes.full && $('approval').hidden && $('question').hidden;
-function syncDiffLayout() {
-  $('main').classList.toggle('diff-full', diffIsFull());
-  $('code').classList.toggle('changes', code.mode === 'changes');
-  $('toggle-diff').classList.toggle('on', inChanges());
-  $('toggle-code').classList.toggle('on', code.open && code.mode !== 'changes');
-  $('diff-full').innerHTML = changes.full ? ICON.shrink : ICON.expand;
-  $('diff-full').title = changes.full ? 'Show the chat beside the diff  f' : 'Hide the chat  f';
-}
-
-function openChanges(path = null) {
-  changes.want = path;
-  openCode();
-  if (code.mode === 'changes') request('diff');
-  else setMode('changes');
-  focusChanges();
-}
-const toggleChanges = () => (inChanges() ? closeCode() : openChanges());
-$('toggle-diff').onclick = () => toggleChanges();
-
-function focusChanges() {
-  if (!touch.matches) $('code').focus({ preventScroll: true });
-}
-
-function applyStat(files, added, removed) {
-  const count = $('diff-count');
-  count.innerHTML = files
-    ? `${files} <span class="t-add">+${added}</span> <span class="t-del">−${removed}</span>`
-    : '';
-  $('toggle-diff').title = files
-    ? `Uncommitted changes: ${files} file${files === 1 ? '' : 's'}  /diff`
-    : 'Uncommitted changes  /diff';
-}
-
-/** Finds the file a chat step named: relative to the first root or the repository, or absolute. */
-function matchChanged(files, raw) {
-  const root = state.roots[0]?.path;
-  const rel = (root && raw.startsWith(`${root}/`) ? raw.slice(root.length + 1) : raw).replace(/^\.\//, '');
-  return files.find((f) => f.path === rel) ?? files.find((f) => f.path.endsWith(`/${rel}`) || raw.endsWith(`/${f.path}`));
-}
-
-function applyDiff(m) {
-  const previous = changesFile();
-  const before = treeOrder(changes.files ?? []);
-  changes.error = m.error ?? null;
-  changes.label = m.label ?? '';
-  changes.files = (m.files ?? []).map((f) => {
-    const lines = [];
-    const breaks = new Set();
-    for (const hunk of f.hunks) {
-      if (lines.length) breaks.add(lines.length);
-      lines.push(...hunk.lines);
-    }
-    return { ...f, lines, breaks };
-  });
-  const files = changes.files;
-  applyStat(files.length, files.reduce((n, f) => n + f.added, 0), files.reduce((n, f) => n + f.removed, 0));
-
-  let path = changes.path;
-  if (changes.want) {
-    const wanted = matchChanged(files, changes.want);
-    if (wanted) path = wanted.path;
-    else if (!changes.error) toast(`\`${changes.want}\` has no uncommitted changes.`);
-    changes.want = null;
-  }
-  if (!files.some((f) => f.path === path)) {
-    // The file's changes are gone: the one after it, as a list would close up.
-    const order = treeOrder(files);
-    const at = before.indexOf(path);
-    path = (at < 0 ? order[0] : before.slice(at + 1).find((p) => order.includes(p)) ?? order[order.length - 1]) ?? null;
-  }
-  const same = path === changes.path;
-  changes.path = path;
-  if (!inChanges()) return;
-  renderSide();
-  // An unchanged reload leaves the view, its scroll position and the selection alone.
-  const file = changesFile();
-  if (same && previous && file && JSON.stringify(previous.lines) === JSON.stringify(file.lines)) return renderDiffHeader();
-  showDiff({ keepPlace: same && !!previous });
-}
-
-// ---- the tree
-
-function changedTree(files, collapsed = new Set()) {
-  const top = { dirs: new Map(), files: [] };
-  files.forEach((f, index) => {
-    const parts = f.path.split('/');
-    let node = top;
-    for (const part of parts.slice(0, -1)) {
-      if (!node.dirs.has(part)) node.dirs.set(part, { dirs: new Map(), files: [] });
-      node = node.dirs.get(part);
-    }
-    node.files.push({ name: parts[parts.length - 1], index });
-  });
-  const rows = [];
-  const walk = (node, prefix, depth) => {
-    for (const name of [...node.dirs.keys()].sort((a, b) => a.localeCompare(b))) {
-      let label = name;
-      let child = node.dirs.get(name);
-      while (!child.files.length && child.dirs.size === 1) {
-        const [only] = child.dirs.keys();
-        label += `/${only}`;
-        child = child.dirs.get(only);
-      }
-      const dir = prefix + label;
-      rows.push({ depth, name: label, dir });
-      if (!collapsed.has(dir)) walk(child, `${dir}/`, depth + 1);
-    }
-    for (const f of [...node.files].sort((a, b) => a.name.localeCompare(b.name))) rows.push({ depth, name: f.name, file: f.index });
-  };
-  walk(top, '', 0);
-  return rows;
-}
-/** The files' paths in the order the tree shows them, whatever is folded. */
-const treeOrder = (files) => changedTree(files).filter((r) => r.file != null).map((r) => files[r.file].path);
-
-const diffCounts = (added, removed) =>
-  `<span class="dcount">${added ? `<span class="t-add">+${added}</span>` : ''}${removed ? ` <span class="t-del">−${removed}</span>` : ''}</span>`;
-
-function renderChangesSide(tree) {
-  if (changes.error) {
-    tree.innerHTML = `<div class="tree-note">${esc(changes.error)}</div>`;
-    return;
-  }
-  if (!changes.files) {
-    tree.innerHTML = '<div class="tree-note">Loading changes…</div>';
-    return;
-  }
-  if (!changes.files.length) {
-    tree.innerHTML = '<div class="tree-note">No uncommitted changes.</div>';
-    return;
-  }
-  const files = changes.files;
-  const rows = changedTree(files, changes.collapsed).map((r) => {
-    if (r.file == null) {
-      const open = !changes.collapsed.has(r.dir);
-      return (
-        `<button class="row dir${open ? ' open' : ''}" data-ddir="${esc(r.dir)}" data-depth="${r.depth}" title="${esc(r.dir)}">` +
-        `<span class="arrow">${ICON.chev}</span><span class="rname">${esc(r.name)}/</span></button>`
-      );
-    }
-    const f = files[r.file];
-    return (
-      `<button class="row${f.path === changes.path ? ' on' : ''}" data-dfile="${esc(f.path)}" data-depth="${r.depth}" title="${esc(f.path)}">` +
-      `<span class="dstatus st-${esc(f.status)}">${esc(f.status)}</span><span class="rname">${esc(r.name)}</span>` +
-      `${diffCounts(f.added, f.removed)}</button>`
-    );
-  });
-  const added = files.reduce((n, f) => n + f.added, 0);
-  const removed = files.reduce((n, f) => n + f.removed, 0);
-  tree.innerHTML =
-    `<div class="dsummary"><b>${files.length} file${files.length === 1 ? '' : 's'}</b>${diffCounts(added, removed)}` +
-    `<div class="dlabel">${esc(changes.label)}</div></div>${rows.join('')}`;
-  tree.querySelector('.row.on')?.scrollIntoView({ block: 'nearest' });
-}
-
-$('tree').addEventListener('click', (ev) => {
-  const row = ev.target.closest('[data-dfile], [data-ddir]');
-  if (!row) return;
-  if (row.dataset.ddir) {
-    const dir = row.dataset.ddir;
-    if (changes.collapsed.has(dir)) changes.collapsed.delete(dir);
-    else changes.collapsed.add(dir);
-    renderSide();
-  } else selectChanged(row.dataset.dfile);
-  focusChanges();
-});
-
-function selectChanged(path) {
-  changes.path = path;
-  // Show it in the tree.
-  for (const dir of [...changes.collapsed]) if (path.startsWith(`${dir}/`)) changes.collapsed.delete(dir);
-  renderSide();
-  showDiff();
-}
-
-/** Moves to the file `by` away in the tree, and says whether there was one. */
-function stepFile(by) {
-  const order = treeOrder(changes.files ?? []);
-  const next = order[order.indexOf(changes.path) + by];
-  if (!next) return false;
-  selectChanged(next);
-  return true;
-}
-
-// ---- the diff: rows, as the terminal and the app fold them
-
-function shownLines(file, reveal) {
-  const { lines } = file;
-  if (reveal?.all) return lines.map(() => true);
-  const shown = lines.map(() => false);
-  lines.forEach((line, i) => {
-    if (line.k === '+' || line.k === '-') {
-      const end = Math.min(lines.length - 1, i + DIFF_CONTEXT);
-      for (let j = Math.max(0, i - DIFF_CONTEXT); j <= end; j++) shown[j] = true;
-    } else if (line.n != null && reveal?.lines.has(line.n)) shown[i] = true;
-  });
-  // `\ No newline at end of file` belongs to the line before it.
-  lines.forEach((line, i) => {
-    if (i && line.k === '\\') shown[i] = shown[i - 1];
-  });
-  return shown;
-}
-
-/** The closest line before `start` that starts a definition, to say where a change is. */
-function sectionBefore(lines, start) {
-  for (let i = start - 1; i >= 0; i--) if (lines[i].k !== '-' && /^[\p{L}_$]/u.test(lines[i].t)) return lines[i].t;
-  return '';
-}
-
-function diffRows(file) {
-  const rows = [];
-  if (file.old_path) rows.push({ note: `Renamed from ${file.old_path}` });
-  if (file.mode_change?.length === 2) rows.push({ note: `Mode changed ${file.mode_change[0]} → ${file.mode_change[1]}` });
-  if (file.omitted) rows.push({ note: 'Too large to show here. See it with /diff in the terminal.' });
-  else if (file.binary) rows.push({ note: 'Binary file not shown' });
-  else if (!file.lines.length && !file.old_path && !file.mode_change) rows.push({ note: 'Empty file' });
-  const { lines, breaks } = file;
-  const shown = shownLines(file, changes.reveal.get(file.path));
-  let i = 0;
-  while (i < lines.length) {
-    if (breaks.has(i)) rows.push({ cut: true });
-    if (shown[i]) {
-      rows.push({ line: i });
-      i++;
-      continue;
-    }
-    const start = i;
-    while (i < lines.length && !shown[i] && (i === start || !breaks.has(i))) i++;
-    rows.push({ start, end: i, section: i < lines.length ? sectionBefore(lines, i) : '' });
-  }
-  return rows;
-}
-
-/** A line's text, the changed part marked. The range counts characters, as tamale's does. */
-function diffText(line) {
-  const text = line.t.replace(/\r$/, '');
-  if (!line.e) return esc(text);
-  const chars = Array.from(text);
-  const [a, b] = line.e;
-  return `${esc(chars.slice(0, a).join(''))}<mark>${esc(chars.slice(a, b).join(''))}</mark>${esc(chars.slice(b).join(''))}`;
-}
-
-const DIFF_CLASS = { '+': 'add', '-': 'del', '\\': 'nonl', ' ': '' };
-
-function diffRowHtml(file, row) {
-  if (row.note) return `<div class="dnote">${esc(row.note)}</div>`;
-  if (row.cut) return '<div class="dnote">⋯ lines not sent, this file is large</div>';
-  if (row.start != null) {
-    const count = row.end - row.start;
-    return (
-      `<button class="dgap" tabindex="-1"><span class="dgapn">↕ ${count} unchanged line${count === 1 ? '' : 's'}</span>` +
-      `${row.section ? `<span class="dsec">${esc(row.section.trim())}</span>` : ''}</button>`
-    );
-  }
-  const line = file.lines[row.line];
-  return (
-    `<div class="dl ${DIFF_CLASS[line.k] ?? ''}"><span class="dg"><span class="dn">${line.o ?? ''}</span><span class="dn">${line.n ?? ''}</span>` +
-    `<span class="ds">${line.k === ' ' ? '' : esc(line.k)}</span></span><span class="dt">${diffText(line) || ' '}</span></div>`
-  );
-}
-
-const isChange = (file, row) => row.line != null && ['+', '-'].includes(file.lines[row.line].k);
-
-function renderDiffHeader() {
-  const file = changesFile();
-  if (!file) {
-    $('crumbs').textContent = '';
-    $('vmeta').innerHTML = '';
-    return;
-  }
-  const slash = file.path.lastIndexOf('/') + 1;
-  $('crumbs').innerHTML = `‎${esc(file.path.slice(0, slash))}<b>${esc(file.path.slice(slash))}</b>‎`;
-  $('vmeta').innerHTML = diffCounts(file.added, file.removed);
-}
-
-/** Lays out the selected file. Otherwise opens at its first change. */
-function showDiff({ keepPlace = false } = {}) {
-  const wrap = $('codewrap');
-  const file = changesFile();
-  renderDiffHeader();
-  $('copy-path').hidden = !file;
-  $('diff-all').hidden = !file?.lines.length;
-  if (!file) {
-    changes.rows = [];
-    const text = changes.error ?? (changes.files ? 'No uncommitted changes' : 'Loading changes…');
-    wrap.innerHTML = `<div class="code-empty"><div class="big">${esc(text)}</div></div>`;
-    paintDiff();
-    return;
-  }
-  $('diff-all').classList.toggle('on', !!changes.reveal.get(file.path)?.all);
-  const top = wrap.scrollTop;
-  const left = wrap.scrollLeft;
-  changes.rows = diffRows(file);
-  wrap.innerHTML = `<div class="codeview diffview">${changes.rows.map((r) => diffRowHtml(file, r)).join('')}</div>`;
-  if (keepPlace) {
-    changes.cursor = Math.min(changes.cursor, Math.max(0, changes.rows.length - 1));
-    wrap.scrollTop = top;
-    wrap.scrollLeft = left;
-  } else {
-    changes.anchor = null;
-    const first = changes.rows.findIndex((r) => isChange(file, r));
-    changes.cursor = Math.max(0, first);
-    wrap.scrollTop = 0;
-  }
-  paintDiff();
-  if (!keepPlace) revealRow(changes.cursor);
-}
-
-function diffRange() {
-  return changes.anchor == null
-    ? null
-    : [Math.min(changes.anchor, changes.cursor), Math.max(changes.anchor, changes.cursor)];
-}
-
-function paintDiff() {
-  const view = $('codewrap').querySelector('.diffview');
-  const ask = $('ask');
-  const range = diffRange();
-  ask.hidden = !range;
-  if (range) {
-    const n = range[1] - range[0] + 1;
-    ask.innerHTML = `Ask about ${n === 1 ? 'this line' : `${n} lines`} <kbd>⏎</kbd>`;
-  }
-  if (!view) return;
-  for (const el of view.querySelectorAll('.cur, .sel')) el.classList.remove('cur', 'sel');
-  view.children[changes.cursor]?.classList.add('cur');
-  if (range) for (let r = range[0]; r <= range[1]; r++) view.children[r]?.classList.add('sel');
-}
-
-/** Keeps a row in view: `center` for a jump, the nearest edge for a step. */
-function revealRow(r, center = false) {
-  const wrap = $('codewrap');
-  const row = wrap.querySelector('.diffview')?.children[r];
-  if (!row) return;
-  const box = wrap.getBoundingClientRect();
-  const at = row.getBoundingClientRect();
-  if (center) wrap.scrollTop += at.top - box.top - box.height / 3;
-  else if (at.top < box.top) wrap.scrollTop -= box.top - at.top + at.height;
-  else if (at.bottom > box.bottom) wrap.scrollTop += at.bottom - box.bottom + at.height;
-}
-
-function moveCursor(to, { center = false, extend = true } = {}) {
-  changes.cursor = Math.max(0, Math.min(changes.rows.length - 1, to));
-  if (!extend) changes.anchor = null;
-  paintDiff();
-  revealRow(changes.cursor, center);
-}
-
-/** Opens more of the folded lines at a row, next to the changes around them. */
-function expandGap(r) {
-  const file = changesFile();
-  const gap = changes.rows[r];
-  if (!file || gap?.start == null) return;
-  const { start, end } = gap;
-  const half = DIFF_EXPAND / 2;
-  let opened;
-  if (end - start <= DIFF_EXPAND) opened = [[start, end]];
-  else if (start === 0) opened = [[end - DIFF_EXPAND, end]];
-  else if (end === file.lines.length) opened = [[start, start + DIFF_EXPAND]];
-  else opened = [[start, start + half], [end - half, end]];
-  const reveal = changes.reveal.get(file.path) ?? { all: false, lines: new Set() };
-  for (const [a, b] of opened) {
-    for (let i = a; i < b; i++) if (file.lines[i].n != null) reveal.lines.add(file.lines[i].n);
-  }
-  changes.reveal.set(file.path, reveal);
-  showDiff({ keepPlace: true });
-}
-
-function toggleWholeFile() {
-  const file = changesFile();
-  if (!file?.lines.length) return;
-  const reveal = changes.reveal.get(file.path) ?? { all: false, lines: new Set() };
-  reveal.all = !reveal.all;
-  if (!reveal.all) reveal.lines.clear();
-  changes.reveal.set(file.path, reveal);
-  changes.anchor = null;
-  showDiff();
-}
-
-/** The next or previous run of changed lines; past the last, the next file's first. */
-function jumpChange(by) {
-  const file = changesFile();
-  if (!file) return;
-  const starts = [];
-  changes.rows.forEach((row, r) => {
-    if (isChange(file, row) && !(r && isChange(file, changes.rows[r - 1]))) starts.push(r);
-  });
-  const at = changes.cursor;
-  const next = by > 0 ? starts.find((r) => r > at) : starts.reverse().find((r) => r < at);
-  if (next != null) moveCursor(next, { center: true });
-  else if (by > 0) stepFile(1);
-}
-
-/** The selected rows quoted for a prompt, as the terminal's viewer quotes them. */
-function quoteChanges() {
-  const file = changesFile();
-  const range = diffRange();
-  if (!file || !range) return null;
-  let body = '';
-  const news = [];
-  const olds = [];
-  for (const row of changes.rows.slice(range[0], range[1] + 1)) {
-    if (row.line != null) {
-      const line = file.lines[row.line];
-      body += `${line.k === '+' || line.k === '-' ? line.k : ' '}${line.t.replace(/\r$/, '')}\n`;
-      if (line.n != null) news.push(line.n);
-      if (line.o != null) olds.push(line.o);
-    } else if (row.start != null) body += ` … ${row.end - row.start} unchanged lines\n`;
-  }
-  if (!body) return null;
-  const span = (numbers, what) => {
-    const [a, b] = [Math.min(...numbers), Math.max(...numbers)];
-    return a === b ? `${what} ${a}` : `${what}s ${a}–${b}`;
-  };
-  const where = news.length ? span(news, 'line') : span(olds, 'removed line');
-  return `In \`${file.path}\` (${where}):\n\`\`\`diff\n${body}\`\`\`\n\n`;
-}
-
-function askAboutChanges() {
-  const quote = quoteChanges();
-  if (!quote) return;
-  changes.anchor = null;
-  paintDiff();
-  // The prompt has to be on screen.
-  if (matchMedia('(max-width: 980px)').matches) closeCode();
-  else if (changes.full) setDiffFull(false);
-  appendToInput(quote);
-}
-
-function setDiffFull(full) {
-  changes.full = full;
-  store.set('diffFull', full);
-  syncDiffLayout();
-}
-$('diff-full').onclick = () => setDiffFull(!changes.full);
-$('diff-all').onclick = toggleWholeFile;
-
-// The mouse: a gutter selects as line numbers do in the code view, a gap opens.
-{
-  const wrap = $('codewrap');
-  let dragging = false;
-  const rowOf = (target) => {
-    const row = target.closest?.('.dl, .dgap, .dnote');
-    return row ? [...row.parentNode.children].indexOf(row) : -1;
-  };
-  wrap.addEventListener('mousedown', (ev) => {
-    if (!inChanges() || !ev.target.closest?.('.dg')) return;
-    ev.preventDefault();
-    focusChanges();
-    const r = rowOf(ev.target);
-    if (ev.shiftKey && changes.anchor != null) changes.cursor = r;
-    else if (changes.anchor === r && changes.cursor === r) changes.anchor = null;
-    else {
-      changes.anchor = r;
-      changes.cursor = r;
-    }
-    dragging = changes.anchor != null;
-    paintDiff();
-  });
-  wrap.addEventListener('mouseover', (ev) => {
-    if (!dragging) return;
-    const r = rowOf(ev.target);
-    if (r >= 0 && r !== changes.cursor) {
-      changes.cursor = r;
-      paintDiff();
-    }
-  });
-  addEventListener('mouseup', () => (dragging = false));
-  wrap.addEventListener('click', (ev) => {
-    if (!inChanges()) return;
-    const r = rowOf(ev.target);
-    if (r < 0) return;
-    if (ev.target.closest('.dgap')) {
-      changes.cursor = r;
-      expandGap(r);
-      focusChanges();
-    } else if (!ev.target.closest('.dg') && !getSelection()?.toString()) {
-      changes.cursor = r;
-      paintDiff();
-    }
-  });
-}
-
-/** The viewer's keys, as the terminal has them. True if the key was one of them. */
-function diffKey(ev) {
-  if (!inChanges()) return false;
-  if (!$('help').hidden || !$('artifacts').hidden || !$('picker').hidden) return false;
-  const t = ev.target;
-  if (t.matches?.('input, textarea')) return false;
-  // A focused button keeps its own Enter and Space.
-  if (t.closest?.('button') && (ev.key === 'Enter' || ev.key === ' ')) return false;
-  // Beside the chat, only while the panel has focus; alone on screen, always.
-  if (!t.closest?.('.code') && !diffIsFull()) return false;
-  const wrap = $('codewrap');
-  const page = wrap.clientHeight * 0.85;
-  const row = changes.rows[changes.cursor];
-  const selecting = changes.anchor != null;
-  const step = (fn) => {
-    ev.preventDefault();
-    fn();
-    return true;
-  };
-  if (ev.altKey) return false;
-  if (ev.metaKey || ev.ctrlKey) {
-    if (ev.key === 'Enter' && selecting) return step(askAboutChanges);
-    if (ev.ctrlKey && ev.key === 'd') return step(() => (wrap.scrollTop += page));
-    if (ev.ctrlKey && ev.key === 'u') return step(() => (wrap.scrollTop -= page));
-    return false;
-  }
-  switch (ev.key) {
-    case 'j':
-    case 'ArrowDown':
-      return step(() => moveCursor(changes.cursor + 1));
-    case 'k':
-    case 'ArrowUp':
-      return step(() => moveCursor(changes.cursor - 1));
-    case 'g':
-      return step(() => moveCursor(0));
-    case 'G':
-      return step(() => moveCursor(changes.rows.length - 1));
-    case 'PageDown':
-    case ' ':
-      return step(() => (wrap.scrollTop += page));
-    case 'PageUp':
-      return step(() => (wrap.scrollTop -= page));
-    case 'n':
-      return step(() => jumpChange(1));
-    case 'p':
-      return step(() => jumpChange(-1));
-    case ']':
-      return step(() => stepFile(1));
-    case '[':
-      return step(() => stepFile(-1));
-    case 'e':
-      return row?.start != null ? step(() => expandGap(changes.cursor)) : false;
-    case 'E':
-      return step(toggleWholeFile);
-    case 'v':
-    case 'V':
-      return step(() => {
-        changes.anchor = selecting ? null : changes.cursor;
-        paintDiff();
-      });
-    case 'Enter':
-      if (row?.start != null) return step(() => expandGap(changes.cursor));
-      return selecting ? step(askAboutChanges) : false;
-    // Without a selection these mean nothing here, and go on to a pending approval.
-    case 'a':
-      return selecting ? step(askAboutChanges) : false;
-    case 'y':
-      return selecting ? step(() => copyText(quoteChanges(), 'Copied the lines.')) : false;
-    case 'r':
-      return step(() => request('diff'));
-    case 'f':
-      return step(() => setDiffFull(!changes.full));
-    case 'o':
-      return step(openChangedFile);
-    case 'Escape':
-      if (selecting) {
-        return step(() => {
-          changes.anchor = null;
-          paintDiff();
-        });
-      }
-      return step(closeCode);
-    case 'q':
-      return step(closeCode);
-  }
-  return false;
-}
-
-/** Leaves for the code view, at the cursor's line. */
-function openChangedFile() {
-  const file = changesFile();
-  if (!file) return;
-  const target = resolvePath(file.path);
-  if (!target) return toast(`\`${file.path}\` isn't a file in the workspace.`);
-  const row = changes.rows[changes.cursor];
-  openFile(target.root, target.path, row?.line != null ? file.lines[row.line].n ?? null : null);
-}
-
-// ---------------------------------------------------------------- go to file
-
-let pickItems = [];
-let pickAt = 0;
-
-function openPicker(query = '') {
-  $('picker').hidden = false;
-  const box = $('pick-input');
-  box.value = query;
-  box.focus();
-  pickAt = 0;
-  renderPicker();
-}
-const closePicker = () => {
-  $('picker').hidden = true;
-};
-
-function renderPicker() {
-  const q = $('pick-input').value.trim();
-  if (!state.treeLoaded) {
-    $('pick-list').innerHTML = '<div class="pickempty">Loading files…</div>';
-    return;
-  }
-  // Without a query: the open files, most recent first.
-  pickItems = q ? searchFiles(q, 60) : [...code.tabs].reverse().map((t) => ({ ...t, hits: [] }));
-  pickAt = Math.min(pickAt, Math.max(0, pickItems.length - 1));
-  $('pick-list').innerHTML = pickItems.length
-    ? pickItems
-        .map((f, i) => {
-          const { name, dir } = fileLabel(f);
-          return `<button class="pickrow${i === pickAt ? ' on' : ''}" data-i="${i}"><span>${name}</span><span class="pickdetail">${dir}</span></button>`;
-        })
-        .join('')
-    : `<div class="pickempty">${q ? 'No files match.' : 'Type to find a file.'}</div>`;
-  $('pick-list').children[pickAt]?.scrollIntoView({ block: 'nearest' });
-}
-
-function pick(i) {
-  const f = pickItems[i];
-  if (!f) return;
-  closePicker();
-  openFile(f.root, f.path);
-}
-
-$('pick-input').addEventListener('input', () => {
-  pickAt = 0;
-  renderPicker();
-});
-$('pick-input').addEventListener('keydown', (ev) => {
-  if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp' || (ev.ctrlKey && (ev.key === 'n' || ev.key === 'p'))) {
-    ev.preventDefault();
-    const down = ev.key === 'ArrowDown' || ev.key === 'n';
-    pickAt = (pickAt + (down ? 1 : -1) + pickItems.length) % Math.max(1, pickItems.length);
-    renderPicker();
-  } else if (ev.key === 'Enter') {
-    ev.preventDefault();
-    pick(pickAt);
-  }
-});
-$('pick-list').addEventListener('click', (ev) => {
-  const row = ev.target.closest('.pickrow');
-  if (row) pick(Number(row.dataset.i));
-});
-$('pick-list').addEventListener('mousemove', (ev) => {
-  const row = ev.target.closest('.pickrow');
-  if (row && Number(row.dataset.i) !== pickAt) {
-    pickAt = Number(row.dataset.i);
-    for (const r of $('pick-list').children) r.classList.toggle('on', r === row);
-  }
-});
 for (const mask of document.querySelectorAll('.pickmask')) {
   mask.addEventListener('mousedown', (ev) => {
     if (ev.target === mask) mask.hidden = true;
@@ -3549,16 +2161,9 @@ $('toggle-artifacts').onclick = () => ($('artifacts').hidden ? openArtifacts() :
 
 const KEYS = [
   ['⏎ / ⇧⏎', 'Send / new line (while the agent runs, ⏎ queues for its next step)'],
-  ['esc', 'Interrupt the agent; close a menu, the picker or the code browser'],
+  ['esc', 'Interrupt the agent; close a menu'],
   ['↑ / ↓', 'Earlier prompts, from the first or last line'],
-  ['⌘P / Ctrl+P', 'Go to file'],
-  ['⌘B / Ctrl+B', 'Show or hide the code browser'],
-  ['j k / ↑ ↓', 'In /diff: move the line cursor; g and G go to the top and bottom'],
-  ['n p / ] [', 'In /diff: next or previous change, next or previous file'],
-  ['e / E', 'In /diff: open folded lines, or the whole file'],
-  ['v, then ⏎ / y', 'In /diff: select lines, then ask about them or copy them (or drag the line numbers)'],
-  ['o / f / r / q', 'In /diff: open the file, hide or show the chat, refresh, close'],
-  ['⌘⏎ / Ctrl+⏎', 'Ask about the selected lines (click line numbers; shift-click or drag for a range)'],
+  ['⌘B / Ctrl+B', 'Show or hide pullspace'],
   ['y / a / n', 'Answer a tool approval (when not typing)'],
   ['1–9 / ⏎ / ← →', "Pick an answer to the agent's questions, move on, switch questions (when not typing)"],
   ['/', 'Start a command from anywhere'],
@@ -3567,7 +2172,7 @@ const KEYS = [
 function openHelp() {
   const row = (k, v) => `<div class="helprow"><code>${esc(k)}</code><span>${esc(v)}</span></div>`;
   $('help-body').innerHTML =
-    '<h2>tamale on the web</h2><p>The same session as the terminal, chat first. Paths in replies and tool calls open in the code browser.</p>' +
+    '<h2>tamale on the web</h2><p>The same session as the terminal, chat first. The telescope opens pullspace, to browse the code and review its uncommitted changes.</p>' +
     '<h3>Commands</h3>' +
     COMMANDS.map((c) => row(`${c.name}${c.args ? ' ' + c.args : ''}`, c.desc)).join('') +
     '<h3>Keys</h3>' +
@@ -3581,34 +2186,17 @@ addEventListener('keydown', (ev) => {
   // Already handled by the field it was typed in (the slash menu, the reason box…).
   if (ev.defaultPrevented) return;
   const mod = ev.metaKey || ev.ctrlKey;
-  if (mod && ev.key.toLowerCase() === 'p' && !ev.shiftKey) {
-    ev.preventDefault();
-    return openPicker();
-  }
   if (mod && ev.key.toLowerCase() === 'b') {
     ev.preventDefault();
-    return toggleCode();
-  }
-  if (diffKey(ev)) return;
-  if (mod && ev.key === 'Enter' && code.open && code.sel) {
-    ev.preventDefault();
-    return askAboutSelection();
+    return toggleReview();
   }
   if (ev.key === 'Escape') {
     if (!$('ending').hidden) return closeEndDialog();
     if (!$('help').hidden) return ($('help').hidden = true);
     if (!$('artifacts').hidden) return closeArtifacts();
-    if (!$('picker').hidden) return closePicker();
-    if (state.status?.running && !ev.target.closest?.('.code')) {
+    if (state.status?.running) {
       ev.preventDefault();
       return send({ t: 'interrupt' });
-    }
-    if (code.open && ev.target.closest?.('.code')) {
-      if (code.sel) {
-        code.sel = null;
-        return paintSelection();
-      }
-      return closeCode();
     }
     return;
   }
@@ -3617,7 +2205,7 @@ addEventListener('keydown', (ev) => {
   // Typing anywhere that isn't a field goes to the prompt.
   const t = ev.target;
   if (t.matches?.('input, textarea') || mod || ev.altKey || ev.key.length !== 1) return;
-  if (!$('picker').hidden || !$('help').hidden || !$('artifacts').hidden || !$('ending').hidden || diffIsFull()) return;
+  if (!$('help').hidden || !$('artifacts').hidden || !$('ending').hidden) return;
   input.focus();
 });
 
@@ -3627,8 +2215,6 @@ window.visualViewport?.addEventListener('resize', fitViewport);
 window.visualViewport?.addEventListener('scroll', fitViewport);
 fitViewport();
 input.placeholder = promptPlaceholder();
-if (store.get('codeOpen', false)) openCode();
-renderView();
 autosize();
 updateSend();
 if (!e2e) connect();

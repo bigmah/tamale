@@ -57,37 +57,15 @@ back to the terminal, and `Ctrl+C` quits. Any number of tabs can be open.
   answer if none fit, and press **Next** / **Send answers** or `⏎`; `←`/`→` switch questions.
   The top bar shows the permission mode (click to cycle), the model, context use and
   cost.
-- **Code.** `/code` (or `⌘B`) opens the code browser beside the chat, with a file tree,
-  a filter box, a text search (`/search <text>`) and tabs. `⌘P` (or `/files`) goes to a
-  file by name, and `/code <path>` opens one directly. File paths in replies and in
-  read/edit steps link to it. Click line numbers to select lines (shift-click or drag
-  for a range), then press **Ask** (`⌘⏎`) to quote them into the prompt. The open file
-  and the tree reload as the agent changes files. The browser reads only files inside
-  the workspace (the working directory and `/add-dir` directories), and skips
-  ignored files and `.git`.
-- **Changes.** `/diff`, the `±` button in the top bar (it counts the changed files and
-  lines) or the panel's **Changes** tab review your uncommitted changes the way the
-  terminal's [diff viewer](diff-viewer.md) does: a tree of changed files with their status
-  and `+added −removed`, and the selected file's diff with old and new line numbers, tinted
-  lines and the changed part of edited lines highlighted. Unchanged lines fold; click a
-  `↕ 25 unchanged lines` row to open more, or press `E` for the whole file. The chat steps
-  aside for the width (`f` brings it back, and it returns by itself when the agent needs an
-  answer). A **± diff** link on write and edit steps jumps to that file. The view reloads as
-  the agent works. It shows the working tree against `HEAD`; `/diff <args>` is
-  terminal-only.
-  Keys, with the panel focused: `j`/`k` move the cursor, `n`/`p` jump between changes (past
-  the last, to the next file), `]`/`[` move between files, `g`/`G`, `PgUp`/`PgDn`, `e` opens
-  folded lines, `o` opens the file, `r` refreshes, `q` or `Esc` closes. `v` starts a
-  selection (or drag the line numbers); `Enter` or `a` quotes it into the prompt, `y` copies
-  it. `n` stays with the viewer even while an approval is waiting.
-- **Review.** `/review` (or the panel button left of the code browser's) opens
-  [pullspace](https://github.com/bigmah/pullspace), an IDE-style code reviewer, on your
-  uncommitted changes: the working tree (staged, unstaged and untracked files) against
-  `HEAD`. It has the whole repository beside the diff, with a file tree, search across the
-  repository, go to definition and find references. It runs in the page as WebAssembly and
-  never talks to GitHub; tamale hands it the files over the page's socket, and it reads them
-  again after each tool result. Click a line number and press **Ask** to quote that line
-  into the prompt. The chat steps aside for the width (the button beside ✕ brings it back).
+- **Code.** The telescope in the top bar, `/review` (or `/code`, `/diff`) or `⌘B` opens
+  [pullspace](https://github.com/bigmah/pullspace), an IDE-style code browser and
+  reviewer, on your uncommitted changes: the working tree (staged, unstaged and untracked
+  files) against `HEAD`. It has the whole repository beside the diff, with a file tree,
+  search across the repository, go to definition and find references. It runs in the page
+  as WebAssembly and never talks to GitHub; tamale hands it the files over the page's
+  socket, and it reads them again after each tool result. Click a line number and press
+  **Ask** to quote that line into the prompt. The chat steps aside for the width (the
+  button beside ✕ brings it back).
   It works through a hub too: pullspace's files come through the tunnel like the page's
   (the module gzipped, about 2 MB, cached by the browser), and the repository's files over
   the session's socket, end-to-end encrypted like everything else on it.

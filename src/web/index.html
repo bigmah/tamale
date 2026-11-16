@@ -34,12 +34,8 @@
     <button class="iconbtn" id="toggle-artifacts" title="Artifacts from this and earlier sessions  /artifacts">
       <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M2 5.5h12M5 8.5h6M5 10.75h3.5"/></svg>
     </button>
-    <button class="diffbtn" id="toggle-diff" title="Uncommitted changes  /diff"><span class="diffbtn-mark">±</span><span id="diff-count"></span></button>
-    <button class="iconbtn" id="toggle-review" title="Review changes in pullspace  /review">
-      <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.75" y="2.5" width="12.5" height="11" rx="1.5"/><path d="M6.25 2.5v11M3.5 5.5h1M3.5 7.75h1M8.5 6h3.5M8.5 8.25h2.5M8.5 10.5h3"/></svg>
-    </button>
-    <button class="iconbtn" id="toggle-code" title="Browse code  /code  ⌘B">
-      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.6 4.2 1.8 8l3.8 3.8M10.4 4.2 14.2 8l-3.8 3.8"/></svg>
+    <button class="iconbtn" id="toggle-review" title="Explore the code in pullspace  /review  ⌘B" aria-label="Explore the code in pullspace">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m5.6 6.7 6.2-3.6 1.5 2.6-6.2 3.6ZM2.6 9.1l3.3-1.9.9 1.6-3.3 1.9ZM8.4 3.8l1.4-.8M8.8 8.4 6.3 14M8.8 8.4l2.5 5.6"/></svg>
     </button>
     <button class="kitchen-toggle" id="toggle-kitchen" title="Your sessions" hidden>
       <span class="kt-mark">🫔</span><span class="kt-count" id="kitchen-count"></span>
@@ -61,7 +57,7 @@
             <div class="hero-chips">
               <button class="chip" data-prompt="Give me a tour of this codebase: what it does, how it's laid out, and where to start reading.">Give me a tour of this codebase</button>
               <button class="chip" data-prompt="Look through the code for likely bugs and tell me the most serious ones.">Look for likely bugs</button>
-              <button class="chip" data-command="/code"><kbd>/code</kbd> Browse files</button>
+              <button class="chip" data-command="/review"><kbd>/review</kbd> Explore in pullspace</button>
             </div>
           </div>
         </div>
@@ -95,58 +91,19 @@
         </div>
         <div class="hints">
           <span id="hint-left"></span>
-          <span class="keys-only"><kbd>⏎</kbd> send <kbd>⇧⏎</kbd> newline <kbd>/</kbd> commands <kbd>⌘P</kbd> files</span>
+          <span class="keys-only"><kbd>⏎</kbd> send <kbd>⇧⏎</kbd> newline <kbd>/</kbd> commands</span>
         </div>
       </div>
     </section>
 
-    <div class="splitter" id="splitter" hidden></div>
-
-    <section class="code" id="code" tabindex="-1" hidden>
-      <aside class="side">
-        <div class="side-hdr">
-          <div class="seg" id="seg">
-            <button data-mode="files" class="on">Files</button>
-            <button data-mode="search">Search</button>
-            <button data-mode="changes">Changes</button>
-          </div>
-          <button class="iconbtn sm" id="code-refresh" title="Reload files">
-            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 6.3A5.3 5.3 0 1 0 13 10M13.5 2.8v3.7H9.8"/></svg>
-          </button>
-        </div>
-        <div class="side-find"><input id="find" placeholder="Filter files…" spellcheck="false" autocomplete="off"></div>
-        <div class="tree" id="tree"></div>
-      </aside>
-      <div class="viewer">
-        <div class="tabstrip" id="tabs"></div>
-        <div class="viewhdr">
-          <div class="crumbs" id="crumbs"></div>
-          <div class="spacer"></div>
-          <button class="askbtn" id="ask" hidden></button>
-          <span class="vmeta" id="vmeta"></span>
-          <button class="iconbtn sm diffonly" id="diff-all" title="Show the whole file  E">
-            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v12M5 4.5 8 1.5l3 3M5 11.5l3 3 3-3"/></svg>
-          </button>
-          <button class="iconbtn sm diffonly" id="diff-full"></button>
-          <button class="iconbtn sm" id="copy-path" title="Copy path">
-            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5v-.75A1.25 1.25 0 0 0 9.25 1.5h-5.5A1.25 1.25 0 0 0 2.5 2.75v5.5A1.25 1.25 0 0 0 3.75 9.5h.75"/></svg>
-          </button>
-          <button class="iconbtn sm" id="close-code" title="Close code browser">
-            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
-          </button>
-        </div>
-        <div class="codewrap" id="codewrap"></div>
-      </div>
-    </section>
-
-    <!-- pullspace, reviewing the working tree against HEAD (see src/web/pullspace.rs). -->
+    <!-- pullspace, the code browser: the working tree against HEAD (see src/web/pullspace.rs). -->
     <section class="review" id="review" hidden>
       <div class="review-hdr">
-        <span class="review-title">Review</span>
-        <span class="review-sub">working tree against HEAD, in pullspace</span>
+        <span class="review-title">pullspace</span>
+        <span class="review-sub">the working tree against HEAD</span>
         <div class="spacer"></div>
-        <button class="iconbtn sm" id="review-chat" title="Show the chat beside the review"></button>
-        <button class="iconbtn sm" id="review-close" title="Close the review  esc">
+        <button class="iconbtn sm" id="review-chat" title="Show the chat beside pullspace"></button>
+        <button class="iconbtn sm" id="review-close" title="Close pullspace">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
         </button>
       </div>
@@ -173,13 +130,6 @@
       </div>
     </aside>
   </main>
-
-  <div class="pickmask" id="picker" hidden>
-    <div class="pickbox">
-      <input class="pickinput" id="pick-input" placeholder="Go to file…" spellcheck="false" autocomplete="off">
-      <div class="picklist" id="pick-list"></div>
-    </div>
-  </div>
 
   <div class="pickmask" id="artifacts" hidden>
     <div class="pickbox artbox" id="art-box" role="dialog" aria-label="Artifacts">

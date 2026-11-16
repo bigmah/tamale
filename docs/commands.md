@@ -82,7 +82,7 @@
 - `/undo` and `/rewind` restore files and rewind the conversation (see [Checkpoints](sessions.md#checkpoints-and-undo))
 - `/diff [args]` opens the diff viewer (see [Diff viewer](diff-viewer.md))
 - `/browser [off]` serves tamale to a browser tab (see [Browser](web.md#browser))
-- `/web [off]` opens a chat-first web UI with a code browser (see [Web UI](web.md#web-ui))
+- `/web [off]` opens a chat-first web UI with pullspace for the code (see [Web UI](web.md#web-ui))
 - `/remote [off]` makes the session reachable through a tamale-hub (see [Remote access](remote-access.md))
 - `/permissions [mode]` shows the mode and rules, or sets `ask`, `accept-edits` or `auto`
 - `/clear` resets the conversation, `/quit` (or `/exit`) quits. In the web UI, `/quit` and the
