@@ -100,6 +100,11 @@ kbd { font: 11px var(--mono); padding: 1px 5px; border: 1px solid var(--border);
   flex: none; margin: 0; padding: 11px 16px; border: 0; border-top: 1px solid var(--border-soft); border-radius: 0;
   background: none; color: var(--fg-dim); font-size: 13px; font-weight: 500; text-align: left;
 }
+.rail-clear {
+  flex: none; align-self: flex-start; margin: 0 8px 6px; padding: 4px 8px; border: 0; border-radius: 6px;
+  background: none; color: var(--fg-faint); font-size: 12px; font-weight: 500;
+}
+.rail-clear:hover, .rail-clear:focus-visible { color: var(--deleted); background: rgba(224, 108, 117, 0.12); }
 .rail-keys:hover, [data-view="keys"] .rail-keys { color: var(--fg-bright); background: var(--bg-2); }
 
 /* ---------- the sessions' frames ---------- */

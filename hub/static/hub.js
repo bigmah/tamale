@@ -247,6 +247,16 @@ function sessionItem(s, showKey) {
     end.append(icon(s.chef ? POWER : CROSS));
     if (s.chef) end.append(el('span', '', closing ? 'Stopping' : 'Stop'));
     row.append(end);
+  } else {
+    // Gone for good, or for now: either way it can leave the list, and comes back if its
+    // tamale reconnects.
+    const forget = el('button', 'row-end');
+    forget.type = 'button';
+    forget.dataset.forget = s.sid;
+    forget.title = 'Remove from the list';
+    forget.setAttribute('aria-label', `Remove from the list: ${titleOf(s)}`);
+    forget.append(icon(CROSS));
+    row.append(forget);
   }
   return row;
 }
@@ -362,6 +372,9 @@ async function refresh() {
   $('create-title').textContent = hasKeys ? 'Make another key' : 'Make a key';
   $('add-title').textContent = hasKeys ? 'Add another key' : 'Have a key?';
   $('empty').hidden = sessions.length > 0;
+  const offline = sessions.filter((s) => !s.online).length;
+  $('clear-offline').hidden = !offline;
+  $('clear-offline').textContent = `Clear ${offline} offline`;
   $('key-list').replaceChildren(...data.keys.map((k, i) => keyItem(k, all, held[i])));
   drawList(data.keys.length > 1);
   // A session the hub has dropped has nothing left to reconnect to.
@@ -529,6 +542,30 @@ async function endSession(sid) {
     tell();
   }, 1000);
 }
+
+// ---- forgetting offline sessions: the hub drops them from the list (a tamale that comes
+// back is listed again).
+
+async function forgetSessions(sids) {
+  if (!sids.length) return;
+  const { ok, data } = await api('/api/sessions/forget', { sids });
+  if (!ok) alert(data.error || "Couldn't remove that.");
+  await refresh();
+}
+
+document.addEventListener('click', (ev) => {
+  const forget = ev.target.closest('button[data-forget]');
+  if (!forget) return;
+  ev.preventDefault();
+  forgetSessions([forget.dataset.forget]);
+});
+
+$('clear-offline').addEventListener('click', () => {
+  const offline = (sessions ?? []).filter((s) => !s.online);
+  if (!offline.length) return;
+  if (!confirm(`Remove ${offline.length} offline session${offline.length === 1 ? '' : 's'} from the list? Any that reconnect show up again.`)) return;
+  forgetSessions(offline.map((s) => s.sid));
+});
 
 /** The address that lets this browser into `sid`, or `{ problem }`. */
 async function ticketUrl(sid) {

@@ -66,7 +66,10 @@ A session can also be closed from the web: the ⏻ button in its top bar (or `/q
 
 A session that ends (closed from a terminal, the web or the iPhone app, `/quit`, `tamale kill`) tells the
 hub, which drops it from the list straight away. One that just loses its connection is listed as
-offline for ten minutes, in case it comes back.
+offline for up to a week, in case it comes back. The × beside an offline session in the site's list
+removes it, and **Clear offline** under the list removes them all; one whose tamale reconnects later
+is listed again. (`POST /api/sessions/forget {"sids": [...]}` does the same, and only drops offline
+sessions under the caller's keys.)
 
 It uses the same encrypted channel as a browser, and refuses anything unsealed, so a session with
 `[hub] e2e = false` only opens in a browser. Replies to prompts sent from a terminal are ordinary

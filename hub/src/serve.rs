@@ -705,6 +705,7 @@ pub async fn run(hub: Arc<Hub>, listener: tokio::net::TcpListener) -> Result<()>
         )
         .route("/d/api/tokens", post(api_tokens))
         .route("/d/api/sessions", get(api_sessions))
+        .route("/d/api/sessions/forget", post(api_sessions_forget))
         .route("/d/api/ticket", post(api_ticket))
         .route("/d/api/keys", post(api_key_new))
         .route("/d/api/keys/rotate", post(api_key_rotate))
@@ -976,6 +977,53 @@ async fn api_sessions(
         }))
         .into_response(),
     )
+}
+
+#[derive(Deserialize)]
+struct ForgetRequest {
+    sids: Vec<String>,
+}
+
+/// Takes offline sessions under the caller's keys off the list. Online ones stay: those
+/// are closed through their own page. A forgotten session's tamale coming back lists it
+/// again.
+async fn api_sessions_forget(
+    State(hub): State<Arc<Hub>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(request): Json<ForgetRequest>,
+) -> Response {
+    let ip = client_ip(peer, &headers);
+    let keys = match hub.bearer(ip, &headers) {
+        Some(Ok(key)) => vec![key],
+        Some(Err(refused)) => return refused,
+        None => {
+            if let Some(refused) = checked(&hub, ip, &headers) {
+                return refused;
+            }
+            hub.views(&headers).1
+        }
+    };
+    if keys.is_empty() {
+        return error(StatusCode::UNAUTHORIZED, NO_KEY);
+    }
+    let names: HashSet<&str> = keys.iter().map(|k| k.name.as_str()).collect();
+    let wanted: HashSet<&str> = request.sids.iter().map(String::as_str).collect();
+    let mut forgotten = Vec::new();
+    hub.sessions.lock().unwrap().retain(|sid, session| {
+        let drop = wanted.contains(sid.as_str())
+            && session.agent.is_none()
+            && names.contains(session.key.as_str());
+        if drop {
+            end_session(session, "This session was removed from the hub's list.");
+            forgotten.push(sid.clone());
+        }
+        !drop
+    });
+    for sid in &forgotten {
+        eprintln!("session {} forgotten from the page by {ip}", short(sid));
+    }
+    guard(Json(json!({ "forgotten": forgotten })).into_response())
 }
 
 /// Sets the dashboard cookie to `tokens` on `response`.
@@ -3356,6 +3404,52 @@ mod tests {
             let mut extra_agent = agent_hello(setup.port, &setup.auth, &extra).await;
             assert!(next_text(&mut extra_agent).await.contains("\"welcome\""));
             assert!(!setup.hub.sessions.lock().unwrap().contains_key(&first));
+            let _ = std::fs::remove_dir_all(&setup.store.dir);
+        }
+
+        #[tokio::test]
+        async fn offline_sessions_can_be_forgotten_but_online_and_others_stay() {
+            let setup = start().await;
+            let port = setup.port;
+            let dash = format!("hub.localhost:{port}");
+            let (gone, live, theirs) = ("d".repeat(32), "e".repeat(32), "f".repeat(32));
+            let mut agents = Vec::new();
+            for (sid, auth) in [(&gone, &setup.auth), (&live, &setup.auth), (&theirs, &setup.other_auth)] {
+                let mut agent = agent_hello(port, auth, sid).await;
+                assert!(next_text(&mut agent).await.contains("\"welcome\""));
+                agents.push(agent);
+            }
+            // The first and the other key's go offline.
+            drop(agents.remove(2));
+            drop(agents.remove(0));
+            let hub = setup.hub.clone();
+            until("both going offline", || {
+                let sessions = hub.sessions.lock().unwrap();
+                [&gone, &theirs].iter().all(|sid| sessions.get(*sid).is_some_and(|s| s.agent.is_none()))
+            })
+            .await;
+            let http = reqwest::Client::new();
+            let r = http
+                .post(format!("http://127.0.0.1:{port}/api/sessions/forget"))
+                .header("host", &dash)
+                .bearer_auth(&setup.auth)
+                .json(&json!({ "sids": [gone, live, theirs] }))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 200);
+            let body: Value = r.json().await.unwrap();
+            assert_eq!(body["forgotten"], json!([gone]));
+            {
+                let sessions = setup.hub.sessions.lock().unwrap();
+                assert!(!sessions.contains_key(&gone));
+                assert!(sessions.contains_key(&live), "online sessions stay");
+                assert!(sessions.contains_key(&theirs), "another key's stay");
+            }
+            // Its tamale coming back lists it again.
+            let mut back = agent_hello(port, &setup.auth, &gone).await;
+            assert!(next_text(&mut back).await.contains("\"welcome\""));
+            assert!(setup.hub.sessions.lock().unwrap().contains_key(&gone));
             let _ = std::fs::remove_dir_all(&setup.store.dir);
         }
 
