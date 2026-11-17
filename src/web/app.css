@@ -34,7 +34,7 @@
   --code-px: 12px;
   --code-lh: 1.6;
   --ctl: 28px;
-  --bar: 46px;
+  --bar: 40px;
   --hdr: 34px;
   --r-sm: 5px;
   --r: 7px;
@@ -44,7 +44,9 @@
   /* The chat's share of the width beside the code; the divider moves it (app.js). */
   --chat-w: 40%;
   /* Side padding of the thread and dock; artifacts bleed into it on phones. */
-  --gutter: 28px;
+  --gutter: 20px;
+  /* The widest the conversation gets: the thread, the activity line and the dock. */
+  --measure: 1120px;
   --safe-t: env(safe-area-inset-top, 0px);
   --safe-r: env(safe-area-inset-right, 0px);
   --safe-b: env(safe-area-inset-bottom, 0px);
@@ -108,7 +110,7 @@ svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width:
   align-items: center;
   gap: 8px;
   height: calc(var(--bar) + var(--safe-t));
-  padding: var(--safe-t) calc(10px + var(--safe-r)) 0 calc(14px + var(--safe-l));
+  padding: var(--safe-t) calc(8px + var(--safe-r)) 0 calc(10px + var(--safe-l));
   background: var(--bg-1);
   border-bottom: 1px solid var(--border);
   flex: none;
@@ -229,12 +231,12 @@ body.chef .endbtn:hover { color: var(--deleted); border-color: rgba(224, 108, 11
 
 .scroller { flex: 1; overflow-y: auto; overscroll-behavior: contain; scroll-padding-bottom: 24px; }
 .thread {
-  max-width: 960px;
+  max-width: var(--measure);
   margin: 0 auto;
-  padding: 28px calc(var(--gutter) + var(--safe-r)) 8px calc(var(--gutter) + var(--safe-l));
+  padding: 16px calc(var(--gutter) + var(--safe-r)) 8px calc(var(--gutter) + var(--safe-l));
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   font-size: 14px;
   line-height: 1.62;
 }
@@ -358,7 +360,7 @@ body.chef .prose code.pathlink { cursor: auto; color: var(--fg-bright); border-c
   font-family: var(--mono);
 }
 .codeblock pre, .msg.user pre, .tool-out pre { overflow-x: auto; }
-.codeblock pre { padding: 11px 14px; }
+.codeblock pre { padding: 9px 12px; }
 .codeblock pre code, .msg.user pre code {
   font-family: var(--mono);
   font-size: 12.5px;
@@ -556,9 +558,9 @@ body.artifact-open .app::after { content: ""; position: fixed; inset: 0; z-index
 /* ---------- activity ---------- */
 
 .activity {
-  max-width: 800px;
+  max-width: var(--measure);
   margin: 0 auto;
-  padding: 6px calc(var(--gutter) + var(--safe-r)) 20px calc(var(--gutter) + var(--safe-l));
+  padding: 4px calc(var(--gutter) + var(--safe-r)) 12px calc(var(--gutter) + var(--safe-l));
   display: flex;
   align-items: center;
   gap: 10px;
@@ -595,12 +597,12 @@ body.artifact-open .app::after { content: ""; position: fixed; inset: 0; z-index
   position: relative;
   flex: none;
   width: 100%;
-  max-width: 800px;
+  max-width: var(--measure);
   margin: 0 auto;
-  padding: 0 calc(var(--gutter) + var(--safe-r)) max(10px, var(--safe-b)) calc(var(--gutter) + var(--safe-l));
+  padding: 0 calc(var(--gutter) + var(--safe-r)) max(6px, var(--safe-b)) calc(var(--gutter) + var(--safe-l));
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 .dock::before {
   content: "";
@@ -825,19 +827,19 @@ body.artifact-open .app::after { content: ""; position: fixed; inset: 0; z-index
   resize: none;
   border: none;
   background: transparent;
-  padding: 12px 52px 12px 15px;
+  padding: 9px 52px 9px 13px;
   font-size: 14px;
   line-height: 1.5;
   max-height: 40vh;
-  min-height: 46px;
+  min-height: 40px;
   color: var(--fg-bright);
 }
 .composer textarea::placeholder { color: var(--fg-faint); }
 .composer textarea:focus-visible { outline: none; }
 .send {
   position: absolute;
-  right: 8px;
-  bottom: 8px;
+  right: 5px;
+  bottom: 5px;
   width: 30px;
   height: 30px;
   border-radius: 9px;
@@ -849,8 +851,8 @@ body.artifact-open .app::after { content: ""; position: fixed; inset: 0; z-index
 }
 .make-artifact {
   position: absolute;
-  right: 42px;
-  bottom: 8px;
+  right: 39px;
+  bottom: 5px;
   width: 30px;
   height: 30px;
   border-radius: 9px;
@@ -953,7 +955,7 @@ body.artifact-open .app::after { content: ""; position: fixed; inset: 0; z-index
 
 /* ---------- artifacts gallery ---------- */
 
-.pickmask:has(.artbox) { padding: 5vh 3vw; align-items: stretch; }
+.pickmask:has(.artbox) { padding: 3vh 2vw; align-items: stretch; }
 .artbox { width: 1180px; max-width: 100%; }
 .art-hdr { display: flex; align-items: center; gap: 6px; background: var(--bg-2); border-bottom: 1px solid var(--border); padding-right: 10px; }
 .art-hdr .pickinput { flex: 1; border-bottom: none; background: none; }
@@ -1088,7 +1090,6 @@ body.chef .msg.user { border-color: rgba(242, 169, 59, 0.18); }
   padding: 0 8px 0 14px;
   border-bottom: 1px solid var(--border-soft);
   flex: none;
-  margin-top: 6px;
 }
 .k-mark { font-size: 15px; }
 .k-title { font-weight: 650; color: var(--fg-bright); font-size: 13px; letter-spacing: 0.01em; }
@@ -1250,7 +1251,7 @@ body.chef .msg.user { border-color: rgba(242, 169, 59, 0.18); }
 .main.split .chat { flex: 0 0 var(--chat-w); min-width: 240px; max-width: calc(100% - 280px); }
 .main.code .chat { display: none; }
 /* Less air around the conversation while it shares the width. */
-.main.split { --gutter: 20px; }
+.main.split { --gutter: 14px; }
 
 /* A seam (the chat and the code, the kitchen, the gallery's list): a line to look at, a
    wider band to grab. app.js's seam() makes them drag. */
