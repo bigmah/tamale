@@ -3510,7 +3510,7 @@ dependencies = [
 
 [[package]]
 name = "tamale"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "aes-gcm",
  "anyhow",
