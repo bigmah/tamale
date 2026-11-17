@@ -702,6 +702,78 @@ document.addEventListener('pointerout', (ev) => {
   warming = null;
 });
 
+// ---- the seam between the list and the session: drag it to resize the list, or all the way
+// left to put the list away. A click on it then brings it back; a double-click resets it.
+
+const RAIL = { least: 180, most: 520, off: 120 };
+const seam = $('rail-seam');
+let railWidth = null;
+let railOff = false;
+try {
+  railWidth = JSON.parse(localStorage.getItem('hub.rail') ?? 'null');
+  railOff = localStorage.getItem('hub.railOff') === '1';
+} catch {}
+
+function setRail(width, off, keep = true) {
+  railWidth = typeof width === 'number' ? Math.min(RAIL.most, Math.max(RAIL.least, width)) : null;
+  railOff = off;
+  if (railWidth == null) document.body.style.removeProperty('--rail');
+  else document.body.style.setProperty('--rail', `${Math.round(railWidth)}px`);
+  document.body.classList.toggle('rail-off', railOff);
+  seam.title = railOff ? 'Show the sessions' : 'Drag to resize · drag left to hide · double-click to reset';
+  if (!keep) return;
+  try {
+    localStorage.setItem('hub.rail', JSON.stringify(railWidth));
+    localStorage.setItem('hub.railOff', railOff ? '1' : '0');
+  } catch {}
+}
+setRail(railWidth, railOff, false);
+
+seam.addEventListener('pointerdown', (ev) => {
+  if (ev.button !== 0) return;
+  ev.preventDefault();
+  const left = $('rail').getBoundingClientRect().left;
+  const startX = ev.clientX;
+  // What the list goes back to if this drag puts it away, not the widths on the way there.
+  const before = railWidth;
+  let moved = false;
+  const mask = el('div', 'dragmask');
+  document.body.append(mask);
+  seam.classList.add('on');
+  const move = (e) => {
+    if (Math.abs(e.clientX - startX) > 3) moved = true;
+    if (!moved) return;
+    const width = e.clientX - left;
+    setRail(width < RAIL.off ? before : width, width < RAIL.off, false);
+  };
+  const done = () => {
+    mask.remove();
+    seam.classList.remove('on');
+    removeEventListener('pointermove', move);
+    removeEventListener('pointerup', done);
+    removeEventListener('pointercancel', done);
+    // A click on the put-away list's seam opens it again.
+    if (!moved && railOff) setRail(railWidth, false);
+    else setRail(railWidth, railOff);
+  };
+  addEventListener('pointermove', move);
+  addEventListener('pointerup', done);
+  addEventListener('pointercancel', done);
+});
+seam.addEventListener('dblclick', () => setRail(null, false));
+seam.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter' || ev.key === ' ') {
+    ev.preventDefault();
+    setRail(railWidth, !railOff);
+    return;
+  }
+  if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
+  ev.preventDefault();
+  const now = railOff ? 0 : $('rail').getBoundingClientRect().width;
+  const next = now + (ev.key === 'ArrowLeft' ? -24 : 24);
+  setRail(next < RAIL.off ? railWidth : next, next < RAIL.off);
+});
+
 $('open-keys').addEventListener('click', showKeys);
 $('back').addEventListener('click', () => go('/'));
 addEventListener('popstate', route);

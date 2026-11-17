@@ -36,8 +36,9 @@ The designs are in [`single_key.md`](../single_key.md) (keys),
 
 The site lists your sessions beside the one you're in, and sessions you've opened keep running
 behind it (the four most recent), so switching back is instant. `Alt+↑`/`Alt+↓` moves between
-them and `Alt+1`–`9` jumps. Each session still runs on its own origin, in a frame only the hub's
-own page may embed.
+them and `Alt+1`–`9` jumps. Drag the line beside the list to resize it, or all the way left to put
+it away; a click on the line brings it back, and a double-click resets it. Each session still runs
+on its own origin, in a frame only the hub's own page may embed.
 
 The site's **Show** button brings a key's export line and code back on a browser that holds it,
 which is how a second machine gets it. **New key** replaces it, and every machine and browser

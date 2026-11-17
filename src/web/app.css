@@ -957,8 +957,8 @@ body.artifact-open .app::after { content: ""; position: fixed; inset: 0; z-index
 .artbox { width: 1180px; max-width: 100%; }
 .art-hdr { display: flex; align-items: center; gap: 6px; background: var(--bg-2); border-bottom: 1px solid var(--border); padding-right: 10px; }
 .art-hdr .pickinput { flex: 1; border-bottom: none; background: none; }
-.art-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(220px, 300px) 1fr; }
-.art-list { overflow-y: auto; overscroll-behavior: contain; padding: 6px; border-right: 1px solid var(--border); }
+.art-body { flex: 1; min-height: 0; display: grid; grid-template-columns: var(--art-w, minmax(220px, 300px)) 1px 1fr; }
+.art-list { overflow-y: auto; overscroll-behavior: contain; padding: 6px; }
 .art-group { padding: 12px 10px 4px; font-size: 11px; color: var(--fg-faint); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; display: flex; gap: 8px; }
 .art-group:first-child { padding-top: 4px; }
 .art-group span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: none; letter-spacing: 0; font-size: 12px; color: var(--fg-dim); }
@@ -1077,7 +1077,6 @@ body.chef .msg.user { border-color: rgba(242, 169, 59, 0.18); }
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-left: 1px solid var(--border);
   background: linear-gradient(180deg, var(--bg-1) 0%, var(--bg) 100%);
   animation: fadein 200ms var(--ease);
 }
@@ -1237,6 +1236,7 @@ body.chef .msg.user { border-color: rgba(242, 169, 59, 0.18); }
     bottom: 0;
     width: min(88vw, 360px);
     z-index: 30;
+    border-left: 1px solid var(--border);
     box-shadow: -18px 0 40px rgba(0, 0, 0, 0.5);
     animation: kslide 220ms var(--ease);
   }
@@ -1247,12 +1247,13 @@ body.chef .msg.user { border-color: rgba(242, 169, 59, 0.18); }
 
 /* ---------- the code: pullspace in a frame, beside the chat or instead of it ---------- */
 
-.main.split .chat { flex: 0 0 var(--chat-w); min-width: 320px; max-width: calc(100% - 380px); }
+.main.split .chat { flex: 0 0 var(--chat-w); min-width: 240px; max-width: calc(100% - 280px); }
 .main.code .chat { display: none; }
 /* Less air around the conversation while it shares the width. */
 .main.split { --gutter: 20px; }
 
-/* The seam: a line to look at, a wider band to grab. */
+/* A seam (the chat and the code, the kitchen, the gallery's list): a line to look at, a
+   wider band to grab. app.js's seam() makes them drag. */
 .divider {
   position: relative;
   flex: none;
@@ -1264,6 +1265,9 @@ body.chef .msg.user { border-color: rgba(242, 169, 59, 0.18); }
   transition: background var(--quick) var(--ease), box-shadow var(--quick) var(--ease);
 }
 .divider::after { content: ""; position: absolute; top: 0; bottom: 0; left: -4px; right: -4px; }
+/* The kitchen's, only while it sits beside the chat. */
+.k-divider { display: none; }
+.main:has(> .kitchen:not([hidden]):not(.drawer)) > .k-divider { display: block; }
 .divider:hover, .divider.on, .divider:focus-visible { background: var(--accent); box-shadow: 0 0 0 1px var(--accent-soft); outline: none; }
 /* Over everything while the divider is dragged: the frame would swallow the pointer. */
 .dragmask { position: fixed; inset: 0; z-index: 100; cursor: col-resize; }
@@ -1415,6 +1419,7 @@ body.chef .msg.user { border-color: rgba(242, 169, 59, 0.18); }
   .artbox { border: none; border-radius: 0; box-shadow: none; animation: fadein 120ms var(--ease); }
   .art-hdr { padding-top: var(--safe-t); padding-left: var(--safe-l); padding-right: calc(6px + var(--safe-r)); }
   .art-body { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+  .art-divider { display: none; }
   .art-list { border-right: none; padding-bottom: calc(12px + var(--safe-b)); padding-left: calc(6px + var(--safe-l)); padding-right: calc(6px + var(--safe-r)); }
   .artbox:not(.viewing) .art-view { display: none; }
   .artbox.viewing .art-list, .artbox.viewing .art-hdr { display: none; }

@@ -2118,53 +2118,103 @@ function applyChanges(m) {
     : 'Code  ⌘B';
 }
 
-// ---- the divider between the chat and the code
+// ---- seams: the lines between panes, which drag to resize them, as in pullspace
 
-const divider = $('divider');
-/** The chat's share of the width beside the code, or null for the stylesheet's. */
-let chatShare = store.get('chatShare', null);
-
-function setChatShare(share, keep = true) {
-  const width = $('main').getBoundingClientRect().width || 1;
-  // Room for a conversation on one side and a file on the other.
-  const least = 320 / width;
-  const most = Math.max(least, 1 - 380 / width);
-  chatShare = share == null ? null : Math.min(most, Math.max(least, share));
-  if (chatShare == null) $('main').style.removeProperty('--chat-w');
-  else $('main').style.setProperty('--chat-w', `${(chatShare * 100).toFixed(2)}%`);
-  if (keep) store.set('chatShare', chatShare);
-}
-if (typeof chatShare === 'number') setChatShare(chatShare, false);
-else chatShare = null;
-
-divider.addEventListener('pointerdown', (ev) => {
-  if (ev.button !== 0) return;
-  ev.preventDefault();
-  const box = $('main').getBoundingClientRect();
-  // The frame would take the pointer as soon as it crossed into it.
-  const mask = h('div', { class: 'dragmask' });
-  document.body.append(mask);
-  divider.classList.add('on');
-  const move = (e) => setChatShare((e.clientX - box.left) / box.width, false);
-  const done = () => {
-    mask.remove();
-    divider.classList.remove('on');
-    removeEventListener('pointermove', move);
-    removeEventListener('pointerup', done);
-    removeEventListener('pointercancel', done);
-    store.set('chatShare', chatShare);
+/**
+ * Makes `handle` a seam that resizes a pane. `at(ev)` turns the pointer into a size,
+ * `apply(size)` shows one (`null` for the stylesheet's), `clamp` keeps it sensible,
+ * `now()` measures the pane for the arrow keys, which move it by `step`. The size is kept
+ * in localStorage under `key`; a double-click goes back to the stylesheet's.
+ */
+function seam(handle, { key, at, apply, clamp, now, step }) {
+  let size = store.get(key, null);
+  const set = (value, keep = true) => {
+    size = value == null ? null : clamp(value);
+    apply(size);
+    if (keep) store.set(key, size);
   };
-  addEventListener('pointermove', move);
-  addEventListener('pointerup', done);
-  addEventListener('pointercancel', done);
+  if (typeof size === 'number') set(size, false);
+  else size = null;
+  handle.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0) return;
+    ev.preventDefault();
+    // Over everything while dragging: a frame would take the pointer as soon as it crossed
+    // into it.
+    const mask = h('div', { class: 'dragmask' });
+    mask.style.cursor = getComputedStyle(handle).cursor;
+    document.body.append(mask);
+    handle.classList.add('on');
+    const move = (e) => set(at(e), false);
+    const done = () => {
+      mask.remove();
+      handle.classList.remove('on');
+      removeEventListener('pointermove', move);
+      removeEventListener('pointerup', done);
+      removeEventListener('pointercancel', done);
+      store.set(key, size);
+    };
+    addEventListener('pointermove', move);
+    addEventListener('pointerup', done);
+    addEventListener('pointercancel', done);
+  });
+  handle.addEventListener('dblclick', () => set(null));
+  handle.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
+    ev.preventDefault();
+    set((size ?? now()) + (ev.key === 'ArrowLeft' ? -step : step));
+  });
+  // A smaller window may no longer have room for what was kept.
+  addEventListener('resize', () => { if (size != null && handle.offsetParent) set(size, false); });
+  return { reset: () => set(null) };
+}
+
+/** Between the chat and the code: the chat's share of the width. */
+seam($('divider'), {
+  key: 'chatShare',
+  at: (e) => {
+    const box = $('main').getBoundingClientRect();
+    return (e.clientX - box.left) / box.width;
+  },
+  apply: (share) => {
+    if (share == null) $('main').style.removeProperty('--chat-w');
+    else $('main').style.setProperty('--chat-w', `${(share * 100).toFixed(2)}%`);
+  },
+  clamp: (share) => {
+    const width = $('main').getBoundingClientRect().width || 1;
+    // Room for a conversation on one side and a file on the other.
+    const least = 240 / width;
+    const most = Math.max(least, 1 - 280 / width);
+    return Math.min(most, Math.max(least, share));
+  },
+  now: () => $('scroller').getBoundingClientRect().width / ($('main').getBoundingClientRect().width || 1),
+  step: 0.02,
 });
-divider.addEventListener('dblclick', () => setChatShare(null));
-divider.addEventListener('keydown', (ev) => {
-  if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
-  ev.preventDefault();
-  const box = $('main').getBoundingClientRect();
-  const now = chatShare ?? $('scroller').getBoundingClientRect().width / box.width;
-  setChatShare(now + (ev.key === 'ArrowLeft' ? -0.02 : 0.02));
+
+/** Before a chef's kitchen: its width. */
+seam($('k-divider'), {
+  key: 'kitchenWidth',
+  at: (e) => $('main').getBoundingClientRect().right - e.clientX,
+  apply: (px) => {
+    if (px == null) $('kitchen').style.removeProperty('--k-w');
+    else $('kitchen').style.setProperty('--k-w', `${Math.round(px)}px`);
+  },
+  clamp: (px) => Math.max(220, Math.min(px, ($('main').getBoundingClientRect().width || Infinity) - 300)),
+  now: () => $('kitchen').getBoundingClientRect().width,
+  step: 24,
+});
+
+/** In the artifacts gallery, between the list and the artifact: the list's width. */
+seam($('art-divider'), {
+  key: 'artListWidth',
+  at: (e) => e.clientX - $('art-list').getBoundingClientRect().left,
+  apply: (px) => {
+    if (px == null) $('art-box').style.removeProperty('--art-w');
+    else $('art-box').style.setProperty('--art-w', `${Math.round(px)}px`);
+  },
+  // Hidden until the gallery opens, so with no width to go by until then.
+  clamp: (px) => Math.max(160, Math.min(px, ($('art-box').getBoundingClientRect().width || Infinity) - 320)),
+  now: () => $('art-list').getBoundingClientRect().width,
+  step: 24,
 });
 
 for (const mask of document.querySelectorAll('.pickmask')) {

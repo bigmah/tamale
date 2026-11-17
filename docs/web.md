@@ -108,7 +108,8 @@ back to the terminal, and `Ctrl+C` quits. Any number of tabs can be open.
 - **Artifacts gallery.** `/artifacts` in the page (or its button in the top bar) opens
   every saved artifact of this project: this session's first, then
   earlier sessions' by their last activity. Pick one on the left (or filter and use
-  `↑`/`↓`; `Enter` opens it in a tab) to see it on the right, where it can be shown in
+  `↑`/`↓`; `Enter` opens it in a tab; drag the line between the two to resize the list)
+  to see it on the right, where it can be shown in
   the chat, revised, downloaded or opened in a tab. Revising one from an earlier session
   points the model at its saved file. In the terminal, `/artifacts` lists this session's
   files.

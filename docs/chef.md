@@ -72,7 +72,8 @@ what needs you first, then what's working, then the rest. It refreshes every few
 
 **On the web and on your phone**, the chef's page is tamale's web UI in amber, with the same
 kitchen as a column of cards. Tap a card to ask what that session is doing, or use **Catch me up**,
-**Ask…** and, on a session waiting for approval, **What does it need?**. On a phone the kitchen
+**Ask…** and, on a session waiting for approval, **What does it need?**. Drag the line beside the
+kitchen to resize it (double-click resets it). On a phone the kitchen
 slides in from the 🫔 button in the top bar, which shows a red count when sessions need you. The
 chef connects to the hub as soon as it starts, if a key is set, so it's in your session list on
 [tamale-hub.com](https://tamale-hub.com), pinned to the top.
