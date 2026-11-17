@@ -2294,7 +2294,9 @@ document.getElementById('m').innerHTML = html;
     /// `TAMALE_FAKE_SECONDS` (default 120) pass.
     /// A page with the review panel, on a repository with changes (TAMALE_FAKE_ROOT, or
     /// one made up), for trying pullspace in a browser: prints the address, serves for
-    /// TAMALE_FAKE_SECONDS.
+    /// TAMALE_FAKE_SECONDS. TAMALE_FAKE_LAN serves on the local network instead, as
+    /// `/web lan` does: plain http to an address that isn't this machine's own is not a
+    /// secure context, so the browser withholds what a phone on the network goes without.
     #[tokio::test]
     #[ignore]
     async fn fake_review_page() {
@@ -2325,9 +2327,48 @@ document.getElementById('m').innerHTML = html;
                 repo
             }
         };
-        let mut server = Server::start(false).await.unwrap();
-        let entries = vec![Entry::Info("A stand-in session for the review panel.".into())];
+        let lan = std::env::var_os("TAMALE_FAKE_LAN").is_some();
+        let mut server = Server::start(lan).await.unwrap();
+        // A conversation about the repository, so the chat has steps and paths that
+        // open in the panel (TAMALE_FAKE_EMPTY leaves it out).
+        let tool = |name: &str, summary: &str, description: &str, output: &str| Entry::Tool {
+            name: name.into(),
+            summary: summary.into(),
+            description: description.into(),
+            output: Some((output.into(), false)),
+        };
+        let mut entries = vec![Entry::Info("Welcome! Type a request and press Enter. /help for commands.".into())];
+        if std::env::var_os("TAMALE_FAKE_EMPTY").is_none() {
+            entries.extend([
+                Entry::User("Cap how much of a file the page is handed at once.".into()),
+                tool("read_file", "src/web/files.rs", "Read src/web/files.rs", "use std::path::Path;\n…"),
+                tool("edit_file", "src/web/files.rs", "Edit src/web/files.rs", "@@ -38,6 +38,8 @@\n }\n \n+/// Largest file the page is handed whole.\n+pub const MAX_INLINE: u64 = 512 * 1024;\n"),
+                tool("bash", "cargo test --bin tamale files", "Run the file tests", "test result: ok. 12 passed; 0 failed"),
+                Entry::Assistant(
+                    "Done. `src/web/files.rs` now has a `MAX_INLINE` cap of 512 KB, checked where the \
+                     file is read (`src/web/files.rs:121`).\n\n\
+                     - The constant is at the top, beside `relative`.\n\
+                     - `docs/review-panel.md` is new, and `e2e.md` is gone.\n\n\
+                     The file tests pass."
+                        .into(),
+                ),
+            ]);
+        }
         let mut v = view(&entries);
+        v.status = Status {
+            project: repo.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+            cwd: repo.display().to_string(),
+            model: "Claude Opus 5.5".into(),
+            backend: "Anthropic API".into(),
+            signed_in: true,
+            mode: "ask",
+            effort: Some("high"),
+            thinking: "adaptive",
+            window: 200_000,
+            context: 31_400,
+            cost: 0.42,
+            ..Status::default()
+        };
         v.roots = vec![repo.clone()];
         server.sync(v);
         println!("URL={}", server.url);

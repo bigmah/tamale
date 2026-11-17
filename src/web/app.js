@@ -1,4 +1,4 @@
-// tamale's web UI: the conversation first, with pullspace beside it for the code (/review).
+// tamale's web UI: the conversation, and pullspace for the code, beside it or instead of it.
 //
 // One WebSocket carries everything (see src/web.rs). tamale sends the session as JSON:
 // `entries` (from an index on, replacing what was there), `status`, `approval` and `question`.
@@ -48,6 +48,8 @@ const ICON = {
 const touch = matchMedia('(hover: none) and (pointer: coarse)');
 /** Too narrow for side-by-side panes. */
 const narrow = matchMedia('(max-width: 760px)');
+/** Too narrow for the chat and the code at once: it's one or the other. */
+const tight = matchMedia('(max-width: 980px)');
 
 /**
  * Sizes the app to the visible part of the page. iOS doesn't shrink the layout viewport
@@ -164,12 +166,15 @@ const store = {
 };
 
 let toastTimer;
+/** Says `text` for a while: above the prompt, and over the code when that has the page. */
 function toast(text, ms = 5000) {
-  const node = $('toast');
-  node.innerHTML = inline(text);
-  node.hidden = false;
+  const nodes = [$('toast'), $('toast-float')];
+  for (const node of nodes) {
+    node.innerHTML = inline(text);
+    node.hidden = false;
+  }
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (node.hidden = true), ms);
+  toastTimer = setTimeout(() => nodes.forEach((node) => (node.hidden = true)), ms);
 }
 
 async function copyText(text, what = 'Copied.') {
@@ -330,6 +335,8 @@ function ready() {
   downTimer = null;
   if (ending.due) return endSession();
   setConn('live', e2e ? 'Connected to tamale, end-to-end encrypted' : 'Connected to tamale');
+  askChanges();
+  for (const asked of review.held.splice(0)) reviewAsk(...asked);
   for (const id of artifactsDue.keys()) send({ t: 'artifact', id }, true);
 }
 
@@ -521,7 +528,11 @@ function onMessage(m) {
     case 'question':
       return applyQuestion(m.question);
     case 'roots':
+      askChanges();
       return reviewChanged();
+    case 'diff_stat':
+      if (m.seq === latest.diff_stat) applyChanges(m);
+      return;
     case 'ps_snapshot':
     case 'ps_blobs':
       return reviewReply(m);
@@ -652,6 +663,9 @@ thread.addEventListener('click', (ev) => {
   if (ev.target.closest('.tools-more')) queueMicrotask(updateGroups);
 });
 
+/** Steps whose summary is the path of the file they read or changed. */
+const FILE_TOOLS = new Set(['read_file', 'write_file', 'edit_file']);
+
 function patchTool(node, e) {
   const pending = e.output == null;
   node._entry = e;
@@ -662,11 +676,14 @@ function patchTool(node, e) {
   const summary = e.summary.split('\n')[0];
   // The summary is usually the description's subject ("Read src/main.rs"); skip it then.
   const showSummary = summary && !e.description.includes(summary);
+  // A step on a file leads to it in the code view: what it changed, or the file it read.
+  const opens = FILE_TOOLS.has(e.name) && summary && !state.status?.chef;
+  const changes = opens && e.name !== 'read_file';
   let head = node.querySelector('.tool-head');
   if (!head) {
     head = h('button', {
       class: 'tool-head',
-      onclick: () => toggleTool(node),
+      onclick: (ev) => ev.target.closest('.tool-open') || toggleTool(node),
     });
     node.append(head);
   }
@@ -675,6 +692,10 @@ function patchTool(node, e) {
     `<span class="tool-icon">${e.error ? ICON.cross : ICON.check}</span>` +
     `<span class="tool-desc">${esc(e.description)}</span>` +
     `<span class="tool-sum">${showSummary ? esc(summary) : ''}</span>` +
+    (opens
+      ? `<span class="tool-open" data-path="${esc(summary)}"${changes ? ' data-diff' : ''} title="${changes ? 'See what changed in this file' : 'Open this file'}">` +
+        `${ICON.open}${changes ? 'diff' : 'open'}</span>`
+      : '') +
     `<span class="tool-chev">${ICON.chev}</span>`;
   if (node.classList.contains('open')) renderToolOutput(node);
 }
@@ -948,7 +969,7 @@ addEventListener('keydown', (ev) => {
   }
 }, true);
 
-/** Copy buttons on code blocks. */
+/** Copy buttons on code blocks, and file paths in `code` linked to the code view. */
 function decorate(node) {
   const blocks = node.matches('.codeblock') ? [node] : node.querySelectorAll('.codeblock');
   for (const block of blocks) {
@@ -964,7 +985,36 @@ function decorate(node) {
     };
     block.append(button);
   }
+  for (const code of node.querySelectorAll('code:not(pre code)')) {
+    const target = filePath(code.textContent);
+    code.classList.toggle('pathlink', !!target);
+    if (target) code.title = `Open ${target.path}${target.line ? `, line ${target.line}` : ''} in the code view`;
+  }
 }
+
+/** Extensions that make a bare name (`app.js`, no directory) a file rather than `a.b`. */
+const FILE_EXT =
+  /^(rs|js|mjs|cjs|ts|tsx|jsx|py|go|rb|java|kt|swift|c|h|cc|cpp|hpp|cs|php|sh|bash|zsh|toml|yaml|yml|json|md|txt|html|css|scss|sql|lock|xml|svg|proto|vue|svelte|lua|ex|exs|zig|nix|tf|ini|cfg|conf)$/i;
+
+/**
+ * The file some text names, if it reads as one: a path with an extension, optionally with
+ * `:line`, `:line-line` or `#Lline`. Whether there is such a file is pullspace's to say.
+ */
+function filePath(raw) {
+  const text = raw.trim().replace(/^['"`]|['"`]$/g, '');
+  const m = /^((?:~|\.{1,2})?\/?(?:[\w.@+-]+\/)*[\w.@+-]+\.(\w{1,8}))(?::(\d+)(?:[-:]\d+)*|#L(\d+)(?:-L?\d+)?)?$/.exec(text);
+  if (!m || (!m[1].includes('/') && !FILE_EXT.test(m[2]))) return null;
+  const line = Number(m[3] ?? m[4]) || null;
+  return { path: m[1], line };
+}
+
+thread.addEventListener('click', (ev) => {
+  const link = ev.target.closest('.pathlink, .tool-open');
+  if (!link || state.status?.chef) return;
+  ev.stopPropagation();
+  const target = filePath(link.dataset.path ?? link.textContent) ?? { path: link.dataset.path, line: null };
+  if (target.path) openInCode(target.path, { line: target.line, diff: link.hasAttribute('data-diff') });
+});
 
 // ---------------------------------------------------------------- activity
 
@@ -1156,6 +1206,8 @@ function setUpChef() {
   if (chefReady) return;
   chefReady = true;
   document.body.classList.add('chef');
+  // A chef has sessions to look after, not a repository to read.
+  setView('chat', { focus: false });
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#1f1a12');
   document.querySelector('.brand-name').innerHTML = 'tamale <span class="brand-chef">chef</span>';
   $('end-session').title = 'Stop the chef  /quit';
@@ -1335,6 +1387,7 @@ function applyApproval(a) {
     return;
   }
   state.approvalAt = Date.now();
+  if (!had) showChat();
   const choose = (choice, reason) => send({ t: 'approve', choice, reason });
   const reasonRow = h(
     'div',
@@ -1415,6 +1468,7 @@ function applyQuestion(q) {
     return;
   }
   state.questionAt = Date.now();
+  showChat();
   state.answers = q.questions.map(() => ({ chosen: [], other: '' }));
   state.asking = 0;
   renderQuestion();
@@ -1645,7 +1699,7 @@ function submit() {
 
 /** Commands, in the order the menu offers them; `local` ones run in the page. */
 const COMMANDS = [
-  { name: '/review', desc: 'Browse the code and its uncommitted changes in pullspace', local: true },
+  { name: '/review', desc: 'Show the code and its uncommitted changes; /review <path> opens a file there', local: true },
   { name: '/help', desc: 'Commands and shortcuts', local: true },
   { name: '/model', args: '<id>', desc: 'Switch models, e.g. claude-opus-5-5' },
   { name: '/effort', args: '<level>', desc: 'low, medium, high, xhigh, max or default' },
@@ -1687,9 +1741,12 @@ function runLocal(text) {
     case '/code':
     case '/browse':
     case '/diff':
-    case '/files':
-      toggleReview();
+    case '/files': {
+      const target = arg && (filePath(arg) ?? { path: arg, line: null });
+      if (target) openInCode(target.path, { line: target.line });
+      else toggleReview();
       return true;
+    }
     case '/help':
       openHelp();
       return true;
@@ -1840,91 +1897,160 @@ function appendToInput(text) {
 let refreshTimer;
 function afterToolResult() {
   clearTimeout(refreshTimer);
-  refreshTimer = setTimeout(reviewChanged, 400);
+  refreshTimer = setTimeout(() => {
+    askChanges();
+    reviewChanged();
+  }, 400);
 }
 
-// ---------------------------------------------------------------- review panel
+// ---------------------------------------------------------------- the code view
 
 /**
- * pullspace (src/web/pullspace.rs) in a frame, reviewing the working tree against HEAD.
- * The frame asks for snapshots and blobs over postMessage; this forwards them over the
- * socket (sealed, on an encrypted session) and posts the replies back, and tells it when
- * files may have changed. Its files come from tamale like this page's, through a hub too.
+ * pullspace (src/web/pullspace.rs) in a frame, on the working tree against HEAD. The frame
+ * asks for snapshots and blobs over postMessage; this forwards them over the socket (sealed,
+ * on an encrypted session) and posts the replies back, tells it when files may have changed,
+ * and asks it to show the files the chat links to. Its files come from tamale like this
+ * page's, through a hub too.
+ *
+ * It has no chrome here: pullspace's own bar is the pane's header, and the switch in the top
+ * bar says which of the chat and the code is on screen.
  */
 const review = {
-  open: false,
+  /** What's on screen: 'chat', 'split' (both) or 'code'. */
+  view: 'chat',
+  /** Which of the two the code was last shown in, for ⌘B and /review to come back to. */
+  last: store.get('reviewFull', true) ? 'code' : 'split',
+  /** How the page was left: a reload comes back to the chat and the code side by side. */
+  resume: store.get('view', 'chat') === 'split',
   frame: null,
-  /** The chat hidden, for the width. */
-  full: store.get('reviewFull', true),
+  /** The frame is listening for events; until then they wait in `queue`. */
+  ready: false,
+  queue: [],
   /** Socket seq → the frame's request id. */
   pending: new Map(),
-  /** Files may have changed while the panel was closed. */
+  /** What the frame asked for while there was no connection to ask over. */
+  held: [],
+  /** Files may have changed while the code was out of sight. */
   stale: false,
 };
 const REVIEW_TIMEOUT = 60_000;
+const VIEWS = { chat: $('view-chat'), split: $('view-split'), code: $('view-code') };
 
-function syncReviewLayout() {
-  $('main').classList.toggle('with-review', review.open);
-  $('main').classList.toggle('review-full', review.open && review.full);
-  $('toggle-review').classList.toggle('on', review.open);
-  $('review-chat').innerHTML = review.full ? ICON.chat : ICON.expand;
-  $('review-chat').title = review.full ? 'Show the chat beside pullspace' : 'Hide the chat';
-}
-
-function openReview() {
-  review.open = true;
-  $('review').hidden = false;
-  if (!review.frame) {
-    review.frame = h('iframe', { class: 'review-frame', src: '/pullspace/?embed', title: 'pullspace' });
-    $('review').append(review.frame);
-    review.stale = false;
-  } else if (review.stale) {
-    review.stale = false;
-    reviewEvent('changed');
+function setView(view, { focus = true } = {}) {
+  if (view === 'split' && tight.matches) view = 'code';
+  if (view !== 'chat' && state.status?.chef) view = 'chat';
+  const stick = nearBottom();
+  review.view = view;
+  const open = view !== 'chat';
+  store.set('view', view);
+  if (open) {
+    review.last = view;
+    store.set('reviewFull', view === 'code');
+    if (!review.frame) loadReview();
+    else if (review.stale) {
+      review.stale = false;
+      reviewPost({ event: 'changed' });
+    }
   }
-  syncReviewLayout();
-  review.frame.focus();
+  $('review').hidden = !open;
+  $('divider').hidden = view !== 'split';
+  $('main').classList.toggle('split', view === 'split');
+  $('main').classList.toggle('code', view === 'code');
+  for (const [name, button] of Object.entries(VIEWS)) {
+    button.classList.toggle('on', name === view);
+    button.setAttribute('aria-pressed', name === view);
+  }
+  // The chat is a different width now; stay at the end of it.
+  if (stick && view !== 'code') scrollToBottom();
+  if (!focus) return;
+  if (view === 'code') review.frame.focus();
+  else focusPrompt();
 }
 
-/** Hides the panel; the frame stays, so it comes back where it was. */
-function closeReview({ focus = true } = {}) {
-  if (!review.open) return;
-  review.open = false;
-  $('review').hidden = true;
-  syncReviewLayout();
-  if (focus) focusPrompt();
+/** Brings the chat back beside the code (or in place of it, with no room for both): the agent is waiting on an answer there. */
+function showChat() {
+  if (review.view === 'code') setView(tight.matches ? 'chat' : 'split', { focus: false });
 }
 
-const toggleReview = () => (review.open ? closeReview() : openReview());
-$('toggle-review').onclick = toggleReview;
-$('review-close').onclick = () => closeReview();
-$('review-chat').onclick = () => {
-  review.full = !review.full;
-  store.set('reviewFull', review.full);
-  syncReviewLayout();
-};
+/** The code, away and back: ⌘B, /review. */
+const toggleReview = () => setView(review.view === 'chat' ? review.last : 'chat');
+for (const [name, button] of Object.entries(VIEWS)) button.onclick = () => setView(name);
+tight.addEventListener('change', () => {
+  if (tight.matches && review.view === 'split') setView('code', { focus: false });
+});
+
+function loadReview() {
+  review.stale = false;
+  review.frame = h('iframe', { class: 'review-frame', src: '/pullspace/?embed', title: 'Code, in pullspace' });
+  $('review').append(review.frame);
+  // Keys go to the frame while it has the focus; this one is the page's.
+  review.frame.addEventListener('load', () => {
+    try {
+      review.frame.contentWindow.addEventListener('keydown', (ev) => {
+        if ((ev.metaKey || ev.ctrlKey) && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 'b') {
+          ev.preventDefault();
+          toggleReview();
+        }
+      }, true);
+    } catch {}
+  });
+  // Shown once it has something to show; a module that never arrives gets to say so.
+  setTimeout(() => {
+    if ($('review').classList.contains('shown')) return;
+    $('review-wait-note').textContent = 'Still loading pullspace…';
+    setTimeout(reviewShown, 20_000);
+  }, 10_000);
+}
+
+function reviewShown() {
+  $('review').classList.add('shown');
+}
 
 function reviewPost(message) {
   review.frame?.contentWindow?.postMessage({ ps: 1, ...message }, location.origin);
 }
 
-function reviewEvent(event) {
+/** Posts an event to the frame, once it's listening. */
+function reviewSend(message) {
+  if (review.ready) reviewPost(message);
+  else review.queue.push(message);
+}
+
+function reviewReady() {
+  if (review.ready) return;
+  review.ready = true;
+  for (const message of review.queue.splice(0)) reviewPost(message);
+}
+
+/** After the agent changed files: the code view reads them again (when it's looking). */
+function reviewChanged() {
   if (!review.frame) return;
-  if (review.open) reviewPost({ event });
+  if (review.view !== 'chat') reviewSend({ event: 'changed' });
   else review.stale = true;
 }
-/** After the agent changed files: the review reads them again (when it's looking). */
-const reviewChanged = () => reviewEvent('changed');
+
+/** Shows a file in the code view, opening it if need be: its changes, or a line of it. */
+function openInCode(path, { line = null, diff = false } = {}) {
+  if (state.status?.chef) return;
+  if (review.view === 'chat') setView(review.last, { focus: false });
+  reviewSend({ event: 'open', body: { path, line: line ?? undefined, diff } });
+}
 
 function reviewAsk(id, t, body) {
+  // Asked before the connection is up (a reload that comes back side by side), or while
+  // it's down: it goes once there is one, rather than failing a read that only has to wait.
+  if (!isReady()) return void review.held.push([id, t, body]);
   const s = ++seq;
   review.pending.set(s, id);
   if (!send({ t, seq: s, ...body }, true)) {
     review.pending.delete(s);
+    reviewShown();
     return reviewPost({ id, error: 'Not connected to tamale.' });
   }
   setTimeout(() => {
-    if (review.pending.delete(s)) reviewPost({ id, error: 'tamale took too long to answer.' });
+    if (!review.pending.delete(s)) return;
+    reviewShown();
+    reviewPost({ id, error: 'tamale took too long to answer.' });
   }, REVIEW_TIMEOUT);
 }
 
@@ -1933,22 +2059,27 @@ function reviewReply(m) {
   if (id == null) return;
   review.pending.delete(m.seq);
   reviewPost(m.error ? { id, error: m.error } : { id, body: m.body });
+  if (m.t !== 'ps_snapshot') return;
+  // It has the workspace (or why not), so it has something to draw. A bundle from before
+  // `ready` is listening by now too.
+  setTimeout(reviewShown, 60);
+  reviewReady();
 }
 
-/** A line the reader asked about, quoted into the prompt. */
+/** What the reader asked about in the code (a line, a selection, or the file), quoted into the prompt. */
 function reviewQuote(body) {
   const path = String(body?.path ?? '');
-  const line = Number(body?.line);
-  if (!path || !Number.isFinite(line)) return;
-  const text = typeof body.text === 'string' ? body.text.replace(/\r$/, '') : null;
-  const quote = text == null
-    ? `In \`${path}\` (line ${line}):\n\n`
-    : `In \`${path}\` (line ${line}):\n\`\`\`\n${text}\n\`\`\`\n\n`;
-  if (matchMedia('(max-width: 980px)').matches) closeReview({ focus: false });
-  else if (review.full) {
-    review.full = false;
-    syncReviewLayout();
-  }
+  if (!path) return;
+  const line = body.line == null ? null : Number(body.line);
+  if (line != null && !Number.isFinite(line)) return;
+  const end = line != null && Number(body.end) > line ? Number(body.end) : null;
+  const text = typeof body.text === 'string' ? body.text.replace(/\r/g, '').replace(/\n+$/, '').slice(0, 20_000) : '';
+  const where = line == null ? '' : end ? ` (lines ${line}–${end})` : ` (line ${line})`;
+  // A fence longer than any run of backticks in what it quotes.
+  const fence = '`'.repeat(Math.max(3, ...(text.match(/`+/g) ?? []).map((run) => run.length + 1)));
+  const quote = text.trim() ? `In \`${path}\`${where}:\n${fence}\n${text}\n${fence}\n\n` : `In \`${path}\`${where}:\n\n`;
+  // The prompt has to be on screen to be typed into.
+  showChat();
   appendToInput(quote);
 }
 
@@ -1956,7 +2087,9 @@ addEventListener('message', (ev) => {
   if (!review.frame || ev.source !== review.frame.contentWindow || ev.origin !== location.origin) return;
   const m = ev.data;
   if (!m || typeof m !== 'object' || m.ps !== 1) return;
+  if (m.t === 'ready') return reviewReady();
   if (m.t === 'quote') return reviewQuote(m.body);
+  if (m.t === 'missing') return toast(`\`${String(m.body?.path ?? '').slice(0, 200)}\` isn't a file in this repository.`);
   if (typeof m.id !== 'number') return;
   if (m.t === 'snapshot') return reviewAsk(m.id, 'ps_snapshot', {});
   if (m.t === 'blobs') {
@@ -1967,6 +2100,71 @@ addEventListener('message', (ev) => {
     return reviewAsk(m.id, 'ps_blobs', { wants });
   }
   reviewPost({ id: m.id, error: `tamale doesn't answer "${m.t}"` });
+});
+
+// ---- how much has changed, on the switch's code button
+
+function askChanges() {
+  if (!state.status?.chef) request('diff_stat');
+}
+
+function applyChanges(m) {
+  const files = Number(m.files) || 0;
+  const count = $('changes-n');
+  count.hidden = !files;
+  count.textContent = files > 99 ? '99+' : String(files);
+  VIEWS.code.title = files
+    ? `Code · ${files} file${files === 1 ? '' : 's'} changed, +${m.added} −${m.removed}  ⌘B`
+    : 'Code  ⌘B';
+}
+
+// ---- the divider between the chat and the code
+
+const divider = $('divider');
+/** The chat's share of the width beside the code, or null for the stylesheet's. */
+let chatShare = store.get('chatShare', null);
+
+function setChatShare(share, keep = true) {
+  const width = $('main').getBoundingClientRect().width || 1;
+  // Room for a conversation on one side and a file on the other.
+  const least = 320 / width;
+  const most = Math.max(least, 1 - 380 / width);
+  chatShare = share == null ? null : Math.min(most, Math.max(least, share));
+  if (chatShare == null) $('main').style.removeProperty('--chat-w');
+  else $('main').style.setProperty('--chat-w', `${(chatShare * 100).toFixed(2)}%`);
+  if (keep) store.set('chatShare', chatShare);
+}
+if (typeof chatShare === 'number') setChatShare(chatShare, false);
+else chatShare = null;
+
+divider.addEventListener('pointerdown', (ev) => {
+  if (ev.button !== 0) return;
+  ev.preventDefault();
+  const box = $('main').getBoundingClientRect();
+  // The frame would take the pointer as soon as it crossed into it.
+  const mask = h('div', { class: 'dragmask' });
+  document.body.append(mask);
+  divider.classList.add('on');
+  const move = (e) => setChatShare((e.clientX - box.left) / box.width, false);
+  const done = () => {
+    mask.remove();
+    divider.classList.remove('on');
+    removeEventListener('pointermove', move);
+    removeEventListener('pointerup', done);
+    removeEventListener('pointercancel', done);
+    store.set('chatShare', chatShare);
+  };
+  addEventListener('pointermove', move);
+  addEventListener('pointerup', done);
+  addEventListener('pointercancel', done);
+});
+divider.addEventListener('dblclick', () => setChatShare(null));
+divider.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
+  ev.preventDefault();
+  const box = $('main').getBoundingClientRect();
+  const now = chatShare ?? $('scroller').getBoundingClientRect().width / box.width;
+  setChatShare(now + (ev.key === 'ArrowLeft' ? -0.02 : 0.02));
 });
 
 for (const mask of document.querySelectorAll('.pickmask')) {
@@ -2163,7 +2361,8 @@ const KEYS = [
   ['⏎ / ⇧⏎', 'Send / new line (while the agent runs, ⏎ queues for its next step)'],
   ['esc', 'Interrupt the agent; close a menu'],
   ['↑ / ↓', 'Earlier prompts, from the first or last line'],
-  ['⌘B / Ctrl+B', 'Show or hide pullspace'],
+  ['⌘B / Ctrl+B', 'Show or hide the code'],
+  ['⌘⏎ / Ctrl+⏎', 'In the code: ask about the selection, the picked line or the file'],
   ['y / a / n', 'Answer a tool approval (when not typing)'],
   ['1–9 / ⏎ / ← →', "Pick an answer to the agent's questions, move on, switch questions (when not typing)"],
   ['/', 'Start a command from anywhere'],
@@ -2172,7 +2371,7 @@ const KEYS = [
 function openHelp() {
   const row = (k, v) => `<div class="helprow"><code>${esc(k)}</code><span>${esc(v)}</span></div>`;
   $('help-body').innerHTML =
-    '<h2>tamale on the web</h2><p>The same session as the terminal, chat first. The telescope opens pullspace, to browse the code and review its uncommitted changes.</p>' +
+    '<h2>tamale on the web</h2><p>The same session as the terminal, chat first. The switch in the top bar shows the code beside the chat or instead of it: pullspace, on your uncommitted changes and the whole repository. Steps that touch a file, and file paths in replies, open there.</p>' +
     '<h3>Commands</h3>' +
     COMMANDS.map((c) => row(`${c.name}${c.args ? ' ' + c.args : ''}`, c.desc)).join('') +
     '<h3>Keys</h3>' +
@@ -2214,6 +2413,9 @@ addEventListener('keydown', (ev) => {
 window.visualViewport?.addEventListener('resize', fitViewport);
 window.visualViewport?.addEventListener('scroll', fitViewport);
 fitViewport();
+// Side by side is a way of working, so it's how the page comes back; the code alone is
+// somewhere you went, and the chat is where a reload starts.
+setView(review.resume && !tight.matches ? 'split' : 'chat', { focus: false });
 input.placeholder = promptPlaceholder();
 autosize();
 updateSend();

@@ -57,15 +57,28 @@ back to the terminal, and `Ctrl+C` quits. Any number of tabs can be open.
   answer if none fit, and press **Next** / **Send answers** or `⏎`; `←`/`→` switch questions.
   The top bar shows the permission mode (click to cycle), the model, context use and
   cost.
-- **Code.** The telescope in the top bar, `/review` (or `/code`, `/diff`) or `⌘B` opens
-  [pullspace](https://github.com/bigmah/pullspace), an IDE-style code browser and
-  reviewer, on your uncommitted changes: the working tree (staged, unstaged and untracked
-  files) against `HEAD`. It has the whole repository beside the diff, with a file tree,
-  search across the repository, go to definition and find references. It runs in the page
-  as WebAssembly and never talks to GitHub; tamale hands it the files over the page's
-  socket, and it reads them again after each tool result. Click a line number and press
-  **Ask** to quote that line into the prompt. The chat steps aside for the width (the
-  button beside ✕ brings it back).
+- **Code.** The switch in the top bar puts the chat, the code or both on screen; the
+  telescope on it is the code, with a count of the files that have uncommitted changes.
+  `⌘B` or `/review` (or `/code`, `/diff`) shows and hides the code, and the page comes back
+  to the two side by side after a reload. Drag the line between them to resize them
+  (double-click resets it). A window too narrow for both shows one at a time.
+  The code is [pullspace](https://github.com/bigmah/pullspace), an IDE-style code browser
+  and reviewer, on your uncommitted changes: the working tree (staged, unstaged and
+  untracked files) against `HEAD`. It opens on **Changes**, the files that differ, with the
+  first of them as a diff; **Files** is the whole repository. It has search across the
+  repository, go to definition and find references, and reads the files again after each
+  tool result. It runs in the page as WebAssembly and never talks to GitHub; tamale hands
+  it the files over the page's socket.
+  - *From the chat to the code.* Steps that read or changed a file have an **open** or
+    **diff** link, and file paths in replies (`src/web.rs`, `src/web.rs:120`) are links:
+    each opens that file there, at that line. `/review <path>` does too.
+  - *From the code to the chat.* **Ask** (`⌘⏎`) quotes what you're looking at into the
+    prompt: the code you selected, or the line whose number you clicked, or just the file.
+  - *On a phone.* The files are behind the button at the left of pullspace's bar, diffs
+    are one column, and the search box takes the bar while you type in it.
+  - While you're on the code alone and the agent asks for an approval or an answer, the
+    chat comes back.
+
   It works through a hub too: pullspace's files come through the tunnel like the page's
   (the module gzipped, about 2 MB, cached by the browser), and the repository's files over
   the session's socket, end-to-end encrypted like everything else on it.
@@ -92,8 +105,8 @@ back to the terminal, and `Ctrl+C` quits. Any number of tabs can be open.
   plus a short content hash, so revisions sit side by side. Artifacts are part of the
   conversation, so `tamale --continue` (or `--resume`) followed by `/web` shows them all
   again, ready to revise.
-- **Artifacts gallery.** `/artifacts` in the page (or the button left of the code
-  browser's) opens every saved artifact of this project: this session's first, then
+- **Artifacts gallery.** `/artifacts` in the page (or its button in the top bar) opens
+  every saved artifact of this project: this session's first, then
   earlier sessions' by their last activity. Pick one on the left (or filter and use
   `↑`/`↓`; `Enter` opens it in a tab) to see it on the right, where it can be shown in
   the chat, revised, downloaded or opened in a tab. Revising one from an earlier session
@@ -119,7 +132,7 @@ and searches are answered by the server task itself (`src/web/files.rs`). The pa
 plain HTML, CSS and JavaScript (`src/web/index.html`, `app.css`, `app.js`). It is
 embedded in the binary, so there is no build step.
 
-**The review panel** is pullspace's own WebAssembly build, from the `pullspace-embed` crate
+**The code view** is pullspace's own WebAssembly build, from the `pullspace-embed` crate
 in [pullspace's repository](https://github.com/bigmah/pullspace) (`crates/embed`). The crate
 carries the built bundle, checked in there, and the types of the messages between the frame
 and its page, so building tamale needs no wasm toolchain. tamale serves the bundle at
@@ -128,9 +141,22 @@ anything but this server; a hub tunnels these paths too, with the module's bytes
 base64 in the `got` frame). It runs in a same-origin frame as `/pullspace/?embed` and asks the
 page for `snapshot` (each side's files as git blob hashes) and `blobs` (their bytes) over
 `postMessage`; the page forwards them as `ps_snapshot` and `ps_blobs` (`src/web/pullspace.rs`),
-which run git as `/diff` does and hash working-tree files themselves.
-To change the panel, change pullspace, run its `crates/embed/build.sh` (it needs the `dx`
+which run git as `/diff` does and hash working-tree files themselves. The frame says `ready`
+once it is listening; from then the page posts it `changed` (read the files again) and
+`open` (show this file, at this line), and it posts back `quote` (Ask) and `missing` (an
+`open` that named no file). The page has no chrome around the frame: pullspace's own bar is
+the pane's header, and it lays itself out for whatever width it is given. The count on the
+switch is `diff_stat` (`src/web/files.rs`). pullspace keeps the files it reads in the browser's
+own filesystem, which a browser offers only to a secure context; a page opened at this
+machine's network address (`/web lan`) is not one, and there it holds them in memory instead.
+To change it, change pullspace, run its `crates/embed/build.sh` (it needs the `dx`
 CLI) and commit the bundle there, then point tamale's `pullspace-embed` dependency at that
 commit. `cargo test --bin tamale fake_review_page -- --ignored --nocapture` serves a page
-with the panel on a made-up repository (or `TAMALE_FAKE_ROOT`) to try it in a browser; with
-`TAMALE_HUB_URL` and `TAMALE_HUB_KEY` it also connects to that hub and prints a link in.
+with a sample conversation and the code view on a made-up repository (or `TAMALE_FAKE_ROOT`)
+to try it in a browser; `TAMALE_FAKE_LAN=1` serves it at this machine's network address
+instead, which is how a phone sees it and where the browser withholds storage and the
+clipboard; with `TAMALE_HUB_URL` and `TAMALE_HUB_KEY` set it also connects to
+that hub and prints a link in. To try a pullspace you haven't pushed, add
+`--config 'patch."https://github.com/bigmah/pullspace".pullspace-embed.path="../pullspace/crates/embed"'`
+to the `cargo` command (it rewrites the crate's entry in `Cargo.lock`; `git checkout Cargo.lock`
+afterwards).

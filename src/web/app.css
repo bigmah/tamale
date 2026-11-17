@@ -41,7 +41,8 @@
   --r-lg: 10px;
   --quick: 110ms;
   --ease: cubic-bezier(0.2, 0, 0, 1);
-  --chat-w: 44%;
+  /* The chat's share of the width beside the code; the divider moves it (app.js). */
+  --chat-w: 40%;
   /* Side padding of the thread and dock; artifacts bleed into it on phones. */
   --gutter: 28px;
   --safe-t: env(safe-area-inset-top, 0px);
@@ -132,6 +133,38 @@ svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width:
 .wschip svg { fill: currentColor; stroke: none; width: 13px; height: 13px; opacity: 0.8; }
 .wschip #project-name { color: var(--fg); overflow: hidden; text-overflow: ellipsis; }
 .wschip-dirs { color: var(--fg-faint); }
+
+/* What's on screen: the chat, both, or the code. One control with three positions, so the
+   one that's on says where you are. */
+.viewsw {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  margin-left: 4px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg);
+}
+.viewsw button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 22px;
+  min-width: 30px;
+  padding: 0 7px;
+  border-radius: 6px;
+  color: var(--fg-faint);
+  transition: background var(--quick) var(--ease), color var(--quick) var(--ease);
+}
+.viewsw button:hover { color: var(--fg); background: var(--bg-2); }
+.viewsw button.on { color: var(--fg-bright); background: var(--bg-3); }
+.viewsw svg { width: 15px; height: 15px; }
+/* How many files have uncommitted changes. */
+.viewsw-n { font-size: 11px; font-weight: 650; color: var(--modified); font-variant-numeric: tabular-nums; }
+body.chef .viewsw { display: none; }
 
 .meters { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .pill {
@@ -297,6 +330,17 @@ body.chef .endbtn:hover { color: var(--deleted); border-color: rgba(224, 108, 11
   padding: 0.05em 0.35em;
   color: var(--fg-bright);
 }
+
+/* A file path in a reply: opens in the code view. */
+.prose code.pathlink {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  text-underline-offset: 2.5px;
+  transition: color var(--quick) var(--ease), border-color var(--quick) var(--ease);
+}
+.prose code.pathlink:hover { color: var(--accent); border-color: var(--accent-line); }
+body.chef .prose code.pathlink { cursor: auto; color: var(--fg-bright); border-color: var(--border-soft); text-decoration: none; }
 
 .codeblock {
   position: relative;
@@ -467,6 +511,23 @@ body.artifact-open .app::after { content: ""; position: fixed; inset: 0; z-index
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* On steps that read or changed a file: opens it in the code view. */
+.tool-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--r-sm);
+  font-size: 11.5px;
+  color: var(--fg-faint);
+  opacity: 0;
+  transition: opacity var(--quick) var(--ease), background var(--quick) var(--ease), color var(--quick) var(--ease);
+}
+.tool-open svg { width: 11px; height: 11px; }
+.tool-head:hover .tool-open, .tool-head:focus-visible .tool-open { opacity: 1; }
+.tool-open:hover { color: var(--accent); background: var(--accent-soft); }
 .tool-chev { color: var(--fg-faint); transition: transform var(--quick) var(--ease); }
 .tool-chev svg { width: 11px; height: 11px; }
 .tool.open .tool-chev { transform: rotate(90deg); }
@@ -584,6 +645,18 @@ body.artifact-open .app::after { content: ""; position: fixed; inset: 0; z-index
   animation: risein 140ms var(--ease);
 }
 .toast code { font-family: var(--mono); font-size: 0.9em; color: var(--fg-bright); }
+/* The same words over the code, when that has the whole width and the dock is hidden. */
+.toast.float {
+  position: fixed;
+  left: 50%;
+  bottom: calc(18px + var(--safe-b));
+  transform: translateX(-50%);
+  max-width: min(560px, calc(100vw - 24px));
+  z-index: 40;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  animation: none;
+}
+.app:not(:has(.main.code)) .toast.float { display: none; }
 .queued { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .queued:empty { display: none; }
 .queued-item {
@@ -1172,21 +1245,61 @@ body.chef .msg.user { border-color: rgba(242, 169, 59, 0.18); }
   @keyframes kslide { from { transform: translateX(30px); opacity: 0; } to { transform: none; opacity: 1; } }
 }
 
-/* ---------- the review panel: pullspace in a frame ---------- */
+/* ---------- the code: pullspace in a frame, beside the chat or instead of it ---------- */
 
-.review { display: flex; flex-direction: column; flex: 1; min-width: 0; background: var(--bg); animation: fadein 140ms var(--ease); }
-.main.with-review .chat { flex: 0 0 var(--chat-w); min-width: 340px; border-right: 1px solid var(--border); }
-.main.with-review.review-full .chat { display: none; }
-.review-hdr { display: flex; align-items: center; gap: 8px; height: 34px; flex: none; padding: 0 6px 0 12px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--fg-dim); }
-.review-title { color: var(--fg); font-weight: 600; }
-.review-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.review-frame { flex: 1; display: block; width: 100%; min-height: 0; border: 0; background: var(--bg); }
+.main.split .chat { flex: 0 0 var(--chat-w); min-width: 320px; max-width: calc(100% - 380px); }
+.main.code .chat { display: none; }
+/* Less air around the conversation while it shares the width. */
+.main.split { --gutter: 20px; }
 
-/* ---------- narrow windows: pullspace takes the whole width ---------- */
+/* The seam: a line to look at, a wider band to grab. */
+.divider {
+  position: relative;
+  flex: none;
+  width: 1px;
+  z-index: 5;
+  background: var(--border);
+  cursor: col-resize;
+  touch-action: none;
+  transition: background var(--quick) var(--ease), box-shadow var(--quick) var(--ease);
+}
+.divider::after { content: ""; position: absolute; top: 0; bottom: 0; left: -4px; right: -4px; }
+.divider:hover, .divider.on, .divider:focus-visible { background: var(--accent); box-shadow: 0 0 0 1px var(--accent-soft); outline: none; }
+/* Over everything while the divider is dragged: the frame would swallow the pointer. */
+.dragmask { position: fixed; inset: 0; z-index: 100; cursor: col-resize; }
+
+.review { position: relative; display: flex; flex: 1; min-width: 0; background: var(--bg); }
+.review-frame { position: relative; flex: 1; display: block; width: 100%; min-height: 0; border: 0; background: var(--bg); opacity: 0; transition: opacity 160ms var(--ease); }
+.review.shown .review-frame { opacity: 1; }
+/* Until pullspace has something to show (its module is about 2 MB the first time). */
+.review-wait {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: var(--fg-faint);
+  font-size: 12.5px;
+  animation: fadein 200ms var(--ease) 150ms both;
+}
+.review.shown .review-wait { display: none; }
+.review-wait svg { width: 30px; height: 30px; stroke-width: 1; color: var(--fg-dim); }
+.review-wait-bar {
+  width: 132px;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent) no-repeat var(--bg-3);
+  background-size: 40% 100%;
+  animation: sweep 1.3s var(--ease) infinite;
+}
+@keyframes sweep { from { background-position: -70% 0; } to { background-position: 170% 0; } }
+
+/* ---------- narrow windows: the chat or the code, not both ---------- */
 
 @media (max-width: 980px) {
-  .main.with-review .chat { display: none; }
-  #review-chat { display: none; }
+  #view-split { display: none; }
   .meters .ctx, .meters .cost { display: none; }
 }
 
@@ -1194,7 +1307,7 @@ body.chef .msg.user { border-color: rgba(242, 169, 59, 0.18); }
 
 @media (hover: none) {
   /* Controls that appear on hover are always there. */
-  .copybtn { opacity: 1; }
+  .copybtn, .tool-open { opacity: 1; }
   .keys-only { display: none !important; }
 }
 
@@ -1207,6 +1320,9 @@ body.chef .msg.user { border-color: rgba(242, 169, 59, 0.18); }
   .make-artifact { width: 38px; height: 38px; border-radius: 11px; right: 48px; bottom: 6px; }
   .composer.empty textarea { padding-right: 94px; }
   .pill { height: 32px; padding: 0 12px; }
+  .viewsw button { height: 30px; min-width: 40px; }
+  .viewsw svg { width: 17px; height: 17px; }
+  .tool-open { height: 30px; padding: 0 10px; }
   .iconbtn.sm { width: 36px; height: 36px; }
   .iconbtn svg { width: 17px; height: 17px; }
   .btn { height: 40px; padding: 0 14px; font-size: 14px; }
@@ -1283,8 +1399,13 @@ body.chef .msg.user { border-color: rgba(242, 169, 59, 0.18); }
   .pill.mode { max-width: 104px; }
 }
 
-@media (max-width: 380px) {
+/* The name gives way to the controls before they run off the bar. */
+@media (max-width: 460px) {
   .brand-name { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .review-wait-bar { animation: none; }
 }
 
 /* ---------- the artifacts gallery on narrow screens: the list, or one artifact ---------- */
