@@ -5,7 +5,6 @@
 //! looks. Raw HTML in markdown is shown as text: model output never becomes markup.
 
 use std::fmt::Write;
-use std::path::Path;
 use std::sync::OnceLock;
 
 use pulldown_cmark::{
@@ -13,9 +12,6 @@ use pulldown_cmark::{
 };
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
 use syntect::util::LinesWithEndings;
-
-/// Larger files are shown without highlighting, which would take too long.
-const MAX_HIGHLIGHT_BYTES: usize = 512 * 1024;
 
 fn syntaxes() -> &'static SyntaxSet {
     static SET: OnceLock<SyntaxSet> = OnceLock::new();
@@ -113,18 +109,6 @@ fn kind(stack: &ScopeStack) -> Option<&'static str> {
     })
 }
 
-/// The syntax for a file, by extension, then whole name, then first line.
-fn syntax_for_path(path: &Path, content: &str) -> Option<&'static SyntaxReference> {
-    let ss = syntaxes();
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    path.extension()
-        .and_then(|e| e.to_str())
-        .and_then(|e| ss.find_syntax_by_extension(e))
-        .or_else(|| ss.find_syntax_by_extension(name))
-        .or_else(|| ss.find_syntax_by_first_line(content.lines().next().unwrap_or("")))
-        .filter(|s| s.name != "Plain Text")
-}
-
 fn syntax_for_token(token: &str) -> Option<&'static SyntaxReference> {
     let token = token.split([',', ' ', '{']).next().unwrap_or("").trim();
     if token.is_empty() {
@@ -142,16 +126,6 @@ fn syntax_for_token(token: &str) -> Option<&'static SyntaxReference> {
     .to_string();
     ss.find_syntax_by_token(&alias)
         .filter(|s| s.name != "Plain Text")
-}
-
-/// A file as highlighted HTML, one string per line, and the syntax's name.
-pub fn highlight_file(path: &Path, content: &str) -> (Vec<String>, Option<String>) {
-    let syntax = if content.len() <= MAX_HIGHLIGHT_BYTES {
-        syntax_for_path(path, content)
-    } else {
-        None
-    };
-    (highlight(syntax, content), syntax.map(|s| s.name.clone()))
 }
 
 /// `code` as HTML lines; plain (escaped) text without a syntax or if parsing fails.
@@ -653,17 +627,6 @@ mod tests {
         let (md, blocks) = split_artifacts("no artifacts\n```html\n<p>x</p>\n```");
         assert_eq!(md, "no artifacts\n```html\n<p>x</p>\n```");
         assert!(blocks.is_empty());
-    }
-
-    #[test]
-    fn files_highlight_per_line_and_name_their_syntax() {
-        let (lines, syntax) = highlight_file(Path::new("a.rs"), "// hi\nlet x = 1;\n");
-        assert_eq!(syntax.as_deref(), Some("Rust"));
-        assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0], "<span class=\"t-c\">// hi</span>");
-        let (lines, syntax) = highlight_file(Path::new("notes.unknownext"), "a < b\n");
-        assert_eq!(syntax, None);
-        assert_eq!(lines, vec!["a &lt; b"]);
     }
 
     #[test]

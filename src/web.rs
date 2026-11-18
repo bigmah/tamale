@@ -5,16 +5,16 @@
 //! HTML), the status line and any pending approval. [`Mirror`] remembers what tabs were
 //! sent, so each sync only carries the entries that changed. The page answers with
 //! prompts, interrupts and approvals, which the event loop hands to the app, and asks
-//! for files, which this server reads itself (see `files`). Any number of tabs can be
-//! open; they all show the same session.
+//! for the workspace's files and changes, which this server reads itself (see `pullspace`
+//! and `diff`). Any number of tabs can be open; they all show the same session.
 //!
 //! Assistant replies may end in an interactive HTML artifact (a ```` ```html artifact ````
 //! block; prompts sent from the page ask for one). Each finished artifact is stored under
 //! an unguessable id and served from `/artifact/<id>` with a sandboxing CSP, so it runs in
 //! an opaque origin that can't reach the session; the page embeds it in an iframe.
 
+mod diff;
 pub mod e2e;
-mod files;
 #[cfg(test)]
 mod fixtures;
 mod pullspace;
@@ -1174,18 +1174,8 @@ fn handle(shared: &Arc<Shared>, id: u64, request: Value) {
                 let _ = shared.events.send(WebEvent::Answer(answers));
             }
         }
-        "tree" => reply(Box::new(files::tree)),
-        "open" => {
-            let root = request.get("root").and_then(Value::as_u64).unwrap_or(0) as usize;
-            let path = str_field("path");
-            reply(Box::new(move |roots| files::open(roots, root, &path)));
-        }
-        "grep" => {
-            let query = str_field("query");
-            reply(Box::new(move |roots| files::grep(roots, &query)));
-        }
-        "diff" => reply(Box::new(files::diff)),
-        "diff_stat" => reply(Box::new(files::diff_stat)),
+        "diff" => reply(Box::new(diff::diff)),
+        "diff_stat" => reply(Box::new(diff::diff_stat)),
         // The review panel's two questions (see `pullspace`).
         "ps_snapshot" => reply(Box::new(pullspace::snapshot)),
         "ps_blobs" => {

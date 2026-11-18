@@ -1,4 +1,4 @@
-// The session's uncommitted changes (`diff` in src/web/files.rs), and how to lay them out: the
+// The session's uncommitted changes (`diff` in src/web/diff.rs), and how to lay them out: the
 // app's counterpart of the terminal's `/diff` viewer (src/app/diff.rs). It folds unchanged lines
 // the same way, lists files in the same tree, and quotes lines into a prompt the same way.
 

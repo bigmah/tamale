@@ -271,7 +271,7 @@ fn messages(dir: &std::path::Path) -> Vec<(&'static str, Value)> {
         ("hs0.json", json!({ "t": "hs0", "n": STANDARD.encode(NONCE) })),
         ("loading.json", json!({ "t": "loading", "bytes": 2048 })),
         ("older.json", fix(&older)),
-        ("diff.json", files::diff_reply("working tree vs HEAD", &crate::diff::parse(SAMPLE_DIFF))),
+        ("diff.json", diff::diff_reply("working tree vs HEAD", &crate::diff::parse(SAMPLE_DIFF))),
         ("diff-error.json", json!({ "t": "diff", "error": "/tmp is not inside a git repository" })),
     ]
 }

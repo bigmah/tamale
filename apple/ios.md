@@ -176,7 +176,7 @@ Three gaps for a native client:
    **tamale change (additive):** add `hash` (SHA-256 hex of the document as the model wrote
    it, before tamale's scripts) to the `artifact` reply and to gallery items. The app keys its
    library on that. `sha2` is already a dependency.
-3. **The messages are untyped `json!`** spread across `src/web.rs` and `src/web/files.rs`.
+3. **The messages are untyped `json!`** spread across `src/web.rs` and `src/web/diff.rs`.
    Rather than write a schema up front, a Rust test writes one sample of each message to
    `apple/Fixtures/messages/*.json`, and `TamaleKit` decodes all of them in its tests. If a
    change in `src/web.rs` breaks the app's decoding, `cargo test` fails in the same change.

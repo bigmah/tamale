@@ -35,7 +35,8 @@ TAMALE_HUB_URL=wss://tamale-hub.com TAMALE_HUB_KEY=thk_… cargo test -p tamale 
 - `src/browser.rs`, `src/browser/` – `/browser`: the local server, the page, the backend
   that records changed cells, and input translation; `dist/` holds the built client
 - `src/web.rs`, `src/web/` – `/web`: the server and session sync, markdown and code
-  rendering, workspace file reads, and the page itself (HTML, CSS, JavaScript)
+  rendering, reads of the workspace's files and changes, and the page itself (HTML, CSS,
+  JavaScript)
 - `src/app/web.rs` – what the web UI shows of the session, and its input back to the app
 - `web/protocol` – the messages between tamale and its browser client
 - `web/client` – the browser client (Rust, compiled to WebAssembly by `web/build.sh`)

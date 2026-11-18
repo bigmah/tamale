@@ -1,4 +1,4 @@
-// The /web JSON messages (src/web.rs, src/web/files.rs) the app reads and sends. tamale
+// The /web JSON messages (src/web.rs, src/web/diff.rs) the app reads and sends. tamale
 // writes them with untyped `json!`, so decoding is lenient: unknown fields are ignored and
 // missing ones get defaults. apple/Fixtures/messages has one sample of each, written by
 // src/web/fixtures.rs, and the tests decode them all.

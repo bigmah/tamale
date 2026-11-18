@@ -133,8 +133,9 @@ artifact is opened in a tab of its own. Scripts and styles may load from https C
 **How it works.** `src/web.rs` sends JSON over a WebSocket. Assistant markdown is turned
 into HTML in tamale (`src/web/render.rs`, which uses pulldown-cmark), and code is
 highlighted with syntect into token classes that the stylesheet colours. Each sync sends
-only the entries that changed since the last one, at most every 40 ms. File reads, the tree
-and searches are answered by the server task itself (`src/web/files.rs`). The page is
+only the entries that changed since the last one, at most every 40 ms. Reads of the
+workspace's files and changes are answered by the server task itself (`src/web/pullspace.rs`
+and `src/web/diff.rs`). The page is
 plain HTML, CSS and JavaScript (`src/web/index.html`, `app.css`, `app.js`). It is
 embedded in the binary, so there is no build step.
 
@@ -152,7 +153,7 @@ once it is listening; from then the page posts it `changed` (read the files agai
 `open` (show this file, at this line), and it posts back `quote` (Ask) and `missing` (an
 `open` that named no file). The page has no chrome around the frame: pullspace's own bar is
 the pane's header, and it lays itself out for whatever width it is given. The count on the
-switch is `diff_stat` (`src/web/files.rs`). pullspace keeps the files it reads in the browser's
+switch is `diff_stat` (`src/web/diff.rs`). pullspace keeps the files it reads in the browser's
 own filesystem, which a browser offers only to a secure context; a page opened at this
 machine's network address (`/web lan`) is not one, and there it holds them in memory instead.
 To change it, change pullspace, run its `crates/embed/build.sh` (it needs the `dx`
