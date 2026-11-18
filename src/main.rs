@@ -16,6 +16,7 @@ mod remote;
 mod screen;
 mod secure;
 mod session;
+mod syntax;
 mod tools;
 mod update;
 mod web;

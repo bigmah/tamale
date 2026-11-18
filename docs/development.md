@@ -68,6 +68,7 @@ TAMALE_HUB_URL=wss://tamale-hub.com TAMALE_HUB_KEY=thk_… cargo test -p tamale 
 - `src/app/diff.rs` – the `/diff` viewer: file tree, diff rendering and navigation
 - `src/app/prompts.rs` – prompt history for ↑/↓ recall
 - `src/clipboard.rs` – system clipboard access
+- `src/syntax.rs` – the syntaxes code is highlighted with, in the terminal and the web UI
 - `src/session.rs` – saving, listing and loading sessions
 
 ## Performance

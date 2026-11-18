@@ -14,10 +14,12 @@ use syntect::highlighting::{
     FontStyle, HighlightIterator, HighlightState, Highlighter, ScopeSelectors, StyleModifier,
     Theme, ThemeItem, ThemeSettings,
 };
-use syntect::parsing::{ParseState, ScopeStack, SyntaxReference, SyntaxSet};
+use syntect::parsing::{ParseState, ScopeStack};
 use syntect::util::LinesWithEndings;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
+
+use crate::syntax;
 
 const ACCENT: Color = Color::Cyan;
 const FRAME: Style = Style::new().fg(Color::DarkGray);
@@ -714,11 +716,6 @@ fn wrap_hard(spans: &[Span<'static>], width: usize) -> Vec<Vec<Span<'static>>> {
     rows
 }
 
-fn syntaxes() -> &'static SyntaxSet {
-    static SET: OnceLock<SyntaxSet> = OnceLock::new();
-    SET.get_or_init(SyntaxSet::load_defaults_newlines)
-}
-
 /// A theme of terminal palette colors, so code follows the user's color scheme.
 /// Colors are smuggled through syntect as palette indexes in `r` with `a == 0`.
 fn theme() -> &'static Theme {
@@ -794,22 +791,6 @@ fn theme() -> &'static Theme {
     })
 }
 
-fn find_syntax(lang: &str) -> Option<&'static SyntaxReference> {
-    let lang = lang.to_ascii_lowercase();
-    let token = match lang.as_str() {
-        "" | "text" | "txt" | "plain" | "plaintext" => return None,
-        "ts" | "tsx" | "typescript" | "jsx" | "mjs" | "cjs" => "js",
-        "shell" | "zsh" | "console" | "sh" => "bash",
-        "jsonc" | "json5" => "json",
-        "yml" => "yaml",
-        "golang" => "go",
-        "c++" => "cpp",
-        "patch" => "diff",
-        other => other,
-    };
-    syntaxes().find_syntax_by_token(token)
-}
-
 /// Highlighted code blocks, kept so a resize or a streamed chunk resumes from the
 /// last highlighted line instead of re-highlighting the whole block.
 struct Highlighted {
@@ -829,7 +810,7 @@ thread_local! {
 
 /// Style code by language, one row of spans per line.
 fn highlight(lang: &str, code: &str) -> Vec<Vec<Span<'static>>> {
-    let Some(syntax) = find_syntax(lang) else {
+    let Some(syntax) = syntax::for_language(lang) else {
         let code = code.strip_suffix('\n').unwrap_or(code);
         return code
             .split('\n')
@@ -890,7 +871,7 @@ fn highlight_line(
     line: &str,
 ) -> Vec<Span<'static>> {
     let mut row = Vec::new();
-    let ops = parse.parse_line(line, syntaxes()).unwrap_or_default();
+    let ops = parse.parse_line(line, syntax::set()).unwrap_or_default();
     for (style, text) in HighlightIterator::new(state, &ops, line, highlighter) {
         let text = text.trim_end_matches(['\n', '\r']);
         if text.is_empty() {

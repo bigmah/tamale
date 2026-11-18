@@ -10,13 +10,10 @@ use std::sync::OnceLock;
 use pulldown_cmark::{
     Alignment, BlockQuoteKind, CodeBlockKind, Event, Options, Parser, Tag, TagEnd,
 };
-use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
+use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference};
 use syntect::util::LinesWithEndings;
 
-fn syntaxes() -> &'static SyntaxSet {
-    static SET: OnceLock<SyntaxSet> = OnceLock::new();
-    SET.get_or_init(SyntaxSet::load_defaults_newlines)
-}
+use crate::syntax;
 
 /// Token kinds by scope prefix, most specific first. Comments and strings win over
 /// whatever is nested inside them (quotes, escapes aside); everything else goes by the
@@ -109,32 +106,13 @@ fn kind(stack: &ScopeStack) -> Option<&'static str> {
     })
 }
 
-fn syntax_for_token(token: &str) -> Option<&'static SyntaxReference> {
-    let token = token.split([',', ' ', '{']).next().unwrap_or("").trim();
-    if token.is_empty() {
-        return None;
-    }
-    let ss = syntaxes();
-    let alias = match token.to_ascii_lowercase().as_str() {
-        "ts" | "typescript" | "tsx" => "js",
-        "jsx" => "js",
-        "shell" | "zsh" | "console" => "sh",
-        "toml" => "ini",
-        "jsonc" | "json5" => "json",
-        _ => token,
-    }
-    .to_string();
-    ss.find_syntax_by_token(&alias)
-        .filter(|s| s.name != "Plain Text")
-}
-
 /// `code` as HTML lines; plain (escaped) text without a syntax or if parsing fails.
 fn highlight(syntax: Option<&SyntaxReference>, code: &str) -> Vec<String> {
     let plain = || code.lines().map(escape).collect();
     let Some(syntax) = syntax else {
         return plain();
     };
-    let ss = syntaxes();
+    let ss = syntax::set();
     let mut state = ParseState::new(syntax);
     let mut stack = ScopeStack::new();
     let mut lines = Vec::new();
@@ -522,7 +500,7 @@ fn push_artifact(out: &mut String, body: &str, url: Option<&str>) {
 }
 
 fn push_code_block(out: &mut String, lang: &str, body: &str) {
-    let syntax = syntax_for_token(lang);
+    let syntax = syntax::for_language(lang);
     let label = lang.split([',', ' ', '{']).next().unwrap_or("").trim();
     out.push_str("<div class=\"codeblock\">");
     if !label.is_empty() {
