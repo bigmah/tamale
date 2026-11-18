@@ -14,7 +14,7 @@ use crossterm::event::{
 use crossterm::execute;
 use futures::StreamExt;
 use ratatui::backend::Backend;
-use tamale_web_protocol::Frame;
+use tamale_browser_protocol::Frame;
 use tokio::net::UnixStream;
 use tokio::net::unix::OwnedWriteHalf;
 use tokio::sync::mpsc;

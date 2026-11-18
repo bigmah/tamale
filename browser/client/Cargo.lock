@@ -640,19 +640,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "tamale-web-client"
+name = "tamale-browser-client"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",
  "ratzilla",
- "tamale-web-protocol",
+ "tamale-browser-protocol",
  "wasm-bindgen",
  "web-sys",
 ]
 
 [[package]]
-name = "tamale-web-protocol"
+name = "tamale-browser-protocol"
 version = "0.1.0"
 dependencies = [
  "postcard",

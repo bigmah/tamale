@@ -40,8 +40,9 @@ TAMALE_HUB_URL=wss://tamale-hub.com TAMALE_HUB_KEY=thk_… cargo test -p tamale 
 - `src/app/web.rs` – what the web UI shows of the session, and its input back to the app
 - `src/web/wire.rs` – the `/web` messages tamale reads as well as writes (status, approval,
   entries), shared with `src/remote.rs`
-- `web/protocol` – the messages between tamale and its browser client
-- `web/client` – the browser client (Rust, compiled to WebAssembly by `web/build.sh`)
+- `browser/protocol` – the screen cells and input tamale exchanges with its browser client,
+  and with a terminal attached to a background session
+- `browser/client` – the browser client (Rust, compiled to WebAssembly by `browser/build.sh`)
 - `src/cli.rs` – command-line parsing and overrides
 - `src/config.rs`, `config/default.toml` – typed settings, defaults, file discovery and merging
 - `src/backend.rs` – backend selection (API, Claude Code or Codex) and dispatch

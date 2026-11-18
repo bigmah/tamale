@@ -3538,13 +3538,22 @@ dependencies = [
  "sha2",
  "snow",
  "syntect",
+ "tamale-browser-protocol",
  "tamale-hub-protocol",
- "tamale-web-protocol",
  "tokio",
  "tokio-tungstenite",
  "toml",
  "unicode-segmentation",
  "unicode-width",
+]
+
+[[package]]
+name = "tamale-browser-protocol"
+version = "0.1.0"
+dependencies = [
+ "postcard",
+ "ratatui-core",
+ "serde",
 ]
 
 [[package]]
@@ -3576,15 +3585,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
-]
-
-[[package]]
-name = "tamale-web-protocol"
-version = "0.1.0"
-dependencies = [
- "postcard",
- "ratatui-core",
- "serde",
 ]
 
 [[package]]

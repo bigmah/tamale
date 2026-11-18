@@ -5,7 +5,7 @@ use std::convert::Infallible;
 use ratatui::backend::{Backend, ClearType, WindowSize};
 use ratatui::buffer::Cell;
 use ratatui::layout::{Position, Size};
-use tamale_web_protocol::{self as protocol, Frame};
+use tamale_browser_protocol::{self as protocol, Frame};
 
 pub struct FrameBackend {
     size: Size,

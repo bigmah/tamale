@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use tamale_web_protocol::{self as protocol, Frame};
+use tamale_browser_protocol::{self as protocol, Frame};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 pub use server::{Host, HostEvent, redirect_stderr};

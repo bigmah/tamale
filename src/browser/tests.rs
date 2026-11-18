@@ -4,7 +4,7 @@ use crossterm::event::{
 use ratatui::layout::Rect;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
-use tamale_web_protocol::{self as protocol, ClientMessage};
+use tamale_browser_protocol::{self as protocol, ClientMessage};
 
 use super::{events, takes_over, terminal};
 

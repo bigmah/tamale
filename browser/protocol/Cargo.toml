@@ -1,5 +1,5 @@
 [package]
-name = "tamale-web-protocol"
+name = "tamale-browser-protocol"
 version = "0.1.0"
 edition = "2024"
 description = "Messages between tamale and its browser client"

@@ -25,17 +25,17 @@ without it are refused, as are pages from other sites (checked with the `Origin`
 `Host` headers), so only you can drive the session. Treat the address like a password:
 anyone with it and access to your machine can run the agent.
 
-**How it works.** The client (`web/client`) draws with [Ratzilla](https://github.com/ratatui/ratzilla)'s
+**How it works.** The client (`browser/client`) draws with [Ratzilla](https://github.com/ratatui/ratzilla)'s
 WebGL2 backend. tamale draws the browser's screen with an ordinary ratatui `Terminal`
 whose backend records the changed cells instead of writing escape codes, and sends them
 over a WebSocket; the client keeps a copy of the screen and redraws it, and sends back its
 size and input (keys, text from input methods, pastes, wheel and clicks). Both directions
-use the types in `web/protocol`, encoded with postcard.
+use the types in `browser/protocol`, encoded with postcard.
 
 **Changing the client.** The built client is checked in under `src/browser/dist`, so
-building tamale doesn't need the WebAssembly toolchain. After changing `web/client` or
-`web/protocol`, rebuild it with `web/build.sh` (it needs the `wasm32-unknown-unknown`
-target and the `wasm-bindgen` CLI version pinned in `web/client/Cargo.toml`; it says how to
+building tamale doesn't need the WebAssembly toolchain. After changing `browser/client` or
+`browser/protocol`, rebuild it with `browser/build.sh` (it needs the `wasm32-unknown-unknown`
+target and the `wasm-bindgen` CLI version pinned in `browser/client/Cargo.toml`; it says how to
 install them), then rebuild tamale. `cargo test --workspace` also runs the protocol's tests.
 
 ## Web UI

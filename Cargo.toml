@@ -5,9 +5,9 @@ edition = "2024"
 repository = "https://github.com/bigmah/tamale"
 
 [workspace]
-members = ["web/protocol", "hub", "hub/protocol"]
-# Built for wasm32 by web/build.sh.
-exclude = ["web/client"]
+members = ["browser/protocol", "hub", "hub/protocol"]
+# Built for wasm32 by browser/build.sh.
+exclude = ["browser/client"]
 
 [dependencies]
 anyhow = "1.0.104"
@@ -28,7 +28,7 @@ serde_json = "1.0.154"
 sha1_smol = "1.0.1"
 # The review panel: pullspace's built bundle and its host protocol (src/web/pullspace.rs).
 pullspace-embed = { git = "https://github.com/bigmah/pullspace", rev = "f16a1dc2b8bac89df986f3bc31097b3e5fe8dece" }
-tamale-web-protocol = { path = "web/protocol" }
+tamale-browser-protocol = { path = "browser/protocol" }
 tamale-hub-protocol = { path = "hub/protocol" }
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "regex-fancy"] }
 tokio = { version = "1.54.1", features = ["full"] }

@@ -1,11 +1,11 @@
 [package]
-name = "tamale-web-client"
+name = "tamale-browser-client"
 version = "0.1.0"
 edition = "2024"
 description = "tamale's browser client: draws the TUI tamale sends and returns input"
 publish = false
 
-# Built for wasm32 by web/build.sh, separately from tamale itself.
+# Built for wasm32 by browser/build.sh, separately from tamale itself.
 [workspace]
 
 [lib]
@@ -15,8 +15,8 @@ crate-type = ["cdylib"]
 console_error_panic_hook = "0.1"
 js-sys = "0.3"
 ratzilla = "0.3"
-tamale-web-protocol = { path = "../protocol" }
-# Must match the wasm-bindgen CLI that web/build.sh runs.
+tamale-browser-protocol = { path = "../protocol" }
+# Must match the wasm-bindgen CLI that browser/build.sh runs.
 wasm-bindgen = "=0.2.127"
 web-sys = { version = "0.3", features = [
     "AddEventListenerOptions",

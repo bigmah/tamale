@@ -1,6 +1,6 @@
 //! `/browser`: the TUI in a browser tab. A local server sends a page that runs tamale's
-//! WebAssembly client (`web/client`); over a WebSocket the client reports its size and
-//! input, and tamale sends the cells each draw changes (see `web/protocol`). One tab is
+//! WebAssembly client (`browser/client`); over a WebSocket the client reports its size and
+//! input, and tamale sends the cells each draw changes (see `browser/protocol`). One tab is
 //! connected at a time, and either the tab or the terminal is in use; the other shows a
 //! notice until a key is pressed in it.
 
@@ -24,7 +24,7 @@ use ratatui::layout::{Alignment, Constraint, Layout};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
-use tamale_web_protocol::{self as protocol, ClientMessage, ServerMessage};
+use tamale_browser_protocol::{self as protocol, ClientMessage, ServerMessage};
 use tokio::sync::mpsc;
 
 pub use backend::FrameBackend;
@@ -39,7 +39,7 @@ pub type WebTerminal = Terminal<FrameBackend>;
 pub const MAX_CELLS: u16 = 1000;
 
 const PAGE: &str = include_str!("browser/index.html");
-/// Built by `web/build.sh`.
+/// Built by `browser/build.sh`.
 const CLIENT_JS: &str = include_str!("browser/dist/client.js");
 const CLIENT_WASM: &[u8] = include_bytes!("browser/dist/client_bg.wasm");
 

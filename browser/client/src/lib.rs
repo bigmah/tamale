@@ -15,7 +15,7 @@ use ratzilla::ratatui::buffer::Buffer;
 use ratzilla::ratatui::layout::Rect;
 use ratzilla::ratatui::style::{Color, Style};
 use ratzilla::ratatui::widgets::{Clear, Paragraph};
-use tamale_web_protocol::{self as protocol, ClientMessage, Key, ServerMessage};
+use tamale_browser_protocol::{self as protocol, ClientMessage, Key, ServerMessage};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use web_sys::{

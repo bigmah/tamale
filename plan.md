@@ -161,7 +161,7 @@ sees the view token.
 ### 3. Relay protocol (tamale ↔ hub)
 
 One WebSocket per tamale session, text frames, JSON. Shared types live in a small crate
-(`hub/protocol`, `tamale-hub-protocol`) used by both binaries, like `web/protocol`.
+(`hub/protocol`, `tamale-hub-protocol`) used by both binaries, like `browser/protocol`.
 
 ```jsonc
 // tamale → hub, first frame
