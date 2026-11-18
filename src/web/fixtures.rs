@@ -9,6 +9,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use serde_json::{Value, json};
 
+use super::artifacts::{content_hash, save_artifact};
 use super::e2e::{self, testing::Initiator};
 use super::*;
 

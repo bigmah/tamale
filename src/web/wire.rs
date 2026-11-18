@@ -177,7 +177,7 @@ mod tests {
 
     /// `entry` as the server sends it and another tamale then reads it.
     fn there_and_back(entry: &session::Entry) -> session::Entry {
-        let sent = super::super::wire_entry(entry, &Mutex::default(), None);
+        let sent = super::super::mirror::wire_entry(entry, &Mutex::default(), None);
         let read: Entry = serde_json::from_str(&serde_json::to_string(&sent).unwrap()).unwrap();
         assert_eq!(read, sent);
         read.into_session()
