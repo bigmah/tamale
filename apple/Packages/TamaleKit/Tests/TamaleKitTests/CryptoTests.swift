@@ -4,7 +4,7 @@ import XCTest
 
 @testable import TamaleKit
 
-/// apple/Fixtures, which src/web/fixtures.rs and hub/src/serve.rs write.
+/// apple/Fixtures, which src/web/fixtures.rs and hub/src/serve/tests.rs write.
 let fixtures = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     .deletingLastPathComponent().deletingLastPathComponent()

@@ -6,7 +6,7 @@
 // Session labels come from agents and key names from whoever made them, so everything
 // here is built with textContent.
 //
-// This page makes and holds keys (see single_key.md): every session is its own origin, and
+// This page makes and holds keys (see docs/remote-access.md): every session is its own origin, and
 // this is the one place that sees them all. The hub only ever gets a key's auth value; a
 // session's page only the handshake's secret, in the fragment of the redirect into it.
 

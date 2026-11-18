@@ -12,8 +12,7 @@ https://<sid>.tamale-hub.com       one session, its own origin; its page comes f
 wss://tamale-hub.com/agent         where tamales connect
 ```
 
-The designs are in [`single_key.md`](../single_key.md) (keys),
-[`tunnel_plan.md`](../tunnel_plan.md) (the relay) and [`e2e.md`](../e2e.md) (encryption).
+How the encryption was designed, and what it protects against, is in [`e2e.md`](../e2e.md).
 
 ## Using it
 

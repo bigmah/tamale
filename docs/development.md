@@ -31,48 +31,90 @@ TAMALE_HUB_URL=wss://tamale-hub.com TAMALE_HUB_KEY=thk_… cargo test -p tamale 
 
 ## Layout
 
+Starting up and the terminal:
+
 - `src/main.rs` – startup, terminal setup, event loop and one-shot output
-- `src/browser.rs`, `src/browser/` – `/browser`: the local server, the page, the backend
-  that records changed cells, and input translation; `dist/` holds the built client
-- `src/web.rs`, `src/web/` – `/web`: the server and session sync, markdown and code
-  rendering, reads of the workspace's files and changes, and the page itself (HTML, CSS,
-  JavaScript)
-- `src/app/web.rs` – what the web UI shows of the session, and its input back to the app
-- `src/web/wire.rs` – the `/web` messages tamale reads as well as writes (status, approval,
-  entries), shared with `src/remote.rs`
-- `browser/protocol` – the screen cells and input tamale exchanges with its browser client,
-  and with a terminal attached to a background session
-- `browser/client` – the browser client (Rust, compiled to WebAssembly by `browser/build.sh`)
 - `src/cli.rs` – command-line parsing and overrides
 - `src/config.rs`, `config/default.toml` – typed settings, defaults, file discovery and merging
+- `src/screen.rs` – where the TUI is shown: this terminal, or the one attached to a background
+  session
+- `src/background.rs`, `src/background/` – sessions that outlive their terminal: the server
+  that owns one, and the client that attaches to it
+- `src/workspace.rs` – the working directory and the directories added to it
+- `src/session.rs` – saving, listing and loading sessions
+- `src/secure.rs` – keeping tamale's secrets from the programs it starts, and its files private
+- `src/clipboard.rs` – system clipboard access
+- `src/update.rs` – `tamale update`
+
+The app:
+
+- `src/app.rs` – conversation state and agent event handling
+- `src/app/{input,commands,sessions,view,help}.rs` – key/clipboard input, commands and pickers,
+  session actions, rendering and help content
+- `src/app/{markdown,transcript,activity}.rs` – assistant markdown as styled lines, the cached
+  transcript, and the indicator of what a run is doing
+- `src/app/{approval,question,rewind}.rs` – the approval and `ask_user` popups, `/undo` and the
+  rewind picker
+- `src/app/{backends,dir_browser,goal}.rs` – `/backend` and `/login`, `/add-dir`'s browser, and
+  `/goal`
+- `src/app/diff.rs` – the `/diff` viewer: file tree, diff rendering and navigation
+- `src/app/prompts.rs` – prompt history for ↑/↓ recall
+- `src/app/{background,remote}.rs` – `/sessions`: the other sessions on this machine, and
+  driving one on another machine
+- `src/syntax.rs` – the syntaxes code is highlighted with, in the terminal and the web UI
+
+The agent:
+
+- `src/agent.rs` – agent turns, tool execution and compaction
+- `src/agent/{request,reasoning,prompt,models}.rs` – streaming/retries, reasoning settings,
+  instruction loading and model metadata/cost estimates
 - `src/backend.rs` – backend selection (API, Claude Code or Codex) and dispatch
 - `src/backend/claude_code.rs` – running `claude -p`, its sign-in and stream translation
 - `src/backend/codex.rs` – running `codex exec`, its sign-in, event translation and usage
 - `src/backend/cli.rs` – what those two share: running a CLI for a turn, signing in and out,
   and replaying a conversation it doesn't hold
+- `src/backend/compat.rs` – providers that speak OpenAI's Chat Completions API
 - `src/backend/logins.rs` – the Claude Code and Codex logins offered in the picker
 - `src/backend/mcp.rs` – the local MCP server that offers tamale's tools to Claude Code and Codex
 - `src/backend/subagent.rs` – the `agent` tool: running a subagent on the current backend
-- `src/agent.rs` – agent turns, tool execution and compaction
-- `src/agent/{request,reasoning,prompt,models}.rs` – streaming/retries, reasoning settings,
-  instruction loading and model metadata/cost estimates
 - `src/tools.rs` – tool definitions and implementations
+- `src/tools/search.rs`, `src/tools/web.rs` – built-in repository search and web tools
+- `src/tools/shell.rs` – running `bash` commands in a process group
+- `src/tools/ask.rs` – the `ask_user` tool
 - `src/permissions.rs` – permission modes and allow/deny rule matching
 - `src/checkpoint.rs` – file snapshots for `/undo` and `/rewind`
 - `src/diff.rs` – running and parsing `git diff` for the diff viewer
-- `src/tools/search.rs`, `src/tools/web.rs` – built-in repository search and web tools
-- `src/tools/shell.rs` – running `bash` commands in a process group
-- `src/chef.rs`, `src/app/chef.rs` – the tamale chef: its tools and prompt, reaching sessions
-  through the hub, its kitchen panel and every session's side of a side question
-- `src/app.rs` – conversation state and agent event handling
-- `src/app/{input,commands,sessions,view,help}.rs` – key/clipboard input, commands and pickers,
-  session actions, rendering and help content
-- `src/app/{approval,rewind}.rs` – the approval popup, `/undo` and the rewind picker
-- `src/app/diff.rs` – the `/diff` viewer: file tree, diff rendering and navigation
-- `src/app/prompts.rs` – prompt history for ↑/↓ recall
-- `src/clipboard.rs` – system clipboard access
-- `src/syntax.rs` – the syntaxes code is highlighted with, in the terminal and the web UI
-- `src/session.rs` – saving, listing and loading sessions
+- `src/chef.rs`, `src/chef/hub.rs`, `src/app/chef.rs` – the tamale chef: its tools and prompt,
+  reaching sessions through the hub, its kitchen panel and every session's side of a side
+  question
+
+In a browser:
+
+- `src/browser.rs`, `src/browser/` – `/browser`: the local server, the page, the backend
+  that records changed cells, and input translation; `dist/` holds the built client
+- `browser/protocol` – the screen cells and input tamale exchanges with its browser client,
+  and with a terminal attached to a background session
+- `browser/client` – the browser client (Rust, compiled to WebAssembly by `browser/build.sh`)
+- `src/web.rs`, `src/web/` – `/web`: the server and its requests, and the page itself (HTML,
+  CSS, JavaScript)
+- `src/web/{mirror,render,artifacts}.rs` – what each tab was last sent, markdown and code as
+  HTML, and the artifacts a reply ends in
+- `src/web/{pullspace,diff}.rs` – reads of the workspace's files, for the code view, and of its
+  changes
+- `src/web/wire.rs` – the `/web` messages tamale reads as well as writes (status, approval,
+  entries), shared with `src/remote.rs`
+- `src/web/fixtures.rs` – keeps the samples the iPhone app is tested against current
+- `src/app/web.rs` – what the web UI shows of the session, and its input back to the app
+
+Remote access:
+
+- `src/web/relay.rs`, `src/web/e2e.rs` – `/remote`: the session's connection to a tamale-hub,
+  and the end-to-end encryption over it
+- `src/remote.rs` – driving a session on another machine through the hub
+- `hub/` – tamale-hub: `src/main.rs` is its command line, `src/state.rs` its keys,
+  `src/serve.rs` and `src/serve/` the relay, and `static/` its page
+- `hub/protocol` – the frames tamale and tamale-hub exchange, and what's derived from a key
+- `apple/` – the iPhone app (see [`apple/README.md`](../apple/README.md))
 
 ## Performance
 

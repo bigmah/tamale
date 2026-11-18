@@ -52,7 +52,7 @@ stand-in tamale session (`fake_session_for_the_apple_app` in `src/web.rs`), whic
 prompts with a reply and an artifact.
 
 **Fixtures.** `apple/Fixtures` is written by `src/web/fixtures.rs` (e2e vectors and `/web`
-messages) and `hub/src/serve.rs` (the session list). `cargo test` fails when they're stale, so a
+messages) and `hub/src/serve/tests.rs` (the session list). `cargo test` fails when they're stale, so a
 change in `src/web.rs` that would break the app's decoding fails in the same PR:
 
 ```sh

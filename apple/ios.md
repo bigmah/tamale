@@ -65,8 +65,7 @@ not even as a first step.
 - iCloud sync of notes between iPhone and iPad.
 - Mac Catalyst / macOS. The code should allow it, but it isn't a goal.
 
-**Not planned:** making keys in the app (the site does that, and `single_key.md` keeps it
-there), the `/browser` terminal mirror, or running tamale on the device.
+**Not planned:** making keys in the app (keys are only ever made on the hub's site), the `/browser` terminal mirror, or running tamale on the device.
 
 ## Architecture
 

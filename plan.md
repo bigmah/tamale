@@ -1,5 +1,13 @@
 # Plan: tamale-hub (remote access to tamale sessions)
 
+> **Superseded.** This is the first plan, kept for its goal and reasoning. Two things it
+> describes were replaced: a session is now served from a subdomain of its own, with its page
+> coming from its tamale, rather than from `/s/<sid>/` on the hub with the hub's copy of the
+> page; and one key, made on the hub's site, took the place of the agent and view tokens. How
+> it works now is in [`docs/remote-access.md`](docs/remote-access.md) and
+> [`docs/self-hosting.md`](docs/self-hosting.md), and the encryption added since is in
+> [`e2e.md`](e2e.md).
+
 ## Goal
 
 Drive any running tamale session from a phone or another computer, wherever that session

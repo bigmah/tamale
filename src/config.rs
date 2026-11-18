@@ -42,7 +42,7 @@ pub struct HubSettings {
     /// off is for debugging.
     pub e2e: bool,
     /// The key, as the hub's site made it. Only from `TAMALE_HUB_KEY`, never a settings
-    /// file; tamale never makes one (see `single_key.md`).
+    /// file; tamale never makes one (see `docs/remote-access.md`).
     #[serde(skip)]
     pub key: Option<String>,
     /// Whether `TAMALE_HUB_TOKEN`, which keys replaced, is still set.

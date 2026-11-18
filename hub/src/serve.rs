@@ -11,7 +11,7 @@
 //! socket).
 //!
 //! Credentials: the hub never sees a key, only the auth value derived from it (see
-//! `single_key.md`). The dashboard keeps the browser's auth values in an `HttpOnly` cookie
+//! `tamale_hub_protocol::auth_value`). The dashboard keeps the browser's auth values in an `HttpOnly` cookie
 //! that only the public host ever sees. Opening a session trades it for a one-time
 //! ticket, which the session host trades for a cookie of its own, signed and scoped to
 //! that one session (see [`SessionCookie`]). A session's page, even a hostile one, so

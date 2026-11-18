@@ -1,9 +1,10 @@
 # End-to-end encryption between tamale and the browser
 
-> **Keys changed: see [`single_key.md`](single_key.md).** The per-machine pairing key, scanning a
+> **Keys changed: see [`docs/remote-access.md`](docs/remote-access.md).** The per-machine pairing key, scanning a
 > code from the terminal, `/web remote pair` and `rekey` are gone. The PSK now comes from the one
 > key every machine and browser share. The handshake, sealed labels and artifacts below are as
-> built.
+> built. `tunnel_plan.md`, the relay's plan that this was phase 2 of, is no longer in the
+> repository.
 
 **Status:** phases 2a to 2d are built; 2e is still to come. Two things differ from the first
 version of this plan, both forced by the code: messages over 64 KB go in pieces (see

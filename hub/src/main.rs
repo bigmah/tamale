@@ -1,6 +1,6 @@
 //! tamale-hub: a self-hosted relay that makes tamale sessions reachable from a phone or
 //! another computer. tamales connect out to it with a key; browsers holding the same key
-//! list and drive them. See single_key.md and tunnel_plan.md in the tamale repo.
+//! list and drive them. See docs/remote-access.md and docs/self-hosting.md in the tamale repo.
 
 mod serve;
 mod state;

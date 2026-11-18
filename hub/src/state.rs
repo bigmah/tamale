@@ -1,5 +1,5 @@
 //! The hub's only persistent state: keys, as SHA-256 hashes of their auth values (see
-//! `single_key.md`), in one `state.json`. The hub never sees a key itself.
+//! `tamale_hub_protocol::auth_value`), in one `state.json`. The hub never sees a key itself.
 //!
 //! The CLI edits it under an advisory lock and replaces it atomically (temp file +
 //! rename); `serve` notices the new mtime and reloads. The file also holds a random

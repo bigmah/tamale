@@ -1,4 +1,4 @@
-// What the hub's page needs of a key (see single_key.md): making one, the values derived from
+// What the hub's page needs of a key (as in hub/protocol/src/lib.rs): making one, the values derived from
 // it, and opening the session list's sealed labels. The key itself never reaches the hub.
 // Nothing here touches the page, so noise.test.mjs can check it against tamale.
 

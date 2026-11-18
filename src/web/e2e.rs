@@ -2,7 +2,7 @@
 //! moves opaque bytes. The design and threat model are in `e2e.md`.
 //!
 //! The handshake's secret (PSK) comes from the key every machine and browser share (see
-//! `single_key.md`), and never reaches the hub. From it come the id browsers find their key
+//! `tamale_hub_protocol::e2e_secret`), and never reaches the hub. From it come the id browsers find their key
 //! by and the key that seals the session list's labels. Each browser channel then runs a
 //! Noise NNpsk0 handshake for keys of its own; `src/web/noise.js` is the other end.
 
