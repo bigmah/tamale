@@ -41,7 +41,15 @@ kbd { font: 11px var(--mono); padding: 1px 5px; border: 1px solid var(--border);
 .rail-off .rail { display: none; }
 .rail-off .rail-seam { width: 5px; background: var(--bg-2); border-right: 1px solid var(--border); cursor: e-resize; }
 .rail-off .rail-seam:hover, .rail-off .rail-seam:focus-visible { background: var(--accent); }
-[data-view="public"] .rail-seam { display: none; }
+/* The put-away list's way back: a slim strip with a chevron at the top. */
+.rail-show {
+  display: none; flex: none; width: 28px; padding: calc(10px + env(safe-area-inset-top)) 0 0 env(safe-area-inset-left);
+  border-radius: 0; background: var(--bg-1); color: var(--fg-dim); align-items: flex-start; justify-content: center;
+}
+.rail-show svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.rail-show:hover, .rail-show:focus-visible { color: var(--fg-bright); background: var(--bg-2); outline: none; }
+.rail-off .rail-show { display: flex; }
+[data-view="public"] .rail-seam, [data-view="public"] .rail-show { display: none; }
 /* Over the frames while the seam is dragged: they'd swallow the pointer. */
 .dragmask { position: fixed; inset: 0; z-index: 100; cursor: col-resize; }
 .brand { display: inline-flex; align-items: center; gap: 8px; color: inherit; text-decoration: none; }
@@ -203,7 +211,7 @@ button.link { background: none; color: var(--fg-faint); padding: 0; margin-top: 
 /* ---------- narrow: one thing at a time, the list being home ---------- */
 @media (max-width: 760px) {
   .rail { width: 100%; }
-  .rail-seam { display: none; }
+  .rail-seam, .rail-off .rail-show { display: none; }
   .rail-off .rail { display: flex; }
   body:not([data-view="home"]) .rail { display: none; }
   [data-view="home"] .stage { display: none; }

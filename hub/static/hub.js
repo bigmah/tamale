@@ -761,6 +761,7 @@ seam.addEventListener('pointerdown', (ev) => {
   addEventListener('pointercancel', done);
 });
 seam.addEventListener('dblclick', () => setRail(null, false));
+$('rail-show').addEventListener('click', () => setRail(railWidth, false));
 seam.addEventListener('keydown', (ev) => {
   if (ev.key === 'Enter' || ev.key === ' ') {
     ev.preventDefault();

@@ -26,6 +26,10 @@
     <button type="button" class="rail-clear" id="clear-offline" hidden>Clear offline</button>
     <button type="button" class="rail-keys" id="open-keys">Keys</button>
   </aside>
+  <!-- Only while the list is put away: a plain way to get it back. -->
+  <button type="button" class="rail-show" id="rail-show" aria-label="Show the sessions" title="Show the sessions">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5"/></svg>
+  </button>
   <!-- Drag to resize the list, or all the way left to put it away; a click brings it back. -->
   <div class="rail-seam" id="rail-seam" role="separator" aria-orientation="vertical" aria-label="Resize the session list" tabindex="0"></div>
 
