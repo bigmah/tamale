@@ -434,7 +434,8 @@ mod hub {
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::remote::{self, Approval, Connection, Event, HubSession, Incoming, Status};
+    use crate::remote::{self, Connection, Event, HubSession, Incoming};
+    use crate::web::{Approval, Status};
 
     /// An open channel to one session, with what it has said so far.
     pub(super) struct Link {

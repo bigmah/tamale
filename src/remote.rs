@@ -9,7 +9,6 @@ use std::time::Duration;
 
 use anyhow::{Context, anyhow};
 use futures::{SinkExt, StreamExt};
-use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -19,6 +18,7 @@ use tokio_tungstenite::tungstenite::{self, Message};
 use crate::config::HubSettings;
 use crate::session::Entry;
 use crate::web::e2e::{self, Keys};
+use crate::web::{Approval, Status, wire};
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 const PING: Duration = Duration::from_secs(25);
@@ -121,44 +121,6 @@ fn parse_sessions(list: &Value, keys: &Keys) -> Vec<HubSession> {
         .collect()
 }
 
-/// What a session's `status` message says, as far as the terminal shows it.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
-#[serde(default)]
-pub struct Status {
-    pub project: String,
-    pub cwd: String,
-    pub model: String,
-    pub mode: String,
-    pub running: bool,
-    pub compacting: bool,
-    /// Unix seconds when the current run began.
-    pub since: Option<u64>,
-    /// What the run is doing now, and since when (see `app::activity::step`).
-    pub step: String,
-    pub step_kind: String,
-    pub step_since: Option<u64>,
-    pub steps: usize,
-    pub sub_steps: usize,
-    pub context: u64,
-    pub window: u64,
-    pub cost: f64,
-    pub queued: Vec<String>,
-    /// Whether it's a tamale chef.
-    pub chef: bool,
-    /// Whether it answers side questions (`ask`), as tamales since the chef do.
-    pub asks: bool,
-}
-
-/// A tool call waiting for an answer.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
-#[serde(default)]
-pub struct Approval {
-    pub name: String,
-    pub summary: String,
-    pub description: String,
-    pub always: Vec<String>,
-}
-
 /// A `/web` message this end acts on.
 pub enum Incoming {
     /// The entries from `from` on, replacing what's there.
@@ -172,14 +134,20 @@ pub enum Incoming {
 fn parse_incoming(text: &str) -> Option<Incoming> {
     let mut message: Value = serde_json::from_str(text).ok()?;
     match message["t"].as_str()? {
-        "entries" => Some(Incoming::Entries {
-            from: message["from"].as_u64()? as usize,
-            items: message["items"]
-                .as_array()?
-                .iter()
-                .filter_map(parse_entry)
-                .collect(),
-        }),
+        "entries" => {
+            let Value::Array(items) = message["items"].take() else {
+                return None;
+            };
+            Some(Incoming::Entries {
+                from: message["from"].as_u64()? as usize,
+                // An entry of a kind this tamale doesn't know is left out.
+                items: items
+                    .into_iter()
+                    .filter_map(|item| serde_json::from_value::<wire::Entry>(item).ok())
+                    .map(wire::Entry::into_session)
+                    .collect(),
+            })
+        }
         "status" => Some(Incoming::Status(Box::new(
             serde_json::from_value(message["status"].take()).ok()?,
         ))),
@@ -193,38 +161,6 @@ fn parse_incoming(text: &str) -> Option<Incoming> {
         }),
         _ => None,
     }
-}
-
-fn parse_entry(item: &Value) -> Option<Entry> {
-    let text = |name: &str| item[name].as_str().unwrap_or("").to_string();
-    Some(match item["kind"].as_str()? {
-        "user" => Entry::User(text("text")),
-        "assistant" => Entry::Assistant(with_artifacts(&text("md"), &item["artifacts"])),
-        "note" => Entry::Note(text("md")),
-        "info" => Entry::Info(text("text")),
-        "error" => Entry::Error(text("text")),
-        "tool" => Entry::Tool {
-            name: text("name"),
-            summary: text("summary"),
-            description: text("description"),
-            output: item["output"]
-                .as_str()
-                .map(|output| (output.to_string(), item["error"].as_bool().unwrap_or(false))),
-        },
-        _ => return None,
-    })
-}
-
-/// Puts each artifact back where its marker is, as the kind of block the transcript shows
-/// as one line with its title. Its document stays on the other machine.
-fn with_artifacts(md: &str, artifacts: &Value) -> String {
-    let mut text = md.to_string();
-    for (n, artifact) in artifacts.as_array().into_iter().flatten().enumerate() {
-        let title = artifact["title"].as_str().unwrap_or("Artifact");
-        let block = format!("```html artifact\n<title>{title}</title>\n```");
-        text = text.replacen(&crate::web::artifact_marker(n), &block, 1);
-    }
-    text
 }
 
 /// How a connection is going.

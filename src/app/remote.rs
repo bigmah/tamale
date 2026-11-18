@@ -15,8 +15,9 @@ use unicode_width::UnicodeWidthStr;
 use super::transcript::Transcript;
 use super::view::{fmt_tokens, wrap_input};
 use super::{App, AppEvent, WHEEL_LINES, activity};
-use crate::remote::{Approval, Connection, Event as RemoteEvent, HubSession, Incoming, Status};
+use crate::remote::{Connection, Event as RemoteEvent, HubSession, Incoming};
 use crate::session::Entry;
+use crate::web::{Approval, Status};
 
 /// How long a new approval ignores keys, so typing can't answer it by accident.
 const KEY_GUARD: Duration = Duration::from_millis(300);

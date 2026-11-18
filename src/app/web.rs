@@ -126,9 +126,9 @@ have it next time."
             model: self.backend.model_label(&self.settings.model.name),
             backend: self.backend_label(),
             signed_in: self.backend.signed_in(),
-            mode: self.permissions.lock().unwrap().mode.as_str(),
-            effort: self.settings.model.effort.map(|e| e.as_str()),
-            thinking: self.settings.model.thinking.as_str(),
+            mode: self.permissions.lock().unwrap().mode.as_str().into(),
+            effort: self.settings.model.effort.map(|e| e.as_str().into()),
+            thinking: self.settings.model.thinking.as_str().into(),
             running: self.is_running(),
             compacting: self.compacting,
             since,
@@ -138,7 +138,7 @@ have it next time."
             } else {
                 String::new()
             },
-            step_kind: step.kind.as_str(),
+            step_kind: step.kind.as_str().into(),
             steps: step.steps,
             sub_steps: step.sub_steps,
             context: self.context_tokens,

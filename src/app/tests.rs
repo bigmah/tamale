@@ -2383,7 +2383,8 @@ async fn sessions_picker_joins_stops_and_keeps_its_place() {
 #[tokio::test]
 async fn sessions_tab_lists_both_kinds_and_drives_a_remote_one() {
     use crate::background::{State, Status};
-    use crate::remote::{Approval, Event as RemoteEvent, HubSession, Incoming, Status as Remote};
+    use crate::remote::{Event as RemoteEvent, HubSession, Incoming};
+    use crate::web::{Approval, Status as Remote};
     let hub_session = |sid: &str, host: &str, title: &str| HubSession {
         sid: sid.into(),
         host: host.into(),

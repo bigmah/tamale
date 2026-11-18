@@ -20,6 +20,7 @@ mod fixtures;
 mod pullspace;
 mod relay;
 mod render;
+pub mod wire;
 
 pub use relay::{Label, hostname, sid};
 
@@ -32,6 +33,7 @@ pub enum HubState<'a> {
     Connecting(Option<String>),
 }
 pub use render::{artifact_marker, artifact_title, is_artifact};
+pub use wire::{Approval, Status};
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -223,55 +225,6 @@ pub enum Choice {
     Yes,
     Always,
     No,
-}
-
-/// The session's state besides its entries, as the page's status bar shows it.
-#[derive(Serialize, PartialEq, Default, Clone, Debug)]
-pub struct Status {
-    pub project: String,
-    pub cwd: String,
-    pub dirs: Vec<String>,
-    pub model: String,
-    pub backend: String,
-    pub signed_in: bool,
-    pub mode: &'static str,
-    pub effort: Option<&'static str>,
-    pub thinking: &'static str,
-    pub running: bool,
-    pub compacting: bool,
-    /// Unix seconds when the current run began.
-    pub since: Option<u64>,
-    /// Unix seconds when the run's current step (model request, tool call, wait) began.
-    pub step_since: Option<u64>,
-    /// What the run is doing now (a tool's description, "Thinking", …), its kind (think,
-    /// write, tool, subagent, wait, compact), its tool calls so far and its subagent's.
-    pub step: String,
-    pub step_kind: &'static str,
-    pub steps: usize,
-    pub sub_steps: usize,
-    pub context: u64,
-    pub window: u64,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cost: f64,
-    pub cost_partial: bool,
-    pub goal: Option<String>,
-    /// Where the goal stands, as the TUI shows it: `goal 3/20 · 4m`, `goal paused 3/20`, ….
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub goal_state: Option<String>,
-    pub queued: Vec<String>,
-    /// Whether this session is a tamale chef (see `crate::chef`).
-    pub chef: bool,
-    /// Whether it answers a chef's side questions (`ask`); older tamales don't.
-    pub asks: bool,
-}
-
-#[derive(Serialize, PartialEq, Clone, Debug)]
-pub struct Approval {
-    pub name: String,
-    pub summary: String,
-    pub description: String,
-    pub always: Vec<String>,
 }
 
 /// The agent's `ask_user` questions, waiting for answers.
@@ -789,8 +742,8 @@ impl Mirror {
         if same < keys.len() || same < self.entries.len() {
             self.entries.truncate(same);
             for (key, entry) in keys[same..].iter().zip(&view.entries[same..]) {
-                let json =
-                    entry_json(entry, &self.artifacts, view.artifact_dir.as_deref()).to_string();
+                let entry = wire_entry(entry, &self.artifacts, view.artifact_dir.as_deref());
+                let json = json!(entry).to_string();
                 self.entries.push((*key, json));
             }
             out.push(self.entries_message(same));
@@ -917,9 +870,15 @@ fn entry_key(entry: &Entry) -> u64 {
     h.finish()
 }
 
-fn entry_json(entry: &Entry, artifacts: &Mutex<Artifacts>, dir: Option<&std::path::Path>) -> Value {
+/// `entry` as an `entries` message carries it, its finished artifacts registered so they
+/// can be asked for.
+fn wire_entry(
+    entry: &Entry,
+    artifacts: &Mutex<Artifacts>,
+    dir: Option<&std::path::Path>,
+) -> wire::Entry {
     match entry {
-        Entry::User(text) => json!({ "kind": "user", "text": text }),
+        Entry::User(text) => wire::Entry::User { text: text.clone() },
         Entry::Assistant(text) => {
             let mut artifacts = artifacts.lock().unwrap();
             let mut register = |html: &str| artifacts.register(html, dir);
@@ -927,26 +886,30 @@ fn entry_json(entry: &Entry, artifacts: &Mutex<Artifacts>, dir: Option<&std::pat
             // For native clients, which render markdown themselves: the text without its
             // artifacts, and the artifacts to put where their markers are.
             let (md, blocks) = render::split_artifacts(text);
-            let blocks: Vec<Value> = blocks
+            let artifacts = blocks
                 .iter()
-                .map(|(body, done)| {
-                    let id = done.then(|| {
+                .map(|(body, done)| wire::Artifact {
+                    id: done.then(|| {
                         let url = register(body);
                         url.trim_start_matches("/artifact/").to_string()
-                    });
-                    json!({
-                        "id": id,
-                        "title": render::artifact_title(body).unwrap_or_else(|| "Artifact".into()),
-                        "done": done,
-                        "hash": done.then(|| content_hash(body)),
-                    })
+                    }),
+                    title: render::artifact_title(body).unwrap_or_else(|| "Artifact".into()),
+                    done: *done,
+                    hash: done.then(|| content_hash(body)),
                 })
                 .collect();
-            json!({ "kind": "assistant", "html": html, "md": md, "artifacts": blocks })
+            wire::Entry::Assistant {
+                html,
+                md,
+                artifacts,
+            }
         }
-        Entry::Note(text) => json!({ "kind": "note", "html": render::markdown(text), "md": text }),
-        Entry::Info(text) => json!({ "kind": "info", "text": text }),
-        Entry::Error(text) => json!({ "kind": "error", "text": text }),
+        Entry::Note(text) => wire::Entry::Note {
+            html: render::markdown(text),
+            md: text.clone(),
+        },
+        Entry::Info(text) => wire::Entry::Info { text: text.clone() },
+        Entry::Error(text) => wire::Entry::Error { text: text.clone() },
         Entry::Tool {
             name,
             summary,
@@ -956,14 +919,18 @@ fn entry_json(entry: &Entry, artifacts: &Mutex<Artifacts>, dir: Option<&std::pat
             let (output, error, cut) = match output {
                 Some((text, error)) => {
                     let (text, cut) = clip(text, MAX_TOOL_OUTPUT);
-                    (Some(text), *error, cut)
+                    (Some(text.to_string()), *error, cut)
                 }
                 None => (None, false, false),
             };
-            json!({
-                "kind": "tool", "name": name, "summary": summary, "description": description,
-                "output": output, "error": error, "cut": cut,
-            })
+            wire::Entry::Tool {
+                name: name.clone(),
+                summary: summary.clone(),
+                description: description.clone(),
+                output,
+                error,
+                cut,
+            }
         }
     }
 }
@@ -2257,8 +2224,8 @@ document.getElementById('m').innerHTML = html;
                 model: "Claude Opus 5.5".into(),
                 backend: "Anthropic API".into(),
                 signed_in: true,
-                mode: "ask",
-                thinking: "adaptive",
+                mode: "ask".into(),
+                thinking: "adaptive".into(),
                 window: 200_000,
                 context: 18_000,
                 cost: 0.21,
@@ -2363,9 +2330,9 @@ document.getElementById('m').innerHTML = html;
             model: "Claude Opus 5.5".into(),
             backend: "Anthropic API".into(),
             signed_in: true,
-            mode: "ask",
-            effort: Some("high"),
-            thinking: "adaptive",
+            mode: "ask".into(),
+            effort: Some("high".into()),
+            thinking: "adaptive".into(),
             window: 200_000,
             context: 31_400,
             cost: 0.42,
@@ -2597,7 +2564,7 @@ document.getElementById('m').innerHTML = html;
         let (text, cut) = clip("aé", 2);
         assert_eq!((text, cut), ("a", true));
         assert_eq!(clip("abc", 10), ("abc", false));
-        let tool = entry_json(
+        let tool = wire_entry(
             &Entry::Tool {
                 name: "read_file".into(),
                 summary: "src/main.rs".into(),
@@ -2607,7 +2574,10 @@ document.getElementById('m').innerHTML = html;
             &Mutex::default(),
             None,
         );
-        assert_eq!(tool["cut"], true);
-        assert_eq!(tool["output"].as_str().unwrap().len(), MAX_TOOL_OUTPUT);
+        let wire::Entry::Tool { output, cut, .. } = tool else {
+            panic!("not a tool: {tool:?}");
+        };
+        assert!(cut);
+        assert_eq!(output.unwrap().len(), MAX_TOOL_OUTPUT);
     }
 }
