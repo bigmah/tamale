@@ -7,12 +7,46 @@ use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 
-use super::{App, SPINNER, WebRequest};
+use futures::FutureExt;
+use futures::future::BoxFuture;
+use serde_json::{Value, json};
+
+use super::{App, AppEvent, ModelInfo, SPINNER, WebRequest};
 use crate::permissions::Approval;
 use crate::session::Entry;
 use crate::web;
 
 impl App {
+    /// The page's model picker: the list `/model` shows in the terminal, which model is in
+    /// use, and why the list is only the built-in one if it is. Fetched once, then kept for
+    /// both pickers.
+    pub fn web_models(&self, seq: u64) -> BoxFuture<'static, Value> {
+        let current = self.backend.model_label(&self.settings.model.name);
+        let reply = move |models: &[ModelInfo], error: Option<String>| {
+            json!({ "t": "models", "seq": seq, "current": current, "models": models, "error": error })
+        };
+        if let Some(models) = &self.models {
+            let reply = reply(models, None);
+            return async move { reply }.boxed();
+        }
+        let backend = self.backend.clone();
+        let tx = self.tx.clone();
+        async move {
+            match backend.list_models().await {
+                Ok(list) if !list.is_empty() => {
+                    let models: Vec<ModelInfo> = list
+                        .into_iter()
+                        .map(|(id, name)| ModelInfo { id, name })
+                        .collect();
+                    let _ = tx.send(AppEvent::Models(Ok(models.clone())));
+                    reply(&models, None)
+                }
+                other => reply(&super::commands::fallback_models(&backend), other.err()),
+            }
+        }
+        .boxed()
+    }
+
     pub fn take_web_request(&mut self) -> Option<WebRequest> {
         self.web_request.take()
     }

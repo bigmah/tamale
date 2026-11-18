@@ -129,20 +129,7 @@ impl App {
                         "Couldn't fetch model list ({e}); showing built-in list."
                     )));
                 }
-                match &self.backend {
-                    // A provider's built-in list is the model it's configured with.
-                    crate::backend::Backend::Compat(compat) => vec![ModelInfo {
-                        id: compat.default_model.clone(),
-                        name: compat.default_model.clone(),
-                    }],
-                    _ => FALLBACK_MODELS
-                        .iter()
-                        .map(|(id, name)| ModelInfo {
-                            id: id.to_string(),
-                            name: name.to_string(),
-                        })
-                        .collect(),
-                }
+                fallback_models(&self.backend)
             }
         };
         if let Some(picker) = &mut self.picker {
@@ -498,5 +485,23 @@ impl App {
                 "Unknown command: {other} (type /help to see all commands)"
             ))),
         }
+    }
+}
+
+/// The models to offer when the backend can't list its own.
+pub(super) fn fallback_models(backend: &crate::backend::Backend) -> Vec<ModelInfo> {
+    match backend {
+        // A provider's built-in list is the model it's configured with.
+        crate::backend::Backend::Compat(compat) => vec![ModelInfo {
+            id: compat.default_model.clone(),
+            name: compat.default_model.clone(),
+        }],
+        _ => FALLBACK_MODELS
+            .iter()
+            .map(|(id, name)| ModelInfo {
+                id: id.to_string(),
+                name: name.to_string(),
+            })
+            .collect(),
     }
 }

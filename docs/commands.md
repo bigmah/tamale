@@ -35,7 +35,8 @@
   (its description) with no output, and only the last 5 steps of a run are shown. Verbose shows
   every step with the full call and an output preview.
 - `/help` opens a scrollable popup listing all commands, keys and tools
-- `/model` opens a model picker (live list from the Anthropic API; type to filter, Enter to switch).
+- `/model` opens a model picker (the backend's live list: the Anthropic API's, Codex's or a
+  provider's; type to filter, Enter to switch), in the terminal and in the web UI alike.
   `/model <id>` switches directly. The conversation is kept when switching.
 - `/effort` opens an effort picker (↑/↓ or j/k to move, 1–6 to jump, Enter to apply, Esc to
   cancel; the current level is marked with ●). `/effort <level>` sets it directly (`low`,

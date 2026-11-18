@@ -207,6 +207,8 @@ pub enum WebEvent {
     /// The hub refused this tamale chef because its key has another one online, with the
     /// hub's reason.
     ChefTaken(String),
+    /// Tab `tab` opened the model picker and wants the list, for its request `seq`.
+    Models { tab: u64, seq: u64 },
     /// A side question from a tamale chef, answered from this session's context without
     /// adding to its conversation. The answer goes back to tab `tab` with [`Replier`].
     Ask {
@@ -1140,6 +1142,9 @@ fn handle(shared: &Arc<Shared>, id: u64, request: Value) {
         "close" => {
             let _ = shared.events.send(WebEvent::Close);
         }
+        "models" => {
+            let _ = shared.events.send(WebEvent::Models { tab: id, seq });
+        }
         // A chef's side question. Only clients that are another tamale ask (a page has no
         // use for it), and the answer goes back to just the one that asked.
         "ask" => {
@@ -1538,6 +1543,13 @@ mod tests {
         assert_eq!((server.remote_tabs(), server.web_remote_tabs()), (1, 1));
         handle(&server.shared, id, json!({ "t": "send", "text": "a" }));
         assert!(matches!(server.events.recv().await, Some(WebEvent::Send(t)) if t == "a"));
+
+        // The model picker's list comes from the session, back to this tab alone.
+        handle(&server.shared, id, json!({ "t": "models", "seq": 4 }));
+        assert!(matches!(
+            server.events.recv().await,
+            Some(WebEvent::Models { tab, seq: 4 }) if tab == id
+        ));
 
         handle(&server.shared, id, json!({ "t": "terminal" }));
         assert_eq!((server.remote_tabs(), server.web_remote_tabs()), (1, 0));

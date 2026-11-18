@@ -543,6 +543,9 @@ function onMessage(m) {
       return onArtifact(m);
     case 'kitchen':
       return applyKitchen(m.kitchen);
+    case 'models':
+      if (m.seq === latest.models) applyModels(m);
+      return;
   }
 }
 
@@ -1115,7 +1118,7 @@ $('mode').onclick = () => {
   const next = MODES[(MODES.indexOf(state.status?.mode) + 1) % MODES.length];
   send({ t: 'send', text: `/permissions ${next}` });
 };
-$('model').onclick = () => setInput('/model ');
+$('model').onclick = () => openModels();
 
 // ---------------------------------------------------------------- closing the session
 //
@@ -1701,7 +1704,7 @@ function submit() {
 const COMMANDS = [
   { name: '/review', desc: 'Show the code and its uncommitted changes; /review <path> opens a file there', local: true },
   { name: '/help', desc: 'Commands and shortcuts', local: true },
-  { name: '/model', args: '<id>', desc: 'Switch models, e.g. claude-opus-5-5' },
+  { name: '/model', args: '[id]', desc: 'Pick a model from the list, or switch to one: /model <id>' },
   { name: '/effort', args: '<level>', desc: 'low, medium, high, xhigh, max or default' },
   { name: '/thinking', args: '[on|off]', desc: 'Toggle adaptive thinking' },
   { name: '/permissions', args: '[mode]', desc: 'Show the rules, or set ask, accept-edits, auto' },
@@ -1719,8 +1722,6 @@ const COMMANDS = [
 
 /** Commands that open a picker or screen in the terminal when given no arguments. */
 const TERMINAL_ONLY = {
-  '/model': 'Pick a model with `/model <id>` here, or `/model` in the terminal for the list.',
-  '/models': 'Pick a model with `/model <id>` here, or `/model` in the terminal for the list.',
   '/effort': 'Set it with `/effort <level>`: low, medium, high, xhigh, max or default.',
   '/resume': 'Resume with `/resume <n|id>` here, or `/resume` in the terminal for the list.',
   '/continue': 'Resume with `/resume <n|id>` here, or `/resume` in the terminal for the list.',
@@ -1756,6 +1757,11 @@ function runLocal(text) {
       return true;
     case '/artifacts':
       openArtifacts();
+      return true;
+    case '/model':
+    case '/models':
+      if (arg) return false;
+      openModels();
       return true;
   }
   if (TERMINAL_ONLY[name] && (!rest.length || ['/rewind', '/login', '/paste', '/browser'].includes(name))) {
@@ -2405,6 +2411,128 @@ $('art-find').addEventListener('keydown', (ev) => {
 $('art-close').onclick = closeArtifacts;
 $('toggle-artifacts').onclick = () => ($('artifacts').hidden ? openArtifacts() : closeArtifacts());
 
+// ---------------------------------------------------------------- model picker
+
+/**
+ * The models the session's backend offers (the list `/model` shows in the terminal), which
+ * is in use, and the rows the filter leaves. Picking one sends `/model <id>`.
+ */
+const picker = { open: false, models: [], current: '', rows: [], at: 0 };
+
+function openModels() {
+  if (picker.open) return;
+  picker.open = true;
+  $('models').hidden = false;
+  $('model-find').value = '';
+  $('model-note').hidden = true;
+  $('model-list').innerHTML = '<div class="pickempty">Loading models…</div>';
+  picker.models = [];
+  request('models');
+  // After whatever opened it is done: sending `/model` from the prompt clears and focuses it.
+  if (!touch.matches) queueMicrotask(() => picker.open && $('model-find').focus());
+  pushLayer(closeModels);
+}
+
+function closeModels() {
+  if (!picker.open) return;
+  picker.open = false;
+  $('models').hidden = true;
+  dropLayer(closeModels);
+  focusPrompt();
+}
+
+function applyModels(m) {
+  picker.models = m.models || [];
+  picker.current = m.current || '';
+  const note = $('model-note');
+  note.hidden = !m.error;
+  note.textContent = m.error ? `Couldn't fetch the provider's list (${m.error}); these are the built-in ones. /model <id> takes any id.` : '';
+  renderModels(true);
+}
+
+/** Each word of the filter, somewhere in the model's id or name. */
+function modelMatches(model, words) {
+  const hay = `${model.id} ${model.name}`.toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+
+function renderModels(toCurrent = false) {
+  const query = $('model-find').value.trim();
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  picker.rows = picker.models.filter((m) => modelMatches(m, words));
+  // An id that isn't listed can still be used, as `/model <id>` would.
+  if (query && !/\s/.test(query) && !picker.rows.length && picker.models.length) {
+    picker.rows.push({ id: query, name: `Use “${query}”`, typed: true });
+  }
+  const current = picker.rows.findIndex((m) => m.id === picker.current);
+  picker.at = toCurrent && current >= 0 ? current : 0;
+  const list = $('model-list');
+  list.innerHTML = '';
+  if (!picker.rows.length) {
+    list.append(h('div', { class: 'pickempty', text: picker.models.length ? 'No models match.' : 'No models.' }));
+    return;
+  }
+  const listed = picker.rows.filter((m) => !m.typed).length;
+  if (picker.models.length > 1) {
+    list.append(h('div', { class: 'model-count', text: words.length ? `${listed} of ${picker.models.length} models` : `${picker.models.length} models` }));
+  }
+  picker.rows.forEach((m, i) => {
+    const on = m.id === picker.current;
+    list.append(
+      h('button', {
+        class: 'model-row',
+        role: 'option',
+        id: `model-${i}`,
+        'aria-selected': i === picker.at ? 'true' : 'false',
+        title: m.id,
+        onclick: () => chooseModel(i),
+      },
+        h('span', { class: 'tick', html: on ? ICON.check : '' }),
+        h('span', { class: 'names' },
+          h('span', { class: 'n', text: m.name || m.id }),
+          m.name && m.name !== m.id && !m.typed ? h('span', { class: 'id', text: m.id }) : null)),
+    );
+  });
+  selectModel(picker.at);
+}
+
+function selectModel(i) {
+  if (!picker.rows.length) return;
+  picker.at = Math.max(0, Math.min(i, picker.rows.length - 1));
+  for (const row of $('model-list').querySelectorAll('.model-row')) {
+    const on = row.id === `model-${picker.at}`;
+    row.classList.toggle('on', on);
+    row.setAttribute('aria-selected', on ? 'true' : 'false');
+    if (on) row.scrollIntoView({ block: 'nearest' });
+  }
+  $('model-find').setAttribute('aria-activedescendant', `model-${picker.at}`);
+}
+
+function chooseModel(i) {
+  const model = picker.rows[i];
+  if (!model) return;
+  closeModels();
+  if (model.id !== picker.current) send({ t: 'send', text: `/model ${model.id}` });
+}
+
+$('model-find').addEventListener('input', () => renderModels());
+$('model-find').addEventListener('keydown', (ev) => {
+  if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+    ev.preventDefault();
+    selectModel(picker.at + (ev.key === 'ArrowDown' ? 1 : -1));
+  } else if (ev.key === 'PageDown' || ev.key === 'PageUp') {
+    ev.preventDefault();
+    selectModel(picker.at + (ev.key === 'PageDown' ? 8 : -8));
+  } else if (ev.key === 'Enter') {
+    ev.preventDefault();
+    chooseModel(picker.at);
+  }
+});
+$('model-close').onclick = closeModels;
+$('models').addEventListener('mousedown', (ev) => {
+  if (ev.target === $('models')) closeModels();
+});
+
 // ---------------------------------------------------------------- help
 
 const KEYS = [
@@ -2443,6 +2571,7 @@ addEventListener('keydown', (ev) => {
     if (!$('ending').hidden) return closeEndDialog();
     if (!$('help').hidden) return ($('help').hidden = true);
     if (!$('artifacts').hidden) return closeArtifacts();
+    if (picker.open) return closeModels();
     if (state.status?.running) {
       ev.preventDefault();
       return send({ t: 'interrupt' });
@@ -2454,7 +2583,7 @@ addEventListener('keydown', (ev) => {
   // Typing anywhere that isn't a field goes to the prompt.
   const t = ev.target;
   if (t.matches?.('input, textarea') || mod || ev.altKey || ev.key.length !== 1) return;
-  if (!$('help').hidden || !$('artifacts').hidden || !$('ending').hidden) return;
+  if (!$('help').hidden || !$('artifacts').hidden || !$('ending').hidden || picker.open) return;
   input.focus();
 });
 

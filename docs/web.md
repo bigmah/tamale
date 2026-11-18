@@ -113,9 +113,14 @@ back to the terminal, and `Ctrl+C` quits. Any number of tabs can be open.
   the chat, revised, downloaded or opened in a tab. Revising one from an earlier session
   points the model at its saved file. In the terminal, `/artifacts` lists this session's
   files.
-- Commands that open a picker in the terminal (`/model`, `/effort`, `/resume`,
-  `/backend` with no arguments, `/rewind`) explain their argument forms
-  instead. `/login` still runs in the terminal.
+- **Model picker.** `/model` in the page (or the model in the top bar) lists the models
+  the session's backend offers, the same list as the terminal's picker (a provider's
+  `/models` endpoint, so all of OpenRouter's for OpenRouter), with the one in use ticked.
+  Type to filter by id or name, `↑`/`↓` and `Enter` (or tap) to switch; an id that isn't
+  listed can still be typed and used. `/model <id>` switches directly.
+- Commands that open a picker in the terminal (`/effort`, `/resume`, `/backend` with no
+  arguments, `/rewind`) explain their argument forms instead. `/login` still runs in the
+  terminal.
 
 The address works the same way as `/browser`'s: the server listens only on 127.0.0.1
 with a random token, and checks the `Host` and `Origin` headers. The page also sends a

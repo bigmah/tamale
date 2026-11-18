@@ -163,6 +163,19 @@
     </div>
   </div>
 
+  <div class="pickmask" id="models" hidden>
+    <div class="pickbox modelbox" role="dialog" aria-label="Models">
+      <div class="art-hdr">
+        <input class="pickinput" id="model-find" placeholder="Filter models…" spellcheck="false" autocomplete="off" autocapitalize="off" role="combobox" aria-controls="model-list" aria-expanded="true">
+        <button class="iconbtn sm" id="model-close" title="Close (esc)">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+        </button>
+      </div>
+      <div class="model-note" id="model-note" hidden></div>
+      <div class="model-list" id="model-list" role="listbox" aria-label="Models"></div>
+    </div>
+  </div>
+
   <div class="pickmask" id="ending" hidden>
     <div class="pickbox endbox" role="alertdialog" aria-modal="true" aria-labelledby="end-title" aria-describedby="end-text">
       <h2 id="end-title">Close this session?</h2>

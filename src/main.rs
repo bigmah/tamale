@@ -661,6 +661,15 @@ async fn run(
                         web::WebEvent::Answer(answers) => app.web_answer(answers),
                         web::WebEvent::Close => app.should_quit = true,
                         web::WebEvent::ChefTaken(why) => app.on_chef_taken(why),
+                        web::WebEvent::Models { tab, seq } => {
+                            if let Some(web) = &web {
+                                let replier = web.replier();
+                                let models = app.web_models(seq);
+                                tokio::spawn(async move {
+                                    replier.send(tab, models.await.to_string());
+                                });
+                            }
+                        }
                         web::WebEvent::Ask { tab, id, question } => {
                             if let Some(web) = &web {
                                 let replier = web.replier();

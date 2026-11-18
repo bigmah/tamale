@@ -2956,3 +2956,92 @@ fn ctrl_h_is_backspace_in_the_prompt_too() {
     app.on_event(Event::Key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::CONTROL)));
     assert_eq!(app.input, "");
 }
+
+/// A provider whose `/v1/models` lists `models`, on localhost.
+async fn models_server(models: serde_json::Value) -> String {
+    let router = axum::Router::new().route(
+        "/v1/models",
+        axum::routing::get(move || {
+            let models = models.clone();
+            async move {
+                let list = serde_json::json!({ "object": "list", "data": models });
+                (
+                    [(axum::http::header::CONTENT_TYPE, "application/json")],
+                    list.to_string(),
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await });
+    format!("http://{addr}/v1/")
+}
+
+fn compat_backend(base_url: &str) -> Backend {
+    let provider = backend::ProviderSettings {
+        label: "Local".into(),
+        base_url: base_url.into(),
+        api_key_env: String::new(),
+        model: "served-model".into(),
+        max_tokens: None,
+    };
+    Backend::Compat(backend::Compat::connect("local", &provider).unwrap())
+}
+
+#[tokio::test]
+async fn the_web_model_picker_gets_the_list_the_terminal_shows() {
+    let model = |id: &str, name: &str| {
+        serde_json::json!({ "id": id, "object": "model", "created": 0, "owned_by": "x", "name": name })
+    };
+    let base_url = models_server(serde_json::json!([
+        model("z-ai/glm-4.6", "Z.ai: GLM 4.6"),
+        model("moonshotai/kimi-k2", "MoonshotAI: Kimi K2"),
+    ]))
+    .await;
+    let (mut app, mut rx) = App::new_with_channel(
+        compat_backend(&base_url),
+        test_settings("moonshotai/kimi-k2"),
+        Workspace::current().unwrap(),
+    );
+    let reply = app.web_models(7).await;
+    assert_eq!(
+        reply,
+        serde_json::json!({
+            "t": "models", "seq": 7, "current": "moonshotai/kimi-k2", "error": null,
+            "models": [
+                { "id": "moonshotai/kimi-k2", "name": "MoonshotAI: Kimi K2" },
+                { "id": "z-ai/glm-4.6", "name": "Z.ai: GLM 4.6" },
+            ],
+        })
+    );
+    // The list is kept, for the terminal's picker and the page's next look.
+    let models = loop {
+        match rx.recv().await {
+            Some(AppEvent::Models(result)) => break result,
+            Some(_) => continue,
+            None => panic!("the list wasn't kept"),
+        }
+    };
+    app.on_app_event(AppEvent::Models(models));
+    assert_eq!(app.models.as_ref().map(Vec::len), Some(2));
+    let again = app.web_models(8).await;
+    assert_eq!((&again["models"], &again["seq"]), (&reply["models"], &8.into()));
+}
+
+#[tokio::test]
+async fn without_a_list_the_web_model_picker_gets_the_built_in_one_and_why() {
+    // Nothing listens on the discard port.
+    let (app, _rx) = App::new_with_channel(
+        compat_backend("http://127.0.0.1:9/v1/"),
+        test_settings(""),
+        Workspace::current().unwrap(),
+    );
+    let reply = app.web_models(1).await;
+    assert_eq!(
+        reply["models"],
+        serde_json::json!([{ "id": "served-model", "name": "served-model" }])
+    );
+    assert_eq!(reply["current"], "served-model");
+    assert!(reply["error"].as_str().is_some_and(|e| !e.is_empty()), "{reply}");
+}

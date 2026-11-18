@@ -125,7 +125,7 @@ pub enum WebRequest {
     Close,
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize)]
 pub struct ModelInfo {
     id: String,
     name: String,
