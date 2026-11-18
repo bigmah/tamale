@@ -12,6 +12,7 @@
 //! - [`Backend::Unset`]: none chosen yet, while the TUI asks which to use.
 
 pub mod claude_code;
+mod cli;
 pub mod codex;
 pub mod compat;
 pub mod logins;
@@ -31,6 +32,7 @@ use tokio::sync::mpsc;
 use crate::agent::{self, AgentEvent, TurnConfig, TurnCtx};
 use crate::workspace::Workspace;
 pub use claude_code::ClaudeCode;
+use cli::Cli;
 pub use codex::Codex;
 pub use compat::{Compat, ProviderSettings};
 pub use subagent::Subagent;

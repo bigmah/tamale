@@ -1,4 +1,5 @@
 use serde_json::json;
+use tokio::sync::Mutex;
 
 use super::*;
 use crate::config::Settings;
@@ -87,7 +88,7 @@ fn sign_in_errors_point_to_login() {
         is_error: true,
         text: "Not logged in · Please run /login".into(),
     }
-    .into_result()
+    .into_result::<ClaudeCode>()
     .unwrap_err();
     assert!(
         error
@@ -98,7 +99,7 @@ fn sign_in_errors_point_to_login() {
         is_error: true,
         text: "Overloaded".into(),
     }
-    .into_result()
+    .into_result::<ClaudeCode>()
     .unwrap_err();
     assert_eq!(error.to_string(), "Overloaded");
 }
@@ -174,46 +175,6 @@ fn recorder_builds_history_and_events() {
     assert_eq!(results, vec![("src/a.rs:1".to_string(), false)]);
     // Text before the call, after its result, and the answer; never mid-call.
     assert_eq!(snapshots, vec![2, 3, 4]);
-}
-
-#[test]
-fn replays_earlier_conversation_without_the_new_prompt() {
-    let mut history = vec![
-        Message::user("first"),
-        Message::Assistant {
-            id: None,
-            content: vec![
-                AssistantContent::text("checking"),
-                AssistantContent::tool_call("t1", "read_file", json!({"path": "a.rs"})),
-            ],
-        },
-        Message::User {
-            content: vec![UserContent::tool_result_from_wire(
-                "t1",
-                "read_file",
-                vec![ToolResultContent::text("x".repeat(SEED_RESULT_CHARS + 10))],
-            )],
-        },
-    ];
-    agent::push_user_text(&mut history, "next".into());
-
-    let prior = without_prompt(&history, "next");
-    assert_eq!(prior.len(), 3);
-    let Message::User { content } = &prior[2] else {
-        panic!("tool results stay");
-    };
-    assert_eq!(content.len(), 1);
-
-    let prompt = seed(&prior, "next");
-    assert!(prompt.starts_with("<previous_conversation>"));
-    assert!(prompt.contains("[user]\nfirst\n"));
-    assert!(prompt.contains("[assistant]\nchecking\n"));
-    assert!(prompt.contains(r#"[tool call] read_file {"path":"a.rs"}"#));
-    assert!(prompt.contains("… [shortened]"));
-    assert!(prompt.ends_with("</previous_conversation>\n\nnext"));
-
-    assert_eq!(without_prompt(&[Message::user("only")], "only").len(), 0);
-    assert_eq!(seed(&[], "only"), "only");
 }
 
 #[test]

@@ -106,7 +106,7 @@ fn sign_in_errors_point_to_login() {
         is_error: true,
         text: "unexpected status 401 Unauthorized".into(),
     }
-    .into_result()
+    .into_result::<Codex>()
     .unwrap_err();
     assert!(
         error
@@ -117,7 +117,7 @@ fn sign_in_errors_point_to_login() {
         is_error: true,
         text: "Rate limited".into(),
     }
-    .into_result()
+    .into_result::<Codex>()
     .unwrap_err();
     assert_eq!(error.to_string(), "Rate limited");
 }

@@ -11,16 +11,15 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::OnceLock;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use rig_core::completion::message::{ToolResultContent, UserContent};
 use rig_core::completion::{AssistantContent, Message, Usage};
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::mpsc;
 
 use super::Turn;
-use super::claude_code::{AbortOnDrop, capitalize, seed, stderr_tail, without_prompt};
+use super::cli::{self, Cli, Outcome, capitalize, seed, without_prompt};
 use super::mcp::{self, Bridge, Tools};
 use crate::agent::{self, AgentEvent, Reasoning, TurnCtx};
 use crate::tools;
@@ -108,17 +107,9 @@ impl Codex {
 
     /// Signs this login out (`codex logout`), removing its stored credentials.
     pub async fn logout(&self) -> Result<()> {
-        let status = self
-            .command()
-            .arg("logout")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await
-            .context("couldn't run `codex logout`")?;
-        anyhow::ensure!(status.success(), "`codex logout` {status}");
-        Ok(())
+        let mut command = self.command();
+        command.arg("logout");
+        cli::sign_out(command, "codex logout").await
     }
 
     /// Whether both are signed in to the same account.
@@ -133,10 +124,8 @@ impl Codex {
 
     /// The label plus the account's email, to tell logins apart.
     pub fn label_with_account(&self) -> String {
-        match self.account.email.as_deref() {
-            Some(email) if self.account.logged_in => format!("{} · {email}", self.label()),
-            _ => self.label(),
-        }
+        let account = &self.account;
+        cli::label_with_account(self.label(), account.logged_in, account.email.as_deref())
     }
 
     pub async fn refresh(&mut self) -> Result<()> {
@@ -180,20 +169,7 @@ backend.codex_path if it isn't on PATH",
     /// Runs the interactive `codex login` in this terminal, then re-reads the sign-in
     /// state.
     pub async fn login(&mut self) -> Result<()> {
-        let mut child = self
-            .login_command()?
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .context("couldn't run `codex login`")?;
-        // Ctrl+C is meant for the sign-in, which shares tamale's process group.
-        let status = loop {
-            tokio::select! {
-                status = child.wait() => break status?,
-                _ = tokio::signal::ctrl_c() => {}
-            }
-        };
+        let status = cli::sign_in(self.login_command()?, "codex login").await?;
         self.finish_login(status.success(), &status.to_string())
             .await
     }
@@ -211,18 +187,7 @@ backend.codex_path if it isn't on PATH",
 
     pub async fn finish_login(&mut self, success: bool, status: &str) -> Result<()> {
         self.refresh().await?;
-        if !success {
-            let still = if self.account.logged_in {
-                "; still signed in to the previous account"
-            } else {
-                ""
-            };
-            bail!("Codex sign-in didn't complete (`codex login` {status}){still}");
-        }
-        if !self.account.logged_in {
-            bail!("Codex sign-in didn't complete");
-        }
-        Ok(())
+        cli::signed_in::<Self>("codex login", success, status, self.account.logged_in)
     }
 
     /// Where inference comes from, e.g. "Codex · Plus".
@@ -297,39 +262,13 @@ backend.codex_path if it isn't on PATH",
         files.insert(self.home.clone(), file.clone());
         Some(file)
     }
+}
+
+impl Cli for Codex {
+    const NAME: &'static str = "Codex";
+    const SIGN_IN_ERRORS: &'static [&'static str] = &["login", "log in", "401", "unauthorized"];
 
     /// Runs one turn: the whole tool loop happens inside one `codex exec` run.
-    pub async fn run(self, turn: Turn, ctx: TurnCtx, tx: mpsc::UnboundedSender<AgentEvent>) {
-        if let Err(e) = self.run_turn(turn, ctx, &tx).await {
-            let _ = tx.send(AgentEvent::Error(format!("{e:#}")));
-        }
-        let _ = tx.send(AgentEvent::Done);
-    }
-
-    /// Summarizes the history (the `/compact` command).
-    pub async fn compact(
-        self,
-        turn: Turn,
-        instructions: Option<String>,
-        tx: mpsc::UnboundedSender<AgentEvent>,
-    ) {
-        let result = async {
-            if turn.history.is_empty() {
-                bail!("nothing to compact");
-            }
-            let history = self
-                .summarize(&turn, &turn.history, instructions.as_deref(), &tx)
-                .await?;
-            let _ = tx.send(AgentEvent::History(history));
-            Ok(())
-        }
-        .await;
-        if let Err(e) = result {
-            let _ = tx.send(AgentEvent::Error(format!("compaction failed: {e:#}")));
-        }
-        let _ = tx.send(AgentEvent::Done);
-    }
-
     // Unlike the other backends there's no compaction check before a turn: Codex
     // compacts its own thread, and only reports usage summed over a whole turn.
     async fn run_turn(
@@ -342,12 +281,6 @@ backend.codex_path if it isn't on PATH",
             Some(_) => turn.prompt.clone(),
             None => seed(&without_prompt(&turn.history, &turn.prompt), &turn.prompt),
         };
-        let tools = Tools {
-            ctx: Some(Mutex::new(ctx)),
-            workspace: turn.workspace.clone(),
-            tx: tx.clone(),
-            chef: turn.config.chef,
-        };
         let run = Run {
             prompt,
             resume: turn.thread.clone(),
@@ -357,6 +290,7 @@ backend.codex_path if it isn't on PATH",
         let mut recorder = Recorder::new(turn.history.clone(), tx);
         let mut thread = turn.thread.clone();
         let mut usage = None;
+        let tools = cli::tools(&turn, Some(ctx), tx);
         let outcome = self
             .exchange(&turn, run, tools, |update| match update {
                 Update::Usage(u) => usage = Some(u),
@@ -370,9 +304,51 @@ backend.codex_path if it isn't on PATH",
         if let Some(total) = usage {
             self.report_usage(total, thread.as_deref(), tx);
         }
-        outcome.into_result()
+        outcome.into_result::<Self>()
     }
 
+    async fn summarize(
+        &self,
+        turn: &Turn,
+        history: &[Message],
+        instructions: Option<&str>,
+        tx: &mpsc::UnboundedSender<AgentEvent>,
+    ) -> Result<Vec<Message>> {
+        let _ = tx.send(AgentEvent::Compacting);
+        let request = cli::summary_request(instructions);
+        let run = Run {
+            prompt: match turn.thread {
+                Some(_) => request,
+                None => seed(history, &request),
+            },
+            resume: turn.thread.clone(),
+            // The thread is replaced by the summary, so a new one isn't saved. (A resumed
+            // thread still records the request, but it's dropped after compacting.)
+            persist: false,
+            reasoning: turn.config.reasoning,
+        };
+        let mut summary = String::new();
+        let mut usage = Usage::new();
+        let tools = cli::tools(turn, None, tx);
+        let outcome = self
+            .exchange(turn, run, tools, |update| match update {
+                Update::Usage(u) => usage = u,
+                Update::Text(text) => {
+                    if !summary.is_empty() {
+                        summary.push_str("\n\n");
+                    }
+                    summary.push_str(&text);
+                }
+                _ => {}
+            })
+            .await?;
+        outcome.into_result::<Self>()?;
+        let before = agent::context_size(&usage) - usage.output_tokens;
+        cli::summarized(&summary, before, usage, tx)
+    }
+}
+
+impl Codex {
     /// Codex only reports a turn's total usage. The context meter needs the size of the
     /// last request, which Codex records in its session file; when that can be read, the
     /// total is reported as two parts so the last one is that request.
@@ -408,66 +384,6 @@ backend.codex_path if it isn't on PATH",
         let _ = tx.send(AgentEvent::Usage(last));
     }
 
-    /// Asks the model to summarize `history` and returns the replacement history. A
-    /// continued thread summarizes from its own context; otherwise the history is replayed.
-    async fn summarize(
-        &self,
-        turn: &Turn,
-        history: &[Message],
-        instructions: Option<&str>,
-        tx: &mpsc::UnboundedSender<AgentEvent>,
-    ) -> Result<Vec<Message>> {
-        let _ = tx.send(AgentEvent::Compacting);
-        let mut request = agent::COMPACT_PROMPT.to_string();
-        if let Some(extra) = instructions.filter(|s| !s.trim().is_empty()) {
-            request.push_str(&format!(
-                "\n\nAdditional instructions from the user: {extra}"
-            ));
-        }
-        let run = Run {
-            prompt: match turn.thread {
-                Some(_) => request,
-                None => seed(history, &request),
-            },
-            resume: turn.thread.clone(),
-            // The thread is replaced by the summary, so a new one isn't saved. (A resumed
-            // thread still records the request, but it's dropped after compacting.)
-            persist: false,
-            reasoning: turn.config.reasoning,
-        };
-        // The tools stay listed (the history may contain calls to them) but can't run.
-        let tools = Tools {
-            ctx: None,
-            workspace: turn.workspace.clone(),
-            tx: tx.clone(),
-            chef: turn.config.chef,
-        };
-        let mut summary = String::new();
-        let mut usage = Usage::new();
-        let outcome = self
-            .exchange(turn, run, tools, |update| match update {
-                Update::Usage(u) => usage = u,
-                Update::Text(text) => {
-                    if !summary.is_empty() {
-                        summary.push_str("\n\n");
-                    }
-                    summary.push_str(&text);
-                }
-                _ => {}
-            })
-            .await?;
-        outcome.into_result()?;
-        if summary.trim().is_empty() {
-            bail!("the model returned an empty summary");
-        }
-        let _ = tx.send(AgentEvent::Compacted {
-            before: agent::context_size(&usage) - usage.output_tokens,
-            after: usage.output_tokens,
-            usage,
-        });
-        Ok(agent::summary_history(&summary))
-    }
-
     /// Runs `codex exec` once with the tool bridge, feeding each event to `on`.
     async fn exchange(
         &self,
@@ -478,38 +394,20 @@ backend.codex_path if it isn't on PATH",
     ) -> Result<Outcome> {
         let bridge = Bridge::start(tools).await?;
         let catalog = self.catalog_without_subagents().await;
-        let mut child = self
-            .args(turn, &run, &bridge, catalog.as_deref())
-            .current_dir(&turn.workspace.cwd)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .with_context(|| format!("couldn't start {}", self.program.display()))?;
-
-        // The prompt goes through stdin: a replayed conversation can exceed argument limits.
-        let mut stdin = child.stdin.take().context("no stdin")?;
-        let prompt = run.prompt;
-        let _writer = AbortOnDrop(tokio::spawn(async move {
-            let _ = stdin.write_all(prompt.as_bytes()).await;
-        }));
-        let mut stderr = stderr_tail(child.stderr.take().context("no stderr")?);
-
-        let mut lines = BufReader::new(child.stdout.take().context("no stdout")?).lines();
+        let command = self.args(turn, &run, &bridge, catalog.as_deref());
         let mut parser = Parser::default();
         let mut outcome = None;
-        while let Some(line) = lines.next_line().await? {
-            let Ok(event) = serde_json::from_str::<Value>(&line) else {
-                continue;
-            };
-            match parser.parse(&event) {
+        let exit = cli::stream(
+            command,
+            &turn.workspace.cwd,
+            run.prompt,
+            |event| match parser.parse(&event) {
                 Some(Update::Done(done)) => outcome = Some(done),
                 Some(update) => on(update),
                 None => {}
-            }
-        }
-        let status = child.wait().await?;
+            },
+        )
+        .await?;
         if let Some(outcome) = outcome {
             return Ok(outcome);
         }
@@ -525,13 +423,7 @@ backend.codex_path if it isn't on PATH",
                 text: error,
             });
         }
-        let stderr = (&mut stderr.0).await.unwrap_or_default();
-        let detail = if stderr.trim().is_empty() {
-            String::new()
-        } else {
-            format!(": {}", stderr.trim())
-        };
-        bail!("Codex exited ({status}) before finishing the response{detail}")
+        Err(exit.unfinished(Self::NAME).await)
     }
 
     fn args(&self, turn: &Turn, run: &Run, bridge: &Bridge, catalog: Option<&Path>) -> Command {
@@ -731,35 +623,6 @@ fn usage(v: &Value) -> Usage {
     u.output_tokens = get("output_tokens");
     u.total_tokens = agent::context_size(&u);
     u
-}
-
-/// How a run ended.
-#[derive(Debug, PartialEq)]
-struct Outcome {
-    is_error: bool,
-    text: String,
-}
-
-impl Outcome {
-    fn into_result(self) -> Result<()> {
-        if !self.is_error {
-            return Ok(());
-        }
-        let text = if self.text.trim().is_empty() {
-            "Codex reported an error".to_string()
-        } else {
-            self.text.trim().to_string()
-        };
-        let lower = text.to_lowercase();
-        if lower.contains("login")
-            || lower.contains("log in")
-            || lower.contains("401")
-            || lower.contains("unauthorized")
-        {
-            bail!("{text}\nRun /login to sign in to Codex.");
-        }
-        bail!("{text}")
-    }
 }
 
 /// What a `codex exec --json` line means for the turn.

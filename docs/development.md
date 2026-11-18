@@ -43,8 +43,10 @@ TAMALE_HUB_URL=wss://tamale-hub.com TAMALE_HUB_KEY=thk_… cargo test -p tamale 
 - `src/cli.rs` – command-line parsing and overrides
 - `src/config.rs`, `config/default.toml` – typed settings, defaults, file discovery and merging
 - `src/backend.rs` – backend selection (API, Claude Code or Codex) and dispatch
-- `src/backend/claude_code.rs` – running `claude -p`, sign-in, stream translation and replay
-- `src/backend/codex.rs` – running `codex exec`, sign-in, event translation and usage
+- `src/backend/claude_code.rs` – running `claude -p`, its sign-in and stream translation
+- `src/backend/codex.rs` – running `codex exec`, its sign-in, event translation and usage
+- `src/backend/cli.rs` – what those two share: running a CLI for a turn, signing in and out,
+  and replaying a conversation it doesn't hold
 - `src/backend/logins.rs` – the Claude Code and Codex logins offered in the picker
 - `src/backend/mcp.rs` – the local MCP server that offers tamale's tools to Claude Code and Codex
 - `src/backend/subagent.rs` – the `agent` tool: running a subagent on the current backend

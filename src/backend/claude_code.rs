@@ -7,32 +7,26 @@
 //! the API backend. The stream-json output is translated into the same agent events and
 //! history.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Stdio;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use rig_core::completion::message::{ToolResultContent, UserContent};
 use rig_core::completion::{AssistantContent, Message, Usage};
 use serde::Deserialize;
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::{Mutex, mpsc};
-use tokio::task::JoinHandle;
+use tokio::sync::mpsc;
 
 use super::Turn;
+use super::cli::{self, Cli, Outcome, capitalize, seed, without_prompt};
 use super::mcp::{self, Bridge, Tools};
 use crate::agent::{self, AgentEvent, Reasoning, Thinking, TurnCtx};
 use crate::tools;
 
 #[cfg(test)]
 mod tests;
-
-/// Tool results longer than this are shortened when replaying a conversation as text.
-const SEED_RESULT_CHARS: usize = 2_000;
-/// Lines of stderr kept for error messages.
-const STDERR_LINES: usize = 20;
 
 /// `claude auth status --json`.
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -88,17 +82,9 @@ impl ClaudeCode {
 
     /// Signs this login out (`claude auth logout`), removing its stored credentials.
     pub async fn logout(&self) -> Result<()> {
-        let status = self
-            .command()
-            .args(["auth", "logout"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await
-            .context("couldn't run `claude auth logout`")?;
-        anyhow::ensure!(status.success(), "`claude auth logout` {status}");
-        Ok(())
+        let mut command = self.command();
+        command.args(["auth", "logout"]);
+        cli::sign_out(command, "claude auth logout").await
     }
 
     /// Whether both are signed in to the same account and organization.
@@ -109,10 +95,8 @@ impl ClaudeCode {
 
     /// The label plus the account's email, to tell logins apart.
     pub fn label_with_account(&self) -> String {
-        match self.account.email.as_deref() {
-            Some(email) if self.account.logged_in => format!("{} · {email}", self.label()),
-            _ => self.label(),
-        }
+        let account = &self.account;
+        cli::label_with_account(self.label(), account.logged_in, account.email.as_deref())
     }
 
     pub async fn refresh(&mut self) -> Result<()> {
@@ -141,20 +125,7 @@ backend.claude_path if it isn't on PATH",
     /// Runs the interactive `claude auth login` in this terminal, then re-reads the
     /// sign-in state.
     pub async fn login(&mut self) -> Result<()> {
-        let mut child = self
-            .login_command()
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .context("couldn't run `claude auth login`")?;
-        // Ctrl+C is meant for the sign-in, which shares tamale's process group.
-        let status = loop {
-            tokio::select! {
-                status = child.wait() => break status?,
-                _ = tokio::signal::ctrl_c() => {}
-            }
-        };
+        let status = cli::sign_in(self.login_command(), "claude auth login").await?;
         self.finish_login(status.success(), &status.to_string())
             .await
     }
@@ -167,18 +138,7 @@ backend.claude_path if it isn't on PATH",
 
     pub async fn finish_login(&mut self, success: bool, status: &str) -> Result<()> {
         self.refresh().await?;
-        if !success {
-            let still = if self.account.logged_in {
-                "; still signed in to the previous account"
-            } else {
-                ""
-            };
-            bail!("Claude Code sign-in didn't complete (`claude auth login` {status}){still}");
-        }
-        if !self.account.logged_in {
-            bail!("Claude Code sign-in didn't complete");
-        }
-        Ok(())
+        cli::signed_in::<Self>("claude auth login", success, status, self.account.logged_in)
     }
 
     /// Where inference comes from, e.g. "Claude Code · Max".
@@ -199,39 +159,13 @@ backend.claude_path if it isn't on PATH",
             _ => "Claude Code".into(),
         }
     }
+}
+
+impl Cli for ClaudeCode {
+    const NAME: &'static str = "Claude Code";
+    const SIGN_IN_ERRORS: &'static [&'static str] = &["login", "log in", "authenticat"];
 
     /// Runs one turn: the whole tool loop happens inside one `claude -p` run.
-    pub async fn run(self, turn: Turn, ctx: TurnCtx, tx: mpsc::UnboundedSender<AgentEvent>) {
-        if let Err(e) = self.run_turn(turn, ctx, &tx).await {
-            let _ = tx.send(AgentEvent::Error(format!("{e:#}")));
-        }
-        let _ = tx.send(AgentEvent::Done);
-    }
-
-    /// Summarizes the history (the `/compact` command).
-    pub async fn compact(
-        self,
-        turn: Turn,
-        instructions: Option<String>,
-        tx: mpsc::UnboundedSender<AgentEvent>,
-    ) {
-        let result = async {
-            if turn.history.is_empty() {
-                bail!("nothing to compact");
-            }
-            let history = self
-                .summarize(&turn, &turn.history, instructions.as_deref(), &tx)
-                .await?;
-            let _ = tx.send(AgentEvent::History(history));
-            Ok(())
-        }
-        .await;
-        if let Err(e) = result {
-            let _ = tx.send(AgentEvent::Error(format!("compaction failed: {e:#}")));
-        }
-        let _ = tx.send(AgentEvent::Done);
-    }
-
     async fn run_turn(
         &self,
         mut turn: Turn,
@@ -252,12 +186,6 @@ backend.claude_path if it isn't on PATH",
             Some(_) => turn.prompt.clone(),
             None => seed(&without_prompt(&turn.history, &turn.prompt), &turn.prompt),
         };
-        let tools = Tools {
-            ctx: Some(Mutex::new(ctx)),
-            workspace: turn.workspace.clone(),
-            tx: tx.clone(),
-            chef: turn.config.chef,
-        };
         let run = Run {
             prompt,
             resume: turn.thread.clone(),
@@ -266,14 +194,13 @@ backend.claude_path if it isn't on PATH",
             reasoning: turn.config.reasoning,
         };
         let mut recorder = Recorder::new(turn.history.clone(), tx);
+        let tools = cli::tools(&turn, Some(ctx), tx);
         let outcome = self
             .exchange(&turn, run, tools, |update| recorder.apply(update))
             .await?;
-        outcome.into_result()
+        outcome.into_result::<Self>()
     }
 
-    /// Asks the model to summarize `history` and returns the replacement history. A
-    /// continued session summarizes from its own context; otherwise the history is replayed.
     async fn summarize(
         &self,
         turn: &Turn,
@@ -282,12 +209,7 @@ backend.claude_path if it isn't on PATH",
         tx: &mpsc::UnboundedSender<AgentEvent>,
     ) -> Result<Vec<Message>> {
         let _ = tx.send(AgentEvent::Compacting);
-        let mut request = agent::COMPACT_PROMPT.to_string();
-        if let Some(extra) = instructions.filter(|s| !s.trim().is_empty()) {
-            request.push_str(&format!(
-                "\n\nAdditional instructions from the user: {extra}"
-            ));
-        }
+        let request = cli::summary_request(instructions);
         let run = Run {
             prompt: match turn.thread {
                 Some(_) => request,
@@ -299,16 +221,10 @@ backend.claude_path if it isn't on PATH",
             max_tokens: turn.config.limits.compact_max_tokens,
             reasoning: turn.config.reasoning,
         };
-        // The tools stay listed (the history may contain calls to them) but can't run.
-        let tools = Tools {
-            ctx: None,
-            workspace: turn.workspace.clone(),
-            tx: tx.clone(),
-            chef: turn.config.chef,
-        };
         let mut summary = String::new();
         let mut usage = Usage::new();
         let mut before = None;
+        let tools = cli::tools(turn, None, tx);
         let outcome = self
             .exchange(turn, run, tools, |update| match update {
                 Update::Usage(u) => {
@@ -327,18 +243,12 @@ backend.claude_path if it isn't on PATH",
                 _ => {}
             })
             .await?;
-        outcome.into_result()?;
-        if summary.trim().is_empty() {
-            bail!("the model returned an empty summary");
-        }
-        let _ = tx.send(AgentEvent::Compacted {
-            before: before.unwrap_or_default(),
-            after: usage.output_tokens,
-            usage,
-        });
-        Ok(agent::summary_history(&summary))
+        outcome.into_result::<Self>()?;
+        cli::summarized(&summary, before.unwrap_or_default(), usage, tx)
     }
+}
 
+impl ClaudeCode {
     /// Runs `claude -p` once with the tool bridge, feeding each stream update to `on`.
     async fn exchange(
         &self,
@@ -348,48 +258,24 @@ backend.claude_path if it isn't on PATH",
         mut on: impl FnMut(Update),
     ) -> Result<Outcome> {
         let bridge = Bridge::start(tools).await?;
-        let mut child = self
-            .args(turn, &run, &bridge)
-            .current_dir(&turn.workspace.cwd)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .with_context(|| format!("couldn't start {}", self.program.display()))?;
-
-        // The prompt goes through stdin: a replayed conversation can exceed argument limits.
-        let mut stdin = child.stdin.take().context("no stdin")?;
-        let prompt = run.prompt;
-        let _writer = AbortOnDrop(tokio::spawn(async move {
-            let _ = stdin.write_all(prompt.as_bytes()).await;
-        }));
-        let mut stderr = stderr_tail(child.stderr.take().context("no stderr")?);
-
-        let mut lines = BufReader::new(child.stdout.take().context("no stdout")?).lines();
+        let command = self.args(turn, &run, &bridge);
         let mut parser = Parser::default();
         let mut outcome = None;
-        while let Some(line) = lines.next_line().await? {
-            let Ok(event) = serde_json::from_str::<Value>(&line) else {
-                continue;
-            };
-            match parser.parse(&event) {
+        let exit = cli::stream(
+            command,
+            &turn.workspace.cwd,
+            run.prompt,
+            |event| match parser.parse(&event) {
                 Some(Update::Done(done)) => outcome = Some(done),
                 Some(update) => on(update),
                 None => {}
-            }
+            },
+        )
+        .await?;
+        match outcome {
+            Some(outcome) => Ok(outcome),
+            None => Err(exit.unfinished(Self::NAME).await),
         }
-        let status = child.wait().await?;
-        if let Some(outcome) = outcome {
-            return Ok(outcome);
-        }
-        let stderr = (&mut stderr.0).await.unwrap_or_default();
-        let detail = if stderr.trim().is_empty() {
-            String::new()
-        } else {
-            format!(": {}", stderr.trim())
-        };
-        bail!("Claude Code exited ({status}) before finishing the response{detail}")
     }
 
     fn args(&self, turn: &Turn, run: &Run, bridge: &Bridge) -> Command {
@@ -450,63 +336,6 @@ struct Run {
     persist: bool,
     max_tokens: u64,
     reasoning: Reasoning,
-}
-
-/// Aborts a helper task when the run ends (or is interrupted).
-pub(super) struct AbortOnDrop<T>(pub(super) JoinHandle<T>);
-
-impl<T> Drop for AbortOnDrop<T> {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
-
-/// Collects the last lines of a CLI's stderr, for error messages.
-pub(super) fn stderr_tail(stderr: tokio::process::ChildStderr) -> AbortOnDrop<String> {
-    AbortOnDrop(tokio::spawn(async move {
-        let mut tail = VecDeque::new();
-        let mut lines = BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            if tail.len() == STDERR_LINES {
-                tail.pop_front();
-            }
-            tail.push_back(line);
-        }
-        Vec::from(tail).join("\n")
-    }))
-}
-
-pub(super) fn capitalize(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().chain(chars).collect(),
-        None => String::new(),
-    }
-}
-
-/// The final `result` record of a run.
-#[derive(Debug, PartialEq)]
-struct Outcome {
-    is_error: bool,
-    text: String,
-}
-
-impl Outcome {
-    fn into_result(self) -> Result<()> {
-        if !self.is_error {
-            return Ok(());
-        }
-        let text = if self.text.trim().is_empty() {
-            "Claude Code reported an error".to_string()
-        } else {
-            self.text.trim().to_string()
-        };
-        let lower = text.to_lowercase();
-        if lower.contains("login") || lower.contains("log in") || lower.contains("authenticat") {
-            bail!("{text}\nRun /login to sign in to Claude Code.");
-        }
-        bail!("{text}")
-    }
 }
 
 /// What a stream-json line means for the turn.
@@ -749,82 +578,5 @@ fn result_text(content: &Value) -> String {
             .collect::<Vec<_>>()
             .join("\n"),
         _ => String::new(),
-    }
-}
-
-/// The history before the newest prompt (which is the last text of the last user message).
-pub(super) fn without_prompt(history: &[Message], prompt: &str) -> Vec<Message> {
-    let mut prior = history.to_vec();
-    if let Some(Message::User { content }) = prior.last_mut()
-        && matches!(content.last(), Some(UserContent::Text(t)) if t.text == prompt)
-    {
-        content.pop();
-        if content.is_empty() {
-            prior.pop();
-        }
-    }
-    prior
-}
-
-/// The prompt for a new CLI session (Claude Code or Codex), with any earlier conversation
-/// replayed as a transcript (after `/resume`, `/undo`, compaction, or a backend switch).
-pub(super) fn seed(history: &[Message], prompt: &str) -> String {
-    if history.is_empty() {
-        return prompt.to_string();
-    }
-    let mut out = String::from(
-        "<previous_conversation>\nThis conversation started before this session. The \
-transcript so far (long tool results shortened):\n",
-    );
-    for message in history {
-        match message {
-            Message::User { content } => {
-                for item in content {
-                    match item {
-                        UserContent::Text(t) => out.push_str(&format!("\n[user]\n{}\n", t.text)),
-                        UserContent::ToolResult(r) => {
-                            let text: Vec<&str> = r
-                                .content
-                                .iter()
-                                .filter_map(|c| match c {
-                                    ToolResultContent::Text(t) => Some(t.text.as_str()),
-                                    _ => None,
-                                })
-                                .collect();
-                            out.push_str(&format!(
-                                "[tool result]\n{}\n",
-                                shorten(&text.join("\n"), SEED_RESULT_CHARS)
-                            ));
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            Message::Assistant { content, .. } => {
-                for item in content {
-                    match item {
-                        AssistantContent::Text(t) => {
-                            out.push_str(&format!("\n[assistant]\n{}\n", t.text))
-                        }
-                        AssistantContent::ToolCall(call) => out.push_str(&format!(
-                            "[tool call] {} {}\n",
-                            call.function.name, call.function.arguments
-                        )),
-                        _ => {}
-                    }
-                }
-            }
-            Message::System { .. } => {}
-        }
-    }
-    out.push_str("</previous_conversation>\n\n");
-    out.push_str(prompt);
-    out
-}
-
-fn shorten(text: &str, max: usize) -> String {
-    match text.char_indices().nth(max) {
-        Some((i, _)) => format!("{}… [shortened]", &text[..i]),
-        None => text.to_string(),
     }
 }
