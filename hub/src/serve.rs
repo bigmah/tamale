@@ -698,6 +698,8 @@ pub async fn run(hub: Arc<Hub>, listener: tokio::net::TcpListener) -> Result<()>
     let router = Router::new()
         .route("/d/", get(dashboard))
         .route("/d/open/{sid}", get(dashboard))
+        .route("/d/welcome", get(dashboard))
+        .route("/d/landing", get(dashboard))
         .route(
             "/d/hub.js",
             get(|| async { asset("text/javascript; charset=utf-8", SCRIPT) }),

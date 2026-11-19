@@ -3,6 +3,7 @@
 //                that hold them
 //   /open/<sid>  the same, showing that session: it trades the browser's key for a ticket
 //                and loads the session in a frame, which stays running behind the others
+//   /welcome     the landing page, even for browsers that hold keys (also /landing)
 // Session labels come from agents and key names from whoever made them, so everything
 // here is built with textContent.
 //
@@ -13,6 +14,9 @@
 import { fromKey, isKey, newKey, qrRows, qrSvg, ticketFits, toBase64Url, unseal, withLabels } from '/seal.js';
 
 const $ = (id) => document.getElementById(id);
+
+/** Whether the address asks for the landing page whatever this browser holds. */
+const welcome = () => /^\/(welcome|landing)\/?$/.test(location.pathname);
 
 const keys = {
   /** A copy for when IndexedDB isn't there (a private window, say), by mid. */
@@ -365,9 +369,9 @@ async function refresh() {
   const held = await Promise.all(data.keys.map((k) => keys.byId(k.id)));
   hasKeys = data.keys.length > 0;
   sessions = ordered(all);
-  $('landing').hidden = hasKeys || !$('made').hidden || !$('opening').hidden;
-  $('manage').hidden = !hasKeys;
-  $('forget').hidden = !hasKeys;
+  $('landing').hidden = welcome() ? false : hasKeys || !$('made').hidden || !$('opening').hidden;
+  $('manage').hidden = !hasKeys || welcome();
+  $('forget').hidden = !hasKeys || welcome();
   $('create').hidden = !data.signup;
   $('create-title').textContent = hasKeys ? 'Make another key' : 'Make a key';
   $('add-title').textContent = hasKeys ? 'Add another key' : 'Have a key?';
@@ -386,7 +390,7 @@ async function refresh() {
     if (location.pathname.startsWith('/open/')) history.replaceState(null, '', '/');
   }
   const view = document.body.dataset.view;
-  if (!hasKeys) setView('public');
+  if (!hasKeys || welcome()) setView('public');
   else if (hasKeys && !current && (view === 'public' || view === 'loading' || view === 'session')) setView('home');
   drawCurrent();
 }
@@ -593,7 +597,10 @@ function route() {
     current = null;
     showFrame(null);
     $('opening').hidden = true;
-    if (document.body.dataset.view !== 'loading') setView(hasKeys ? 'home' : 'public');
+    $('landing').hidden = welcome() ? false : hasKeys || !$('made').hidden;
+    $('manage').hidden = !hasKeys || welcome();
+    $('forget').hidden = !hasKeys || welcome();
+    if (document.body.dataset.view !== 'loading') setView(hasKeys && !welcome() ? 'home' : 'public');
     drawCurrent();
   }
 }
@@ -601,6 +608,9 @@ function route() {
 function showKeys() {
   current = null;
   if (location.pathname !== '/') history.pushState(null, '', '/');
+  if (hasKeys) $('landing').hidden = true;
+  $('manage').hidden = !hasKeys;
+  $('forget').hidden = !hasKeys;
   showFrame(null);
   setView('keys');
   drawCurrent();

@@ -4,7 +4,7 @@
 # for this platform, unpacking it, and setting up PATH) and runs it quietly
 # behind a banner and a spinner.
 #
-#   curl --proto '=https' --tlsv1.2 -LsSf https://github.com/bigmah/tamale/releases/latest/download/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/bigmah/tamale/main/install.sh | sh
 #
 # Arguments and TAMALE_* environment variables are passed through to the dist
 # installer. NO_COLOR disables colours and emoji.

@@ -28,8 +28,7 @@ pub async fn run() -> Result<()> {
         bail!(
             "This tamale ({}) wasn't installed by the tamale installer, so `tamale update` \
              can't replace it. Rebuild it from source, or install a release with:\n  \
-             curl --proto '=https' --tlsv1.2 -LsSf \
-             https://github.com/{REPO}/releases/latest/download/install.sh | sh",
+             curl -fsSL https://raw.githubusercontent.com/{REPO}/main/install.sh | sh",
             exe.display()
         );
     };

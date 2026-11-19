@@ -20,7 +20,7 @@ Written entirely in Rust with [rig](https://rig.rs) and [ratatui](https://ratatu
 macOS and Linux:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/bigmah/tamale/releases/latest/download/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/bigmah/tamale/main/install.sh | sh
 ```
 
 Run `tamale update` later to get the latest release.
