@@ -4,8 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#17181d">
+<meta property="og:title" content="tamale: get artifacts, not a wall of file edits">
+<meta property="og:description" content="An open-source coding agent that answers with designed, interactive artifacts. Runs on your Claude Code subscription; drive it from your phone.">
 <meta name="color-scheme" content="dark">
-<meta name="description" content="tamale is an open-source coding agent you can drive from your terminal, browser or phone. tamale-hub is its end-to-end encrypted relay.">
+<meta name="description" content="tamale is an open-source coding agent that answers with designed, interactive artifacts instead of a wall of file edits. Runs on your Claude Code subscription; drive it from your phone through tamale-hub, end-to-end encrypted.">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="tamale-hub">
 <title>tamale-hub</title>
@@ -67,48 +69,259 @@
 
         <!-- For visitors without a key. -->
         <section id="landing" class="landing" hidden>
-          <div class="hero">
-            <h1>A coding agent you can drive from your terminal, browser or phone.</h1>
-            <p class="intro"><strong>tamale</strong> is an open-source coding agent written in Rust. Start a
-              session in your terminal, then pick it up from any browser or your phone through this hub,
-              end-to-end encrypted.</p>
-            <div class="cta">
-              <a class="button" href="#install">Install</a>
-              <a class="button secondary" href="https://github.com/bigmah/tamale" rel="noopener">GitHub</a>
-              <a class="button secondary" href="#create">Get a key</a>
-            </div>
-          </div>
+          <div class="glow" aria-hidden="true"><span></span><span></span><span></span></div>
 
-          <ul class="features">
-            <li><strong>A full agent harness</strong>Tools, permission prompts, undo, sessions and
-              compaction are built in.</li>
-            <li><strong>Bring your own model</strong>An Anthropic API key, any OpenAI-compatible provider
-              (DeepSeek, Kimi, Gemini, OpenRouter, …), or your existing Claude Code or Codex sign-in.</li>
-            <li><strong>Terminal, web and iOS</strong>One session, wherever you are. Longer answers arrive
-              as HTML artifacts, and every UI has a diff viewer.</li>
-            <li><strong>Remote, without the setup</strong>No port forwarding, no VPN. Each tamale connects
-              out to the hub; only your browser holds the key.</li>
+          <nav class="topnav" aria-label="Site">
+            <a class="brand" href="/" data-nav><span class="mark">🫔</span><span class="name">tamale</span></a>
+            <div class="topnav-links">
+              <a href="#artifacts">Artifacts</a>
+              <a href="#phone">Phone</a>
+              <a href="#install">Install</a>
+              <a href="https://github.com/bigmah/tamale" rel="noopener">GitHub</a>
+              <a class="button small-cta" href="#start">Get a key</a>
+            </div>
+          </nav>
+
+          <!-- ---------- hero ---------- -->
+          <header class="hero">
+            <div class="hero-copy">
+              <p class="eyebrow"><span class="pulse-dot"></span>Open source · Written in Rust · End-to-end encrypted</p>
+              <h1>Get <span class="grad">artifacts</span>,<br>not a wall of file edits.</h1>
+              <p class="intro"><strong>tamale</strong> is a coding agent that hands you the result as a
+                designed, interactive page (a plan, a review, a diagram, a walkthrough) instead of making you
+                babysit a stream of diffs. It runs on your <strong>Claude Code subscription</strong>, and you
+                can drive it <strong>from your phone</strong>.</p>
+              <div class="cta">
+                <a class="button big" href="#install">Install in one line</a>
+                <a class="button big secondary" href="#start">Get a free key</a>
+              </div>
+              <div class="hero-install secret"><pre id="install-cmd">curl --proto '=https' --tlsv1.2 -LsSf https://github.com/bigmah/tamale/releases/latest/download/install.sh | sh</pre><button type="button" class="copy" data-copy="install-cmd">Copy</button></div>
+            </div>
+
+            <!-- A phone with a session open on it, drawn in CSS. -->
+            <div class="hero-art" aria-hidden="true">
+              <div class="term">
+                <div class="term-bar"><i></i><i></i><i></i><span>~/dev/shop</span></div>
+                <div class="term-body">
+                  <p><span class="p">$</span> tamale</p>
+                  <p class="dim">🫔 via Claude Code · Max</p>
+                  <p><span class="p">›</span> /remote</p>
+                  <p class="ok">✓ live on tamale-hub.com</p>
+                  <p><span class="p">›</span> scan the code on your phone<span class="caret"></span></p>
+                </div>
+              </div>
+
+              <div class="phone">
+                <div class="phone-notch"></div>
+                <div class="phone-screen">
+                  <div class="ph-bar"><span class="dot busy"></span>checkout perf</div>
+                  <div class="ph-msg me">why is checkout slow on mobile?</div>
+                  <div class="ph-steps">▸ 14 steps · read 9 files, ran 2 commands</div>
+                  <div class="ph-msg">Three culprits, ranked by impact. Full breakdown below.</div>
+                  <div class="artifact">
+                    <div class="artifact-bar"><span class="spark">✦</span>Checkout latency<span class="artifact-act">Revise</span></div>
+                    <div class="artifact-body">
+                      <div class="chart">
+                        <div class="bar-row"><span>Cart API</span><b class="w90"></b><em>1.8s</em></div>
+                        <div class="bar-row"><span>Images</span><b class="w55 alt"></b><em>1.1s</em></div>
+                        <div class="bar-row"><span>Fonts</span><b class="w25 alt2"></b><em>0.5s</em></div>
+                      </div>
+                      <div class="pills"><span>N+1 query</span><span>no lazy-load</span><span>+2</span></div>
+                    </div>
+                  </div>
+                  <div class="approve">
+                    <p>Run <code>cargo test -p cart</code>?</p>
+                    <div><span class="yes">Yes</span><span>Always</span><span>No</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </header>
+
+          <!-- ---------- logos-ish strip ---------- -->
+          <ul class="strip">
+            <li>Claude Code subscription</li>
+            <li>Codex sign-in</li>
+            <li>Anthropic API</li>
+            <li>DeepSeek · Kimi · Gemini · OpenRouter</li>
           </ul>
 
-          <h2 class="section-title" id="install">Install</h2>
-          <p class="hint">macOS and Linux:</p>
-          <div class="secret"><pre id="install-cmd">curl --proto '=https' --tlsv1.2 -LsSf https://github.com/bigmah/tamale/releases/latest/download/install.sh | sh</pre><button type="button" class="copy" data-copy="install-cmd">Copy</button></div>
-          <p class="hint">Or build from source with <a href="https://rustup.rs" rel="noopener">Rust</a>:</p>
-          <div class="secret"><pre id="install-src">cargo install --git https://github.com/bigmah/tamale --locked</pre><button type="button" class="copy" data-copy="install-src">Copy</button></div>
-          <p class="hint">Then run <code>tamale</code>. Run <code>tamale update</code> later to get the latest
-            release.</p>
+          <!-- ---------- artifacts vs edits ---------- -->
+          <section class="block reveal" id="artifacts">
+            <p class="kicker">Artifact-first</p>
+            <h2 class="big-title">Read the answer. Don't reverse-engineer it from diffs.</h2>
+            <p class="lede">Most agents show you their work as a firehose of tool calls. tamale folds that
+              into compact steps and gives you what you actually asked for.</p>
 
-          <h2 class="section-title">Use it from anywhere</h2>
-          <ol class="steps">
-            <li><strong>Make a key</strong> below. It's made in your browser; the hub never sees it.</li>
-            <li><strong>On each machine</strong>, set <code>TAMALE_HUB_KEY</code> where tamale runs and
-              run <code>/remote</code> in tamale.</li>
-            <li><strong>On your phone</strong>, scan the key's code. Your sessions show up here; tap one to
-              drive it.</li>
-          </ol>
-          <p class="hint">Want your own hub? See the
-            <a href="https://github.com/bigmah/tamale/blob/main/docs/self-hosting.md" rel="noopener">self-hosting guide</a>,
-            or browse <a href="https://github.com/bigmah/tamale#docs" rel="noopener">the docs</a>.</p>
+            <div class="versus">
+              <figure class="vs-card vs-old">
+                <figcaption><span class="tag-old">The usual agent</span></figcaption>
+                <div class="log" aria-hidden="true">
+                  <div class="log-roll">
+                    <p><b>Edit</b> src/cart/service.rs <i class="a">+12</i> <i class="d">−3</i></p>
+                    <p><b>Read</b> src/api/pay.rs</p>
+                    <p><b>Edit</b> src/cart/service.rs <i class="a">+1</i> <i class="d">−1</i></p>
+                    <p><b>Bash</b> cargo check</p>
+                    <p><b>Edit</b> src/cart/query.rs <i class="a">+40</i> <i class="d">−18</i></p>
+                    <p><b>Read</b> src/cart/mod.rs</p>
+                    <p><b>Edit</b> src/cart/query.rs <i class="a">+2</i> <i class="d">−2</i></p>
+                    <p><b>Grep</b> "fetch_items"</p>
+                    <p><b>Edit</b> web/img.tsx <i class="a">+6</i> <i class="d">−1</i></p>
+                    <p><b>Bash</b> cargo test</p>
+                    <p><b>Edit</b> src/cart/service.rs <i class="a">+3</i> <i class="d">−9</i></p>
+                    <p><b>Read</b> Cargo.toml</p>
+                    <p><b>Edit</b> src/cart/service.rs <i class="a">+12</i> <i class="d">−3</i></p>
+                    <p><b>Read</b> src/api/pay.rs</p>
+                    <p><b>Edit</b> src/cart/service.rs <i class="a">+1</i> <i class="d">−1</i></p>
+                    <p><b>Bash</b> cargo check</p>
+                    <p><b>Edit</b> src/cart/query.rs <i class="a">+40</i> <i class="d">−18</i></p>
+                    <p><b>Read</b> src/cart/mod.rs</p>
+                    <p><b>Edit</b> src/cart/query.rs <i class="a">+2</i> <i class="d">−2</i></p>
+                    <p><b>Grep</b> "fetch_items"</p>
+                    <p><b>Edit</b> web/img.tsx <i class="a">+6</i> <i class="d">−1</i></p>
+                    <p><b>Bash</b> cargo test</p>
+                    <p><b>Edit</b> src/cart/service.rs <i class="a">+3</i> <i class="d">−9</i></p>
+                    <p><b>Read</b> Cargo.toml</p>
+                  </div>
+                </div>
+                <p class="vs-note">…so what changed, and why?</p>
+              </figure>
+
+              <figure class="vs-card vs-new">
+                <figcaption><span class="tag-new">✦ tamale</span></figcaption>
+                <div class="doc" aria-hidden="true">
+                  <p class="doc-title">Cart query refactor</p>
+                  <p class="doc-sub">What changed, why, and what to check</p>
+                  <div class="flow">
+                    <span>Cart API</span><i></i><span class="hl">1 batched query</span><i></i><span>Postgres</span>
+                  </div>
+                  <div class="doc-grid">
+                    <div><b>−1.4s</b><span>p95 on mobile</span></div>
+                    <div><b>23 → 1</b><span>queries per cart</span></div>
+                    <div><b>4 files</b><span>tests pass</span></div>
+                  </div>
+                  <ol class="doc-list">
+                    <li>Items now load in one <code>JOIN</code>, not one query each</li>
+                    <li>Product images lazy-load below the fold</li>
+                    <li>Review: the new index in <code>0042_cart.sql</code></li>
+                  </ol>
+                </div>
+                <p class="vs-note good">Designed pages: diagrams, tables, tabs, step-throughs, charts.</p>
+              </figure>
+            </div>
+
+            <ul class="mini-points">
+              <li><b>Revise in a sentence.</b> “Make the diagram vertical” rewrites the artifact in place.</li>
+              <li><b>Kept forever.</b> Every artifact is saved as a standalone HTML file, browsable in <code>/artifacts</code>.</li>
+              <li><b>One tap.</b> The ✦ button asks for an artifact for whatever you're looking at.</li>
+              <li><b>Still a real diff viewer.</b> When you do want the code, it's one click away, with go-to-definition.</li>
+            </ul>
+          </section>
+
+          <!-- ---------- three pillars ---------- -->
+          <section class="block reveal pillars">
+            <article class="pillar p-amber">
+              <div class="pillar-icon">✦</div>
+              <h3>Artifacts, not noise</h3>
+              <p>Long answers become a page you can read, share and revise. The tool calls fold away until you
+                want them.</p>
+            </article>
+            <article class="pillar p-violet">
+              <div class="pillar-icon">◆</div>
+              <h3>Your Claude Code plan</h3>
+              <p>Already on Claude Pro or Max? tamale runs on your Claude Code sign-in: no API key, no
+                per-token bill. Several accounts, one picker.</p>
+            </article>
+            <article class="pillar p-blue">
+              <div class="pillar-icon">◉</div>
+              <h3>Drive it from your phone</h3>
+              <p>Type <code>/remote</code>, scan a code, and the session is in your pocket: approve tool calls,
+                send prompts, read artifacts.</p>
+            </article>
+          </section>
+
+          <!-- ---------- phone ---------- -->
+          <section class="block reveal split" id="phone">
+            <div>
+              <p class="kicker">Remote, without the setup</p>
+              <h2 class="big-title">Kick it off at your desk.<br>Steer it from the couch.</h2>
+              <p class="lede">Every tamale connects out to the hub, so there's no port forwarding, no VPN and
+                no tunnel to babysit. Your sessions show up in any browser or the iOS app, each one live.</p>
+              <ul class="checks">
+                <li><b>Approve or deny</b> commands with Yes, Always or No</li>
+                <li><b>Send prompts</b> that queue while the agent works</li>
+                <li><b>See every session</b> across every machine, busy ones first</li>
+                <li><b>End-to-end encrypted.</b> The key is made in your browser; the hub only moves opaque bytes</li>
+              </ul>
+            </div>
+            <div class="sessions-art" aria-hidden="true">
+              <div class="sa-head">🫔 tamale-hub</div>
+              <div class="sa-row chef"><span class="sa-mark">🫔</span><span class="sa-t">Chef</span><span class="switch on">On</span><span class="sa-m">2 sessions need you</span></div>
+              <div class="sa-group">laptop</div>
+              <div class="sa-row sel"><span class="dot approval"></span><span class="sa-t">checkout perf</span><span class="sa-w">now</span><span class="sa-m approval">Waiting: run cargo test?</span></div>
+              <div class="sa-row"><span class="dot busy"></span><span class="sa-t">auth migration</span><span class="sa-w">2m</span><span class="sa-m busy">Working · editing 3 files</span></div>
+              <div class="sa-group">build-box</div>
+              <div class="sa-row"><span class="dot"></span><span class="sa-t">flaky e2e hunt</span><span class="sa-w">8m</span><span class="sa-m">✦ Artifact: root cause timeline</span></div>
+              <div class="sa-row"><span class="dot idle"></span><span class="sa-t">release notes</span><span class="sa-w">1h</span><span class="sa-m">Done</span></div>
+            </div>
+          </section>
+
+          <!-- ---------- install ---------- -->
+          <section class="block reveal" id="install">
+            <p class="kicker">Easy to use</p>
+            <h2 class="big-title">Three steps. About a minute.</h2>
+            <ol class="howto">
+              <li>
+                <span class="num">1</span>
+                <h3>Install</h3>
+                <p>One line on macOS or Linux. A single binary, nothing else to run.</p>
+                <div class="secret"><pre id="install-cmd-2">curl --proto '=https' --tlsv1.2 -LsSf https://github.com/bigmah/tamale/releases/latest/download/install.sh | sh</pre><button type="button" class="copy" data-copy="install-cmd-2">Copy</button></div>
+                <p class="hint">Or with <a href="https://rustup.rs" rel="noopener">Rust</a>: <code id="install-src">cargo install --git https://github.com/bigmah/tamale --locked</code></p>
+              </li>
+              <li>
+                <span class="num">2</span>
+                <h3>Run <code>tamale</code></h3>
+                <p>No API key? It asks which sign-in to use. Pick <b>Claude Code</b> and you're coding on
+                  your subscription.</p>
+                <div class="secret"><pre id="run-cmd">tamale</pre><button type="button" class="copy" data-copy="run-cmd">Copy</button></div>
+                <p class="hint"><code>tamale update</code> keeps it current.</p>
+              </li>
+              <li>
+                <span class="num">3</span>
+                <h3>Go remote</h3>
+                <p>Make a key below, set <code>TAMALE_HUB_KEY</code>, type <code>/remote</code>, and scan
+                  the key's QR code with your phone.</p>
+                <div class="secret"><pre id="remote-cmd">export TAMALE_HUB_KEY=thk_…</pre><button type="button" class="copy" data-copy="remote-cmd">Copy</button></div>
+                <p class="hint">Then <code>/remote</code> inside tamale.</p>
+              </li>
+            </ol>
+          </section>
+
+          <!-- ---------- everything else ---------- -->
+          <section class="block reveal">
+            <p class="kicker">And a full harness underneath</p>
+            <h2 class="big-title">Everything you'd expect, done properly.</h2>
+            <ul class="features">
+              <li><strong>Permissions &amp; undo</strong>Ask, accept-edits or auto modes, allow/deny rules, and
+                <code>/undo</code> or <code>/rewind</code> back to any turn.</li>
+              <li><strong>Real code review</strong>An IDE-style diff viewer with search and go-to-definition.
+                Select code, hit Ask, and it's quoted into the prompt.</li>
+              <li><strong>The chef</strong>One agent that knows what all your sessions are doing, on every
+                machine. “Which ones need me?”</li>
+              <li><strong>Bring any model</strong>Claude Code, Codex, an Anthropic key, or any
+                OpenAI-compatible provider. Switch mid-session.</li>
+              <li><strong>Terminal, web and iOS</strong>Start in the terminal, move to a browser tab with
+                <code>/web</code>, pick it up on your phone.</li>
+              <li><strong>Open source Rust</strong>Built with rig and ratatui. Run your own hub: it's one
+                small binary behind Caddy.</li>
+            </ul>
+          </section>
+
+          <!-- ---------- get started ---------- -->
+          <section class="block reveal final" id="start">
+            <h2 class="big-title">Put your agent in your pocket.</h2>
+            <p class="lede">Make a key right here. It's generated in your browser, and this hub never sees it.</p>
+          </section>
         </section>
 
         <!-- A key's setup: right after it's made or replaced, and whenever Show asks. -->
