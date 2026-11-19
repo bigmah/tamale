@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#17181d">
 <meta name="color-scheme" content="dark">
-<meta name="description" content="Drive your tamale sessions from your phone or any browser, wherever tamale runs.">
+<meta name="description" content="tamale is an open-source coding agent you can drive from your terminal, browser or phone. tamale-hub is its end-to-end encrypted relay.">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="tamale-hub">
 <title>tamale-hub</title>
@@ -66,18 +66,49 @@
         </section>
 
         <!-- For visitors without a key. -->
-        <section id="landing" hidden>
-          <h1>Your tamale sessions, from anywhere.</h1>
-          <p class="intro">tamale-hub puts tamale's web UI on your phone or any browser, wherever tamale
-            runs: your laptop or a machine in the garage. No port forwarding, no VPN. Each tamale connects
-            out to the hub, and your browser holds the key that lets you in.</p>
+        <section id="landing" class="landing" hidden>
+          <div class="hero">
+            <h1>A coding agent you can drive from your terminal, browser or phone.</h1>
+            <p class="intro"><strong>tamale</strong> is an open-source coding agent written in Rust. Start a
+              session in your terminal, then pick it up from any browser or your phone through this hub,
+              end-to-end encrypted.</p>
+            <div class="cta">
+              <a class="button" href="#install">Install</a>
+              <a class="button secondary" href="https://github.com/bigmah/tamale" rel="noopener">GitHub</a>
+              <a class="button secondary" href="#create">Get a key</a>
+            </div>
+          </div>
+
+          <ul class="features">
+            <li><strong>A full agent harness</strong>Tools, permission prompts, undo, sessions and
+              compaction are built in.</li>
+            <li><strong>Bring your own model</strong>An Anthropic API key, any OpenAI-compatible provider
+              (DeepSeek, Kimi, Gemini, OpenRouter, …), or your existing Claude Code or Codex sign-in.</li>
+            <li><strong>Terminal, web and iOS</strong>One session, wherever you are. Longer answers arrive
+              as HTML artifacts, and every UI has a diff viewer.</li>
+            <li><strong>Remote, without the setup</strong>No port forwarding, no VPN. Each tamale connects
+              out to the hub; only your browser holds the key.</li>
+          </ul>
+
+          <h2 class="section-title" id="install">Install</h2>
+          <p class="hint">macOS and Linux:</p>
+          <div class="secret"><pre id="install-cmd">curl --proto '=https' --tlsv1.2 -LsSf https://github.com/bigmah/tamale/releases/latest/download/install.sh | sh</pre><button type="button" class="copy" data-copy="install-cmd">Copy</button></div>
+          <p class="hint">Or build from source with <a href="https://rustup.rs" rel="noopener">Rust</a>:</p>
+          <div class="secret"><pre id="install-src">cargo install --git https://github.com/bigmah/tamale --locked</pre><button type="button" class="copy" data-copy="install-src">Copy</button></div>
+          <p class="hint">Then run <code>tamale</code>. Run <code>tamale update</code> later to get the latest
+            release.</p>
+
+          <h2 class="section-title">Use it from anywhere</h2>
           <ol class="steps">
-            <li><strong>Make a key</strong> below.</li>
-            <li><strong>On each machine</strong>, set it where tamale runs and run
-              <code>/remote</code> in tamale.</li>
-            <li><strong>On your phone</strong>, scan its code. Your sessions show up here; tap one to
+            <li><strong>Make a key</strong> below. It's made in your browser; the hub never sees it.</li>
+            <li><strong>On each machine</strong>, set <code>TAMALE_HUB_KEY</code> where tamale runs and
+              run <code>/remote</code> in tamale.</li>
+            <li><strong>On your phone</strong>, scan the key's code. Your sessions show up here; tap one to
               drive it.</li>
           </ol>
+          <p class="hint">Want your own hub? See the
+            <a href="https://github.com/bigmah/tamale/blob/main/docs/self-hosting.md" rel="noopener">self-hosting guide</a>,
+            or browse <a href="https://github.com/bigmah/tamale#docs" rel="noopener">the docs</a>.</p>
         </section>
 
         <!-- A key's setup: right after it's made or replaced, and whenever Show asks. -->
@@ -143,6 +174,7 @@
         </details>
 
         <button type="button" class="link" id="forget" hidden>Forget keys on this browser</button>
+        <footer class="foot"><a href="https://github.com/bigmah/tamale" rel="noopener">github.com/bigmah/tamale</a></footer>
       </div>
     </main>
   </div>

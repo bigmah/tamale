@@ -165,6 +165,27 @@ h2 { font-size: 13px; color: var(--fg-bright); margin: 0 0 10px; font-weight: 60
 h3 { font-size: 15px; color: var(--fg-bright); margin: 18px 0 4px; }
 .card h2 { font-size: 18px; }
 .intro { color: var(--fg-dim); font-size: 16px; }
+.intro strong { color: var(--fg-bright); }
+[data-view="public"] .page-inner { max-width: 720px; }
+.landing h1 { font-size: 34px; margin-top: 0; }
+.hero { margin-bottom: 28px; }
+.cta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+a.button {
+  display: inline-block; padding: 9px 16px; border-radius: 8px; background: var(--accent); color: #0f1116;
+  font-weight: 600; text-decoration: none; white-space: nowrap;
+}
+a.button.secondary { background: var(--bg-2); color: var(--fg); border: 1px solid var(--border); font-weight: 500; }
+a.button:hover { filter: brightness(1.1); }
+.features { list-style: none; margin: 0 0 32px; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.features li { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg-1);
+  color: var(--fg-dim); font-size: 14px; }
+.features strong { display: block; color: var(--fg-bright); font-weight: 600; margin-bottom: 4px; }
+.landing .secret { margin-bottom: 10px; }
+h2.section-title { font-size: 20px; margin: 32px 0 8px; scroll-margin-top: 16px; }
+#create { scroll-margin-top: 16px; }
+.foot { margin-top: 24px; font-size: 13px; }
+.foot a { color: var(--fg-faint); }
+[data-view="keys"] .foot { display: none; }
 .steps { padding-left: 20px; color: var(--fg-dim); }
 .steps li { margin-bottom: 8px; }
 .steps strong { color: var(--fg-bright); font-weight: 600; }
@@ -222,6 +243,8 @@ button.link { background: none; color: var(--fg-faint); padding: 0; margin-top: 
   .title { font-size: 15px; }
   .meta { font-size: 13px; }
   h1 { font-size: 24px; }
+  .landing h1 { font-size: 26px; }
+  .features { grid-template-columns: 1fr; }
   .secret { flex-direction: column; }
   .secret button { align-self: flex-end; }
   input { font-size: 16px; } /* iOS zooms the page into anything smaller. */
