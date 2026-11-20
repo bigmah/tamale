@@ -2,10 +2,15 @@
 //! DeepSeek, Kimi, Gemini, OpenRouter, xAI, Groq, local servers and most others. Each is a
 //! `[backend.providers.<name>]` entry with a base URL and the environment variable that
 //! holds its API key; the agent loop is the same as for the Anthropic API.
+//!
+//! Google's endpoint is the exception: its OpenAI-compatible layer returns Gemini's
+//! `thought_signature`s in a field Chat Completions clients drop, and Gemini rejects tool
+//! calls sent back without them. So a provider whose base URL is Google's is spoken to
+//! with Gemini's own API instead, which round-trips them.
 
 use anyhow::{Context, Result};
 use rig_core::client::{CompletionClient, ModelListingClient};
-use rig_core::providers::openai;
+use rig_core::providers::{gemini, openai};
 use serde::Deserialize;
 
 /// `[backend.providers.<name>]`: an OpenAI-compatible endpoint.
@@ -47,7 +52,28 @@ pub struct Compat {
     pub api_key_env: String,
     pub default_model: String,
     max_tokens: Option<u64>,
-    client: openai::CompletionsClient,
+    client: Client,
+}
+
+#[derive(Clone)]
+enum Client {
+    OpenAi(openai::CompletionsClient),
+    Gemini(gemini::Client),
+}
+
+/// A provider's completion model, by the API it speaks.
+pub enum Model {
+    OpenAi(openai::completion::CompletionModel),
+    Gemini(gemini::CompletionModel),
+}
+
+/// Whether `base_url` is Google's Gemini API (its OpenAI-compatible path or not).
+fn is_google(base_url: &str) -> bool {
+    base_url
+        .split("://")
+        .nth(1)
+        .and_then(|rest| rest.split(['/', ':']).next())
+        .is_some_and(|host| host.eq_ignore_ascii_case("generativelanguage.googleapis.com"))
 }
 
 impl Compat {
@@ -59,11 +85,25 @@ impl Compat {
             key(&provider.api_key_env)
                 .with_context(|| format!("{} is not set", provider.api_key_env))?
         };
-        let client = openai::CompletionsClient::builder()
-            .api_key(api_key)
-            .base_url(provider.base_url.trim_end_matches('/'))
-            .build()
-            .with_context(|| format!("creating a client for {}", provider.base_url))?;
+        let context = || format!("creating a client for {}", provider.base_url);
+        let client = if is_google(&provider.base_url) {
+            // Gemini's own API, at its default base URL: the configured one is usually
+            // the OpenAI-compatible path under it.
+            Client::Gemini(
+                gemini::Client::builder()
+                    .api_key(api_key)
+                    .build()
+                    .with_context(context)?,
+            )
+        } else {
+            Client::OpenAi(
+                openai::CompletionsClient::builder()
+                    .api_key(api_key)
+                    .base_url(provider.base_url.trim_end_matches('/'))
+                    .build()
+                    .with_context(context)?,
+            )
+        };
         Ok(Self {
             name: name.to_string(),
             label: if provider.label.trim().is_empty() {
@@ -88,8 +128,17 @@ impl Compat {
         }
     }
 
-    pub fn completion_model(&self, name: &str) -> openai::completion::CompletionModel {
-        self.client.completion_model(self.model(name).to_string())
+    pub fn completion_model(&self, name: &str) -> Model {
+        let name = self.model(name).to_string();
+        match &self.client {
+            Client::OpenAi(client) => Model::OpenAi(client.completion_model(name)),
+            Client::Gemini(client) => Model::Gemini(client.completion_model(name)),
+        }
+    }
+
+    /// Whether requests go to Gemini's own API.
+    pub fn is_gemini(&self) -> bool {
+        matches!(self.client, Client::Gemini(_))
     }
 
     /// Why `/login` doesn't apply.
@@ -107,7 +156,10 @@ impl Compat {
     }
 
     pub async fn list_models(&self) -> Result<Vec<(String, String)>> {
-        let list = self.client.list_models().await?;
+        let list = match &self.client {
+            Client::OpenAi(client) => client.list_models().await?,
+            Client::Gemini(client) => client.list_models().await?,
+        };
         let mut models: Vec<(String, String)> = list
             .data
             .into_iter()
@@ -249,6 +301,24 @@ mod tests {
         assert!(body.get("output_config").is_none(), "{body}");
         assert_eq!(body["messages"][0]["role"], "system");
         assert!(body["tools"].as_array().is_some_and(|t| !t.is_empty()));
+    }
+
+    #[test]
+    fn google_is_spoken_to_natively() {
+        assert!(is_google(
+            "https://generativelanguage.googleapis.com/v1beta/openai"
+        ));
+        assert!(is_google("https://generativelanguage.googleapis.com"));
+        assert!(!is_google("https://openrouter.ai/api/v1"));
+        assert!(!is_google("http://localhost:11434/v1"));
+        let mut google = provider("https://generativelanguage.googleapis.com/v1beta/openai");
+        google.api_key_env = String::new();
+        assert!(Compat::connect("gemini", &google).unwrap().is_gemini());
+        assert!(
+            !Compat::connect("local", &provider("http://localhost/v1"))
+                .unwrap()
+                .is_gemini()
+        );
     }
 
     #[test]

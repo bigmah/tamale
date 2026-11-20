@@ -378,9 +378,15 @@ the claude-code backend)"
                 agent::run(model, history, turn.config, turn.workspace, ctx, tx).await
             }
             Self::Compat(compat) => {
-                let model = compat.completion_model(&turn.model);
-                let config = compat_config(&compat, turn.config);
-                agent::run(model, turn.history, config, turn.workspace, ctx, tx).await
+                let config = compat_config(&compat, &turn.model, turn.config);
+                match compat.completion_model(&turn.model) {
+                    compat::Model::OpenAi(model) => {
+                        agent::run(model, turn.history, config, turn.workspace, ctx, tx).await
+                    }
+                    compat::Model::Gemini(model) => {
+                        agent::run(model, turn.history, config, turn.workspace, ctx, tx).await
+                    }
+                }
             }
             Self::Unset => no_backend(&tx),
             Self::ClaudeCode(cc) => cc.run(turn, ctx, tx).await,
@@ -408,17 +414,31 @@ the claude-code backend)"
                 .await
             }
             Self::Compat(compat) => {
-                let model = compat.completion_model(&turn.model);
-                let config = compat_config(&compat, turn.config);
-                agent::compact(
-                    model,
-                    turn.history,
-                    instructions,
-                    config,
-                    turn.workspace,
-                    tx,
-                )
-                .await
+                let config = compat_config(&compat, &turn.model, turn.config);
+                match compat.completion_model(&turn.model) {
+                    compat::Model::OpenAi(model) => {
+                        agent::compact(
+                            model,
+                            turn.history,
+                            instructions,
+                            config,
+                            turn.workspace,
+                            tx,
+                        )
+                        .await
+                    }
+                    compat::Model::Gemini(model) => {
+                        agent::compact(
+                            model,
+                            turn.history,
+                            instructions,
+                            config,
+                            turn.workspace,
+                            tx,
+                        )
+                        .await
+                    }
+                }
             }
             Self::Unset => no_backend(&tx),
             Self::ClaudeCode(cc) => cc.compact(turn, instructions, tx).await,
@@ -462,8 +482,16 @@ fn api_model(client: &anthropic::Client, name: &str) -> anthropic::completion::C
 
 /// A turn's settings for an OpenAI-compatible provider: its reasoning parameters and
 /// output limit.
-fn compat_config(compat: &Compat, mut config: TurnConfig) -> TurnConfig {
-    config.reasoning.dialect = agent::Dialect::OpenAi;
+fn compat_config(compat: &Compat, model: &str, mut config: TurnConfig) -> TurnConfig {
+    if compat.is_gemini() {
+        config.reasoning.dialect = agent::Dialect::Gemini;
+        // `thinkingLevel` is Gemini 3's; earlier models reject it.
+        if !compat.model(model).starts_with("gemini-3") {
+            config.reasoning.effort = None;
+        }
+    } else {
+        config.reasoning.dialect = agent::Dialect::OpenAi;
+    }
     config.limits.max_tokens = compat.max_tokens(config.limits.max_tokens);
     config.limits.compact_max_tokens = compat.max_tokens(config.limits.compact_max_tokens);
     config

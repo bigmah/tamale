@@ -87,6 +87,8 @@ pub enum Dialect {
     Anthropic,
     /// OpenAI's Chat Completions, as compatible providers speak it.
     OpenAi,
+    /// Gemini's own API (`generationConfig.thinkingConfig`).
+    Gemini,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -108,6 +110,19 @@ impl Reasoning {
                     Effort::Medium => "medium",
                     Effort::High | Effort::XHigh | Effort::Max => "high",
                 } }),
+                None => serde_json::json!({}),
+            };
+        }
+        if self.dialect == Dialect::Gemini {
+            // Gemini 3's `thinkingLevel`; only sent when asked for, and left to the
+            // caller to clear for models without it.
+            return match self.effort {
+                Some(effort) => serde_json::json!({ "generationConfig": { "thinkingConfig": {
+                    "thinkingLevel": match effort {
+                        Effort::Low => "low",
+                        Effort::Medium | Effort::High | Effort::XHigh | Effort::Max => "high",
+                    }
+                } } }),
                 None => serde_json::json!({}),
             };
         }
