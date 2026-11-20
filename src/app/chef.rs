@@ -167,9 +167,8 @@ impl App {
         match result {
             Ok(Some(stopped)) => {
                 self.chef_running = Some(false);
-                self.entries.push(Entry::Info(format!(
-                    "🫔 {stopped} /chef starts it again."
-                )));
+                self.entries
+                    .push(Entry::Info(format!("🫔 {stopped} /chef starts it again.")));
             }
             Ok(None) => {
                 self.chef_running = Some(false);

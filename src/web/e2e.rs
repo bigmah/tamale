@@ -142,7 +142,13 @@ impl Keys {
 
     /// [`Keys::seal`] with a given nonce, so test vectors come out the same every time.
     #[cfg(test)]
-    pub fn seal_fixed(&self, sid: &str, kind: &str, plaintext: &str, nonce: [u8; 12]) -> Result<String> {
+    pub fn seal_fixed(
+        &self,
+        sid: &str,
+        kind: &str,
+        plaintext: &str,
+        nonce: [u8; 12],
+    ) -> Result<String> {
         self.seal_with(sid, kind, plaintext, nonce)
     }
 

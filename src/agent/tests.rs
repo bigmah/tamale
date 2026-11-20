@@ -956,7 +956,10 @@ async fn ask_user_waits_for_answers_only_when_someone_can_answer() {
     let (output, is_error) = unrestricted()
         .call_tool("ask_user", args.clone(), &workspace, &tx)
         .await;
-    assert!(is_error && output.contains("reasonable assumption"), "{output}");
+    assert!(
+        is_error && output.contains("reasonable assumption"),
+        "{output}"
+    );
     assert!(rx.try_recv().is_err());
 
     let mut ctx = unrestricted().interactive();
@@ -967,11 +970,18 @@ async fn ask_user_waits_for_answers_only_when_someone_can_answer() {
 
     let answering = tokio::spawn(async move {
         match rx.recv().await {
-            Some(AgentEvent::Ask { description, questions, reply }) => {
+            Some(AgentEvent::Ask {
+                description,
+                questions,
+                reply,
+            }) => {
                 assert_eq!(description, "Pick a database");
                 assert_eq!(questions[0].options[1].label, "SQLite");
                 reply
-                    .send(Reply::Answers(vec![Answer { chosen: vec!["SQLite".into()], other: None }]))
+                    .send(Reply::Answers(vec![Answer {
+                        chosen: vec!["SQLite".into()],
+                        other: None,
+                    }]))
                     .unwrap();
             }
             _ => panic!("expected the questions"),
@@ -979,8 +989,13 @@ async fn ask_user_waits_for_answers_only_when_someone_can_answer() {
         // Dropping the reply dismisses the next questions.
         drop(rx.recv().await);
     });
-    let (output, is_error) = ctx.call_tool("ask_user", args.clone(), &workspace, &tx).await;
-    assert!(!is_error && output.contains("Which database? → SQLite"), "{output}");
+    let (output, is_error) = ctx
+        .call_tool("ask_user", args.clone(), &workspace, &tx)
+        .await;
+    assert!(
+        !is_error && output.contains("Which database? → SQLite"),
+        "{output}"
+    );
     let (output, is_error) = ctx.call_tool("ask_user", args, &workspace, &tx).await;
     assert!(is_error && output.contains("dismissed"), "{output}");
     answering.await.unwrap();

@@ -3,9 +3,9 @@
 
 mod activity;
 mod approval;
+mod backends;
 #[cfg(unix)]
 mod background;
-mod backends;
 mod chef;
 mod commands;
 mod diff;
@@ -13,6 +13,7 @@ mod dir_browser;
 mod goal;
 mod help;
 mod input;
+mod markdown;
 mod prompts;
 mod question;
 #[cfg(unix)]
@@ -21,7 +22,6 @@ mod rewind;
 mod sessions;
 #[cfg(test)]
 mod tests;
-mod markdown;
 mod transcript;
 mod view;
 mod web;
@@ -119,9 +119,13 @@ pub enum FooterTab {
 /// What `/web` and `/remote` asked of the event loop.
 pub enum WebRequest {
     /// Serve the web UI; with `lan`, to other devices on the local network too.
-    Open { lan: bool },
+    Open {
+        lan: bool,
+    },
     /// Connect to (or with `on: false` disconnect from) the `[hub]` tamale-hub.
-    Remote { on: bool },
+    Remote {
+        on: bool,
+    },
     Close,
 }
 
@@ -922,7 +926,10 @@ impl App {
                     fmt_tokens(after)
                 )));
             }
-            AgentEvent::ToolResult { mut output, is_error } => {
+            AgentEvent::ToolResult {
+                mut output,
+                is_error,
+            } => {
                 // Delivered user messages are shown as their own entries.
                 if let Some(i) = output.find(agent::STEERING_MARKER) {
                     output.truncate(i);

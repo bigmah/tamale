@@ -424,7 +424,9 @@ impl App {
             "/chef" => match cmd.split_whitespace().nth(1) {
                 None | Some("on") => self.chef_command(),
                 Some("off" | "stop") => self.stop_chef(),
-                Some(_) => self.entries.push(Entry::Error("Usage: /chef [on|off]".into())),
+                Some(_) => self
+                    .entries
+                    .push(Entry::Error("Usage: /chef [on|off]".into())),
             },
             "/resume" | "/continue" => self.resume_command(cmd.split_whitespace().nth(1)),
             "/add-dir" => self.add_dir(cmd["/add-dir".len()..].trim()),

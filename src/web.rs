@@ -74,7 +74,10 @@ pub enum WebEvent {
     Connected(u64),
     /// A tab that loads history as it scrolls wants the entries before `before`; see
     /// [`Server::older`].
-    Older { id: u64, before: usize },
+    Older {
+        id: u64,
+        before: usize,
+    },
     Disconnected,
     /// How the connection to a tamale-hub went: `Ok` with news worth showing, `Err` with
     /// a problem. Either way the footer's hub indicator may have changed.
@@ -93,7 +96,10 @@ pub enum WebEvent {
     /// hub's reason.
     ChefTaken(String),
     /// Tab `tab` opened the model picker and wants the list, for its request `seq`.
-    Models { tab: u64, seq: u64 },
+    Models {
+        tab: u64,
+        seq: u64,
+    },
     /// A side question from a tamale chef, answered from this session's context without
     /// adding to its conversation. The answer goes back to tab `tab` with [`Replier`].
     Ask {
@@ -219,9 +225,10 @@ impl Shared {
     fn authorized(&self, uri: &Uri, headers: &HeaderMap) -> bool {
         let token = format!("t={}", self.token);
         self.own_host(headers)
-            && uri
-                .query()
-                .is_some_and(|q| q.split('&').any(|pair| crate::secure::same_secret(pair, &token)))
+            && uri.query().is_some_and(|q| {
+                q.split('&')
+                    .any(|pair| crate::secure::same_secret(pair, &token))
+            })
     }
 
     fn send_to(&self, id: u64, message: String) {
@@ -747,7 +754,12 @@ fn handle(shared: &Arc<Shared>, id: u64, request: Value) {
             }
         }
         "send" => {
-            let terminal = shared.clients.lock().unwrap().get(&id).is_some_and(|c| c.terminal);
+            let terminal = shared
+                .clients
+                .lock()
+                .unwrap()
+                .get(&id)
+                .is_some_and(|c| c.terminal);
             let text = str_field("text");
             let _ = shared.events.send(if terminal {
                 WebEvent::TerminalSend(text)

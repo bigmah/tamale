@@ -260,7 +260,9 @@ pub fn markdown_with(text: &str, mut artifact: Option<&mut dyn FnMut(&str) -> St
                 },
                 Tag::CodeBlock(kind) => {
                     let (lang, closed) = match kind {
-                        CodeBlockKind::Fenced(lang) => (lang.to_string(), fence_closed(&text[range])),
+                        CodeBlockKind::Fenced(lang) => {
+                            (lang.to_string(), fence_closed(&text[range]))
+                        }
                         CodeBlockKind::Indented => (String::new(), true),
                     };
                     code = Some((lang, String::new(), closed));
@@ -595,8 +597,14 @@ mod tests {
     fn native_markdown_takes_artifacts_out_and_marks_where_they_were() {
         let doc = "Here:\n\n```html artifact\n<title>A</title><p>hi</p>\n```\nDone.\n\n```rust\nfn x() {}\n```";
         let (md, blocks) = split_artifacts(doc);
-        assert_eq!(md, "Here:\n\n<!-- artifact 0 -->\n\nDone.\n\n```rust\nfn x() {}\n```");
-        assert_eq!(blocks, vec![("<title>A</title><p>hi</p>\n".to_string(), true)]);
+        assert_eq!(
+            md,
+            "Here:\n\n<!-- artifact 0 -->\n\nDone.\n\n```rust\nfn x() {}\n```"
+        );
+        assert_eq!(
+            blocks,
+            vec![("<title>A</title><p>hi</p>\n".to_string(), true)]
+        );
 
         let (md, blocks) = split_artifacts("Building:\n```html artifact\n<p>hi</p>\n``");
         assert_eq!(md, "Building:\n\n<!-- artifact 0 -->\n\n");

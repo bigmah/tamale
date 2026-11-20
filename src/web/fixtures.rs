@@ -83,15 +83,15 @@ fn vectors() -> Value {
     let mut app = Initiator::new(&psk, SID, NONCE, Some(&initiator_e));
     let payload = r#"{"v":1}"#;
     let hs1 = app.hs1(payload.as_bytes());
-    let (mut tamale, hs2) = keys
-        .respond_fixed(SID, NONCE, &hs1, &responder_e)
-        .unwrap();
+    let (mut tamale, hs2) = keys.respond_fixed(SID, NONCE, &hs1, &responder_e).unwrap();
     let mut app = app.finish(&hs2).unwrap();
     let long = "λ".repeat(LONG_COUNT);
     let mut down = Vec::new();
     for plain in [r#"{"t":"status"}"#, "", long.as_str()] {
         let sealed = tamale.seal(plain).unwrap();
-        down.push(json!({ "plain": if plain == long { "<long>" } else { plain }, "sealed": sealed }));
+        down.push(
+            json!({ "plain": if plain == long { "<long>" } else { plain }, "sealed": sealed }),
+        );
     }
     let mut up = Vec::new();
     for plain in [r#"{"t":"send","text":"hi from the app"}"#, long.as_str()] {
@@ -223,10 +223,17 @@ fn messages(dir: &std::path::Path) -> Vec<(&'static str, Value)> {
     });
     let mut mirror = mirror;
     let sent = mirror.update(&v);
-    let id = mirror.artifacts.lock().unwrap().pages.keys().next().unwrap().clone();
-    let fix = |text: &str| -> Value {
-        serde_json::from_str(&text.replace(&id, ARTIFACT_ID)).unwrap()
-    };
+    let id = mirror
+        .artifacts
+        .lock()
+        .unwrap()
+        .pages
+        .keys()
+        .next()
+        .unwrap()
+        .clone();
+    let fix =
+        |text: &str| -> Value { serde_json::from_str(&text.replace(&id, ARTIFACT_ID)).unwrap() };
     let (page, hash) = {
         let artifacts = mirror.artifacts.lock().unwrap();
         (artifacts.pages[&id].clone(), artifacts.hashes[&id].clone())
@@ -251,7 +258,11 @@ fn messages(dir: &std::path::Path) -> Vec<(&'static str, Value)> {
 
     let older = {
         let mut mirror = Mirror::default();
-        let history = [Entry::User("The first prompt".into()), Entry::Assistant("And its answer.".into()), Entry::User("Next".into())];
+        let history = [
+            Entry::User("The first prompt".into()),
+            Entry::Assistant("And its answer.".into()),
+            Entry::User("Next".into()),
+        ];
         mirror.update(&view(&history));
         mirror.older(2)
     };
@@ -263,17 +274,35 @@ fn messages(dir: &std::path::Path) -> Vec<(&'static str, Value)> {
         ("entries.json", entries),
         ("status.json", status),
         ("approval.json", approval),
-        ("approval-none.json", json!({ "t": "approval", "approval": null })),
+        (
+            "approval-none.json",
+            json!({ "t": "approval", "approval": null }),
+        ),
         ("question.json", question),
-        ("question-none.json", json!({ "t": "question", "question": null })),
-        ("artifact.json", fix(&artifact_reply(&id, Some(&page), Some(&hash)).to_string())),
+        (
+            "question-none.json",
+            json!({ "t": "question", "question": null }),
+        ),
+        (
+            "artifact.json",
+            fix(&artifact_reply(&id, Some(&page), Some(&hash)).to_string()),
+        ),
         ("artifact-missing.json", artifact_reply("ffff", None, None)),
         ("artifacts.json", gallery),
-        ("hs0.json", json!({ "t": "hs0", "n": STANDARD.encode(NONCE) })),
+        (
+            "hs0.json",
+            json!({ "t": "hs0", "n": STANDARD.encode(NONCE) }),
+        ),
         ("loading.json", json!({ "t": "loading", "bytes": 2048 })),
         ("older.json", fix(&older)),
-        ("diff.json", diff::diff_reply("working tree vs HEAD", &crate::diff::parse(SAMPLE_DIFF))),
-        ("diff-error.json", json!({ "t": "diff", "error": "/tmp is not inside a git repository" })),
+        (
+            "diff.json",
+            diff::diff_reply("working tree vs HEAD", &crate::diff::parse(SAMPLE_DIFF)),
+        ),
+        (
+            "diff-error.json",
+            json!({ "t": "diff", "error": "/tmp is not inside a git repository" }),
+        ),
     ]
 }
 

@@ -71,7 +71,10 @@ impl App {
                 return;
             }
         };
-        let draft = (std::mem::take(&mut self.input), std::mem::take(&mut self.cursor));
+        let draft = (
+            std::mem::take(&mut self.input),
+            std::mem::take(&mut self.cursor),
+        );
         self.remote_view = Some(RemoteView {
             connection,
             generation,
@@ -137,7 +140,10 @@ impl App {
             Event::Paste(text) => {
                 let text = text.replace("\r\n", "\n").replace('\r', "\n");
                 match self.remote_view.as_mut().and_then(|v| v.prompt.as_mut()) {
-                    Some(Prompt { reason: Some(reason), .. }) => {
+                    Some(Prompt {
+                        reason: Some(reason),
+                        ..
+                    }) => {
                         reason.push_str(&text.replace('\n', " "));
                     }
                     Some(_) => {}
@@ -283,7 +289,13 @@ impl App {
     }
 }
 
-fn on_prompt_key(prompt: &mut Prompt, connection: &Connection, key: KeyEvent, ctrl: bool, live: bool) {
+fn on_prompt_key(
+    prompt: &mut Prompt,
+    connection: &Connection,
+    key: KeyEvent,
+    ctrl: bool,
+    live: bool,
+) {
     if key.code == KeyCode::Esc && prompt.reason.is_none() {
         if live {
             connection.send(json!({ "t": "interrupt" }));
@@ -371,11 +383,17 @@ impl RemoteView {
         let max_scroll = (rows + spinner_rows).saturating_sub(area.height as usize);
         self.scroll_back = self.scroll_back.min(max_scroll);
         let offset = max_scroll - self.scroll_back;
-        let (mut lines, local) = self.transcript.visible(offset.min(rows), area.height as usize);
+        let (mut lines, local) = self
+            .transcript
+            .visible(offset.min(rows), area.height as usize);
         if running {
             lines.extend(spinner);
         }
-        let local = if offset > rows { (offset - rows) as u16 } else { local };
+        let local = if offset > rows {
+            (offset - rows) as u16
+        } else {
+            local
+        };
         frame.render_widget(
             Paragraph::new(lines)
                 .wrap(Wrap { trim: false })
@@ -396,7 +414,11 @@ impl RemoteView {
             Span::from(format!(" {state}")).fg(color),
             Span::from(format!(
                 " · {} · {} · ctx {}/{} · ${:.2}",
-                if status.model.is_empty() { &self.session.model } else { &status.model },
+                if status.model.is_empty() {
+                    &self.session.model
+                } else {
+                    &status.model
+                },
                 status.mode,
                 fmt_tokens(status.context),
                 fmt_tokens(status.window),
@@ -428,10 +450,16 @@ impl RemoteView {
             lines.push(Line::from(format!("    {line}")).fg(Color::Yellow));
         }
         lines.push(Line::default());
-        let mut choices = vec![Span::from("y").fg(Color::Cyan).bold(), Span::from(" yes   ")];
+        let mut choices = vec![
+            Span::from("y").fg(Color::Cyan).bold(),
+            Span::from(" yes   "),
+        ];
         if !approval.always.is_empty() {
             choices.push(Span::from("a").fg(Color::Cyan).bold());
-            choices.push(Span::from(format!(" always: {}   ", approval.always.join(", "))));
+            choices.push(Span::from(format!(
+                " always: {}   ",
+                approval.always.join(", ")
+            )));
         }
         choices.push(Span::from("n").fg(Color::Cyan).bold());
         choices.push(Span::from(" no"));

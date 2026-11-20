@@ -301,7 +301,8 @@ impl App {
     pub(super) fn cursor_up(&mut self) {
         let start = self.line_start();
         if start > 0 {
-            self.cursor = self.column_in_line(start - 1, self.input[start..self.cursor].chars().count());
+            self.cursor =
+                self.column_in_line(start - 1, self.input[start..self.cursor].chars().count());
         } else if let Some(prompt) = self.prompts.prev(&self.input) {
             self.input = prompt;
             // At the start, so ↑ again keeps going back through multi-line prompts.
@@ -328,7 +329,9 @@ impl App {
     /// clamped to the line's end.
     fn column_in_line(&self, at: usize, column: usize) -> usize {
         let start = self.input[..at].rfind('\n').map_or(0, |i| i + 1);
-        let end = self.input[start..].find('\n').map_or(self.input.len(), |i| start + i);
+        let end = self.input[start..]
+            .find('\n')
+            .map_or(self.input.len(), |i| start + i);
         self.input[start..end]
             .char_indices()
             .nth(column)
@@ -377,7 +380,11 @@ impl App {
         let placeholder = if lines > 0 {
             format!("[Pasted text #{} +{lines} lines]", self.paste_count)
         } else {
-            format!("[Pasted text #{} {} chars]", self.paste_count, text.chars().count())
+            format!(
+                "[Pasted text #{} {} chars]",
+                self.paste_count,
+                text.chars().count()
+            )
         };
         self.insert_str(&placeholder);
         self.pastes.push((placeholder, text));
@@ -401,7 +408,9 @@ impl App {
         let input = &self.input;
         self.pastes.retain(|(placeholder, _)| {
             input.contains(placeholder.as_str())
-                || draft.as_ref().is_some_and(|d| d.contains(placeholder.as_str()))
+                || draft
+                    .as_ref()
+                    .is_some_and(|d| d.contains(placeholder.as_str()))
         });
     }
 

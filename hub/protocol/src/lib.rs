@@ -280,7 +280,10 @@ mod tests {
         assert_eq!(decode_key(&key.to_uppercase()), None);
         assert_eq!(decode_key(&format!("{}1", &key[..55])), None, "not base32");
         // Only the top bit of the last character counts; the others must be zero.
-        assert_eq!(decode_key(&format!("{}b", &encode_key(&[0; 32])[..55])), None);
+        assert_eq!(
+            decode_key(&format!("{}b", &encode_key(&[0; 32])[..55])),
+            None
+        );
     }
 
     #[test]
@@ -294,7 +297,10 @@ mod tests {
         assert_ne!(secret, key);
         assert_ne!(
             auth,
-            secret.iter().map(|b| format!("{b:02x}")).collect::<String>()
+            secret
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
         );
         assert!(!valid_auth("ABC"));
         assert!(!valid_auth(&"A".repeat(64)));
@@ -321,12 +327,10 @@ mod tests {
         assert!(text.starts_with(r#"{"t":"hello","proto":2,"#), "{text}");
         assert!(!text.contains("chef"), "{text}");
         assert_eq!(serde_json::from_str::<ToHub>(&text).unwrap(), hello);
-        let ToHub::Hello { chef, .. } = serde_json::from_str(&text.replacen(
-            r#""proto":2,"#,
-            r#""proto":2,"chef":true,"#,
-            1,
-        ))
-        .unwrap() else {
+        let ToHub::Hello { chef, .. } =
+            serde_json::from_str(&text.replacen(r#""proto":2,"#, r#""proto":2,"chef":true,"#, 1))
+                .unwrap()
+        else {
             panic!("not a hello");
         };
         assert!(chef);

@@ -82,8 +82,8 @@ pub async fn run(command: &str, timeout: Duration) -> Result<String> {
                     &mut text,
                     &format!(
                         "[timed out after {}s; the command and the processes it started were \
-stopped. Output above is what it printed until then. Use a larger timeout_secs, or run \
-long-lived processes in the background with output redirected to a file]",
+        stopped. Output above is what it printed until then. Use a larger timeout_secs, or run \
+        long-lived processes in the background with output redirected to a file]",
                         timeout.as_secs()
                     ),
                 );
@@ -192,15 +192,20 @@ mod tests {
 
     #[tokio::test]
     async fn interleaves_stdout_and_stderr_in_order() {
-        let out = run("echo one; echo two >&2; echo three", Duration::from_secs(10))
-            .await
-            .unwrap();
+        let out = run(
+            "echo one; echo two >&2; echo three",
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
         assert_eq!(out, "one\ntwo\nthree\n\n[exit code: 0]");
     }
 
     #[tokio::test]
     async fn reports_exit_codes() {
-        let out = run("echo oops >&2; exit 3", Duration::from_secs(10)).await.unwrap();
+        let out = run("echo oops >&2; exit 3", Duration::from_secs(10))
+            .await
+            .unwrap();
         assert_eq!(out, "oops\n\n[exit code: 3]");
     }
 
@@ -213,8 +218,15 @@ mod tests {
             marker.display()
         );
         let start = Instant::now();
-        let err = run(&command, Duration::from_secs(1)).await.unwrap_err().to_string();
-        assert!(start.elapsed() < Duration::from_secs(5), "{:?}", start.elapsed());
+        let err = run(&command, Duration::from_secs(1))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            start.elapsed()
+        );
         assert!(err.starts_with("started\n[timed out after 1s"), "{err}");
         tokio::time::sleep(Duration::from_secs(3)).await;
         assert!(!marker.exists(), "background child survived the timeout");
@@ -236,8 +248,14 @@ mod tests {
     #[tokio::test]
     async fn background_processes_dont_block_the_result() {
         let start = Instant::now();
-        let out = run("echo hi; sleep 5 &", Duration::from_secs(30)).await.unwrap();
-        assert!(start.elapsed() < Duration::from_secs(3), "{:?}", start.elapsed());
+        let out = run("echo hi; sleep 5 &", Duration::from_secs(30))
+            .await
+            .unwrap();
+        assert!(
+            start.elapsed() < Duration::from_secs(3),
+            "{:?}",
+            start.elapsed()
+        );
         assert!(out.starts_with("hi\n[background processes"), "{out}");
         assert!(out.ends_with("[exit code: 0]"), "{out}");
     }

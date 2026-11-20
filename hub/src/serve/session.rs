@@ -63,11 +63,19 @@ expired. <a href='{}/open/{sid}'>Open the session again</a>.",
     let value = SessionCookie::make(&hub.secret(), &sid, &ticket.auth_hash);
     // Tells the page to insist on the handshake. A hub that left this out would gain
     // nothing: tamale refuses unsealed messages, so the page just couldn't connect.
-    let e2e = hub.sessions.lock().unwrap().get(&sid).is_some_and(|s| s.e2e);
+    let e2e = hub
+        .sessions
+        .lock()
+        .unwrap()
+        .get(&sid)
+        .is_some_and(|s| s.e2e);
     let mut response = (
         StatusCode::SEE_OTHER,
         [
-            (header::LOCATION, if e2e { "/?e2e=1" } else { "/" }.to_string()),
+            (
+                header::LOCATION,
+                if e2e { "/?e2e=1" } else { "/" }.to_string(),
+            ),
             (header::REFERRER_POLICY, "no-referrer".to_string()),
             (header::CACHE_CONTROL, "no-store".to_string()),
         ],
@@ -153,7 +161,12 @@ async fn tunnel(
     }
     // An encrypted session's artifacts travel over its socket; tamale refuses too.
     if path.starts_with("/artifact/")
-        && hub.sessions.lock().unwrap().get(&sid).is_some_and(|s| s.e2e)
+        && hub
+            .sessions
+            .lock()
+            .unwrap()
+            .get(&sid)
+            .is_some_and(|s| s.e2e)
     {
         return (StatusCode::NOT_FOUND, "Not found.").into_response();
     }
@@ -243,7 +256,12 @@ pub(super) async fn session_socket(
         // A native client: no cookie, so no Origin to check, but the key must be the
         // session's (or the session unknown, as just after a restart).
         Some(Ok(key)) => {
-            let owner = hub.sessions.lock().unwrap().get(&sid).map(|s| s.key.clone());
+            let owner = hub
+                .sessions
+                .lock()
+                .unwrap()
+                .get(&sid)
+                .map(|s| s.key.clone());
             if owner.is_some_and(|name| name != key.name) {
                 hub.fail(ip);
                 return StatusCode::NOT_FOUND.into_response();

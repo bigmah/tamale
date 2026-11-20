@@ -862,7 +862,10 @@ impl App {
         Some(vec![
             Span::from(" ← ").fg(Color::DarkGray),
             Span::styled(" Chat ", Style::new().fg(Color::Gray)),
-            Span::styled(" Diff ", Style::new().fg(Color::Black).bg(Color::Cyan).bold()),
+            Span::styled(
+                " Diff ",
+                Style::new().fg(Color::Black).bg(Color::Cyan).bold(),
+            ),
         ])
     }
 

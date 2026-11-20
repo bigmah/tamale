@@ -124,11 +124,18 @@ fn parse_sessions(list: &Value, keys: &Keys) -> Vec<HubSession> {
 /// A `/web` message this end acts on.
 pub enum Incoming {
     /// The entries from `from` on, replacing what's there.
-    Entries { from: usize, items: Vec<Entry> },
+    Entries {
+        from: usize,
+        items: Vec<Entry>,
+    },
     Status(Box<Status>),
     Approval(Option<Approval>),
     /// The answer to a side question asked with `{"t":"ask"}`, by its id.
-    Answer { id: String, text: String, error: bool },
+    Answer {
+        id: String,
+        text: String,
+        error: bool,
+    },
 }
 
 fn parse_incoming(text: &str) -> Option<Incoming> {
@@ -306,12 +313,15 @@ async fn connection(
     events: &(impl Fn(Event) + Sync),
     went_live: &mut bool,
 ) -> Ended {
-    let request = url.into_client_request().map_err(|e| anyhow!(e)).and_then(|mut request| {
-        request
-            .headers_mut()
-            .insert("authorization", auth.parse().context("a bad key")?);
-        Ok(request)
-    });
+    let request = url
+        .into_client_request()
+        .map_err(|e| anyhow!(e))
+        .and_then(|mut request| {
+            request
+                .headers_mut()
+                .insert("authorization", auth.parse().context("a bad key")?);
+            Ok(request)
+        });
     let request = match request {
         Ok(request) => request,
         Err(e) => return Ended::Stop(format!("Can't connect to {url}: {e:#}")),
@@ -464,7 +474,12 @@ mod tests {
         assert_eq!(sessions.len(), 1, "{sessions:?}");
         let session = &sessions[0];
         assert_eq!(
-            (&*session.host, &*session.cwd, &*session.title, &*session.model),
+            (
+                &*session.host,
+                &*session.cwd,
+                &*session.title,
+                &*session.model
+            ),
             ("box", "~/x", "fix it", "m2")
         );
         assert!(session.busy && session.online && session.e2e);
@@ -473,8 +488,14 @@ mod tests {
 
     #[test]
     fn socket_urls_go_to_the_sessions_own_host() {
-        assert_eq!(socket_url("wss://hub.example/", "ab"), "wss://ab.hub.example/ws");
-        assert_eq!(socket_url("ws://hub.localhost:8787", "ab"), "ws://ab.hub.localhost:8787/ws");
+        assert_eq!(
+            socket_url("wss://hub.example/", "ab"),
+            "wss://ab.hub.example/ws"
+        );
+        assert_eq!(
+            socket_url("ws://hub.localhost:8787", "ab"),
+            "ws://ab.hub.localhost:8787/ws"
+        );
     }
 
     #[test]
@@ -491,8 +512,13 @@ mod tests {
             panic!("not entries");
         };
         assert_eq!((from, items.len()), (3, 3));
-        let Entry::Assistant(text) = &items[1] else { panic!() };
-        assert!(text.contains("```html artifact\n<title>Sync flow</title>\n```"), "{text}");
+        let Entry::Assistant(text) = &items[1] else {
+            panic!()
+        };
+        assert!(
+            text.contains("```html artifact\n<title>Sync flow</title>\n```"),
+            "{text}"
+        );
         assert!(matches!(&items[2], Entry::Tool { output: Some((o, true)), .. } if o == "a"));
         assert!(matches!(
             parse_incoming(r#"{"t":"approval","approval":null}"#),
@@ -503,12 +529,23 @@ mod tests {
     /// A stand-in for the hub and the session behind it, doing the session's side.
     async fn listen() -> (String, tokio::net::TcpListener) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        (format!("ws://{}/ws", listener.local_addr().unwrap()), listener)
+        (
+            format!("ws://{}/ws", listener.local_addr().unwrap()),
+            listener,
+        )
     }
 
-    fn collect() -> (impl Fn(Event) + Send + Sync + 'static, mpsc::UnboundedReceiver<Event>) {
+    fn collect() -> (
+        impl Fn(Event) + Send + Sync + 'static,
+        mpsc::UnboundedReceiver<Event>,
+    ) {
         let (tx, rx) = mpsc::unbounded_channel();
-        (move |event| { let _ = tx.send(event); }, rx)
+        (
+            move |event| {
+                let _ = tx.send(event);
+            },
+            rx,
+        )
     }
 
     #[tokio::test]
@@ -520,25 +557,44 @@ mod tests {
             let mut ws = accept_async(stream).await.unwrap();
             let nonce = [9u8; 16];
             let n = base64::engine::general_purpose::STANDARD.encode(nonce);
-            ws.send(Message::text(json!({ "t": "hs0", "n": n }).to_string())).await.unwrap();
-            let Some(Ok(Message::Text(hs1))) = ws.next().await else { panic!() };
+            ws.send(Message::text(json!({ "t": "hs0", "n": n }).to_string()))
+                .await
+                .unwrap();
+            let Some(Ok(Message::Text(hs1))) = ws.next().await else {
+                panic!()
+            };
             let hs1: Value = serde_json::from_str(&hs1).unwrap();
-            let (mut channel, hs2) = keys().respond("ab", &nonce, hs1["m"].as_str().unwrap()).unwrap();
-            ws.send(Message::text(json!({ "t": "hs2", "m": hs2 }).to_string())).await.unwrap();
+            let (mut channel, hs2) = keys()
+                .respond("ab", &nonce, hs1["m"].as_str().unwrap())
+                .unwrap();
+            ws.send(Message::text(json!({ "t": "hs2", "m": hs2 }).to_string()))
+                .await
+                .unwrap();
             let mut received = Vec::new();
             for _ in 0..2 {
-                let Some(Ok(Message::Text(frame))) = ws.next().await else { panic!() };
+                let Some(Ok(Message::Text(frame))) = ws.next().await else {
+                    panic!()
+                };
                 let frame: Value = serde_json::from_str(&frame).unwrap();
-                received.push(channel.open(frame["m"].as_str().unwrap(), 1 << 20).unwrap().unwrap());
+                received.push(
+                    channel
+                        .open(frame["m"].as_str().unwrap(), 1 << 20)
+                        .unwrap()
+                        .unwrap(),
+                );
             }
             let status = json!({ "t": "status", "status": { "model": "m", "running": true } });
             for m in channel.seal(&status.to_string()).unwrap() {
-                ws.send(Message::text(json!({ "t": "box", "m": m }).to_string())).await.unwrap();
+                ws.send(Message::text(json!({ "t": "box", "m": m }).to_string()))
+                    .await
+                    .unwrap();
             }
             ws.close(Some(tungstenite::protocol::CloseFrame {
                 code: 4000.into(),
                 reason: "e2e: wrong key".into(),
-            })).await.unwrap();
+            }))
+            .await
+            .unwrap();
             received
         });
         let (events, mut rx) = collect();
@@ -554,9 +610,14 @@ mod tests {
             }
             _ => panic!("no status"),
         }
-        assert!(matches!(rx.recv().await, Some(Event::Stopped(why)) if why.contains("doesn't fit")));
+        assert!(
+            matches!(rx.recv().await, Some(Event::Stopped(why)) if why.contains("doesn't fit"))
+        );
         let received = session.await.unwrap();
-        assert!(received[0].contains("terminal"), "says what it is first: {received:?}");
+        assert!(
+            received[0].contains("terminal"),
+            "says what it is first: {received:?}"
+        );
         assert!(received[1].contains("hello"), "{received:?}");
     }
 
@@ -569,28 +630,46 @@ mod tests {
             let mut ws = accept_async(stream).await.unwrap();
             let nonce = [3u8; 16];
             let n = base64::engine::general_purpose::STANDARD.encode(nonce);
-            ws.send(Message::text(json!({ "t": "hs0", "n": n }).to_string())).await.unwrap();
-            let Some(Ok(Message::Text(hs1))) = ws.next().await else { panic!() };
+            ws.send(Message::text(json!({ "t": "hs0", "n": n }).to_string()))
+                .await
+                .unwrap();
+            let Some(Ok(Message::Text(hs1))) = ws.next().await else {
+                panic!()
+            };
             let hs1: Value = serde_json::from_str(&hs1).unwrap();
-            let (mut channel, hs2) = keys().respond("ab", &nonce, hs1["m"].as_str().unwrap()).unwrap();
-            ws.send(Message::text(json!({ "t": "hs2", "m": hs2 }).to_string())).await.unwrap();
+            let (mut channel, hs2) = keys()
+                .respond("ab", &nonce, hs1["m"].as_str().unwrap())
+                .unwrap();
+            ws.send(Message::text(json!({ "t": "hs2", "m": hs2 }).to_string()))
+                .await
+                .unwrap();
             let mut received = Vec::new();
             for _ in 0..2 {
-                let Some(Ok(Message::Text(frame))) = ws.next().await else { panic!() };
+                let Some(Ok(Message::Text(frame))) = ws.next().await else {
+                    panic!()
+                };
                 let frame: Value = serde_json::from_str(&frame).unwrap();
-                received.push(channel.open(frame["m"].as_str().unwrap(), 1 << 20).unwrap().unwrap());
+                received.push(
+                    channel
+                        .open(frame["m"].as_str().unwrap(), 1 << 20)
+                        .unwrap()
+                        .unwrap(),
+                );
             }
             // What the hub does when tamale says it has ended.
             ws.close(Some(tungstenite::protocol::CloseFrame {
                 code: 4000.into(),
                 reason: "This session ended.".into(),
-            })).await.unwrap();
+            }))
+            .await
+            .unwrap();
             received
         });
         let (tx, events) = mpsc::unbounded_channel();
-        let connection = Connection::to(url, "Bearer x".into(), keys(), "ab".into(), move |event| {
-            let _ = tx.send(event);
-        });
+        let connection =
+            Connection::to(url, "Bearer x".into(), keys(), "ab".into(), move |event| {
+                let _ = tx.send(event);
+            });
         assert_eq!(close_over(connection, events).await, Ok(()));
         let received = session.await.unwrap();
         assert_eq!(received[1], r#"{"t":"close"}"#);
@@ -600,7 +679,10 @@ mod tests {
     async fn closing_a_session_that_isnt_there_says_why() {
         let (tx, events) = mpsc::unbounded_channel();
         tx.send(Event::Connecting(None)).unwrap();
-        tx.send(Event::Stopped("This key doesn't have that session, or it has ended.".into())).unwrap();
+        tx.send(Event::Stopped(
+            "This key doesn't have that session, or it has ended.".into(),
+        ))
+        .unwrap();
         let (url, _listener) = listen().await;
         let connection = Connection::to(url, "Bearer x".into(), keys(), "ab".into(), |_| {});
         let result = close_over(connection, events).await;

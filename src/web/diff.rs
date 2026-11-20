@@ -131,7 +131,11 @@ fn diff_hunks(file: &crate::diff::FileDiff) -> Value {
         }
     }
     runs.retain(|run| !run.is_empty());
-    Value::Array(runs.into_iter().map(|lines| json!({ "lines": lines })).collect())
+    Value::Array(
+        runs.into_iter()
+            .map(|lines| json!({ "lines": lines }))
+            .collect(),
+    )
 }
 
 #[cfg(test)]
@@ -143,7 +147,11 @@ mod tests {
     fn file(count: usize, changed: usize) -> FileDiff {
         let lines = (0..count)
             .map(|i| DiffLine {
-                kind: if i == changed { Kind::Added } else { Kind::Context },
+                kind: if i == changed {
+                    Kind::Added
+                } else {
+                    Kind::Context
+                },
                 old: (i != changed).then_some(i as u32 + 1),
                 new: Some(i as u32 + 1),
                 text: format!("line {i}"),
@@ -155,7 +163,11 @@ mod tests {
             status: Status::Modified,
             binary: false,
             mode_change: None,
-            hunks: vec![Hunk { header: String::new(), section: String::new(), lines }],
+            hunks: vec![Hunk {
+                header: String::new(),
+                section: String::new(),
+                lines,
+            }],
             added: 1,
             removed: 0,
         }
@@ -179,7 +191,10 @@ mod tests {
         b.added = 4;
         b.removed = 2;
         let reply = diff_stat_reply(&[a, b]);
-        assert_eq!(reply, json!({ "t": "diff_stat", "files": 2, "added": 7, "removed": 3 }));
+        assert_eq!(
+            reply,
+            json!({ "t": "diff_stat", "files": 2, "added": 7, "removed": 3 })
+        );
     }
 
     #[test]
@@ -203,6 +218,9 @@ mod tests {
         assert_eq!(reply["files"][0]["omitted"], true);
         assert_eq!(reply["files"][0]["added"], 1);
         assert!(reply["files"][0]["hunks"].as_array().unwrap().is_empty());
-        assert_eq!(reply["files"][1]["omitted"], false, "the budget wasn't spent on what wasn't sent");
+        assert_eq!(
+            reply["files"][1]["omitted"], false,
+            "the budget wasn't spent on what wasn't sent"
+        );
     }
 }

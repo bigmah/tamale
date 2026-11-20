@@ -310,7 +310,11 @@ the user how to proceed."
     }
 
     /// Runs the `ask_user` tool: shows the questions and waits for the user's answers.
-    async fn ask_user(&self, args: &Value, tx: &mpsc::UnboundedSender<AgentEvent>) -> (String, bool) {
+    async fn ask_user(
+        &self,
+        args: &Value,
+        tx: &mpsc::UnboundedSender<AgentEvent>,
+    ) -> (String, bool) {
         if !self.interactive {
             return (
                 "Error: no one can answer questions here (a non-interactive run or a \

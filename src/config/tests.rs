@@ -286,8 +286,14 @@ fn a_project_file_cant_run_programs_redirect_the_hub_or_skip_approvals() {
     assert_eq!(settings.permissions.mode, Mode::Ask);
     let policy = Policy::new(&settings.permissions, cwd.clone());
     let bash = |command: &str| policy.check("bash", &json!({ "command": command }));
-    assert!(matches!(bash("make"), Decision::Ask { .. }), "no allow rule got in");
-    assert!(matches!(bash("rm x"), Decision::Deny(_)), "more caution still counts");
+    assert!(
+        matches!(bash("make"), Decision::Ask { .. }),
+        "no allow rule got in"
+    );
+    assert!(
+        matches!(bash("rm x"), Decision::Deny(_)),
+        "more caution still counts"
+    );
     // What's harmless still works: which backend, and the model.
     assert_eq!(settings.backend.kind, Kind::ClaudeCode);
     assert_eq!(settings.model.name, "project-model");
@@ -330,8 +336,14 @@ fn a_project_can_ask_for_a_stricter_mode_but_not_a_looser_one() {
 
     let fixture = Fixture::new();
     let project = |personal: &str, project: &str| {
-        fixture.write("personal/config.toml", &format!("[permissions]\nmode = '{personal}'"));
-        fixture.write("project/tamale.toml", &format!("[permissions]\nmode = '{project}'"));
+        fixture.write(
+            "personal/config.toml",
+            &format!("[permissions]\nmode = '{personal}'"),
+        );
+        fixture.write(
+            "project/tamale.toml",
+            &format!("[permissions]\nmode = '{project}'"),
+        );
         let settings = Settings::load_from(
             &fixture.0.join("project"),
             Some(&fixture.0.join("personal")),
@@ -364,7 +376,10 @@ fn a_project_can_ask_for_a_stricter_mode_but_not_a_looser_one() {
     // A typo is still reported, rather than ignored along with the rest.
     fixture.write("project/nested/tamale.toml", "[permissions]\nmode = 'yolo'");
     let error = Settings::load_from(&fixture.0.join("project/nested"), None, None).unwrap_err();
-    assert!(format!("{error:#}").contains("unknown permission mode"), "{error:#}");
+    assert!(
+        format!("{error:#}").contains("unknown permission mode"),
+        "{error:#}"
+    );
 }
 
 #[test]
@@ -429,13 +444,24 @@ fn the_hub_key_only_comes_from_the_environment_and_the_site() {
     );
     // The message points at the hub in use.
     let hub = settings(&[("TAMALE_HUB_URL", "ws://hub.localhost:8787/")]);
-    assert!(hub.key_bytes().unwrap_err().ends_with("http://hub.localhost:8787"));
+    assert!(
+        hub.key_bytes()
+            .unwrap_err()
+            .ends_with("http://hub.localhost:8787")
+    );
     // Someone who set up the old tokens is told, rather than just asked for a key.
     let hub = settings(&[("TAMALE_HUB_TOKEN", "tha_old")]);
-    assert!(hub.key_bytes().unwrap_err().contains("TAMALE_HUB_TOKEN has been replaced"));
+    assert!(
+        hub.key_bytes()
+            .unwrap_err()
+            .contains("TAMALE_HUB_TOKEN has been replaced")
+    );
 
     let key = tamale_hub_protocol::encode_key(&[5; 32]);
-    let hub = settings(&[("TAMALE_HUB_KEY", &format!(" {key}\n")), ("TAMALE_HUB_TOKEN", "tha_old")]);
+    let hub = settings(&[
+        ("TAMALE_HUB_KEY", &format!(" {key}\n")),
+        ("TAMALE_HUB_TOKEN", "tha_old"),
+    ]);
     assert_eq!(hub.key_bytes().unwrap(), [5; 32]);
     let hub = settings(&[("TAMALE_HUB_KEY", "tha_old")]);
     assert!(hub.key_bytes().unwrap_err().contains("isn't a key"));

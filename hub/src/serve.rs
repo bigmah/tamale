@@ -392,7 +392,9 @@ impl Hub {
     /// Notes an auth failure from `ip`.
     fn fail(&self, ip: IpAddr) {
         let mut failures = self.failures.lock().unwrap();
-        let entry = failures.entry(limit_bucket(ip)).or_insert((0, Instant::now()));
+        let entry = failures
+            .entry(limit_bucket(ip))
+            .or_insert((0, Instant::now()));
         if entry.1.elapsed() > FAILURE_WINDOW {
             *entry = (0, Instant::now());
         }
@@ -813,7 +815,10 @@ async fn dashboard(State(hub): State<Arc<Hub>>) -> Response {
     if let Ok(csp) = csp.parse() {
         headers.insert(header::CONTENT_SECURITY_POLICY, csp);
     }
-    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("SAMEORIGIN"));
+    headers.insert(
+        header::X_FRAME_OPTIONS,
+        HeaderValue::from_static("SAMEORIGIN"),
+    );
     // A session in one of its frames opens an artifact in a tab of its own and sends it the
     // document (see artifact-frame.html). Under `same-origin` the browser cuts that tab
     // off from its opener, since the frame isn't this page's origin; this still keeps

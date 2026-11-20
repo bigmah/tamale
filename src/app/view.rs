@@ -479,7 +479,11 @@ impl App {
     }
 
     fn draw_input(&self, frame: &mut Frame, area: Rect, rows: Vec<String>, cursor: (usize, usize)) {
-        let accent = if self.is_chef() { super::chef::CHEF } else { Color::Cyan };
+        let accent = if self.is_chef() {
+            super::chef::CHEF
+        } else {
+            Color::Cyan
+        };
         let visible = area.height.saturating_sub(2) as usize;
         let skip = (cursor.0 + 1).saturating_sub(visible);
         let lines: Vec<Line> = rows
@@ -545,11 +549,15 @@ impl App {
                 FooterTab::Remote => "enter connect · ←/→ choose · ↑ back",
                 FooterTab::Web => "enter open in browser · ←/→ choose · ↑ back",
                 FooterTab::Diff => "enter open · ←/→ choose · ↑ back",
-                FooterTab::Chef if self.is_chef() => "you're in the chef · x stop it · ←/→ choose · ↑ back",
+                FooterTab::Chef if self.is_chef() => {
+                    "you're in the chef · x stop it · ←/→ choose · ↑ back"
+                }
                 FooterTab::Chef if self.chef_on() == Some(true) => {
                     "enter open the chef · x stop it · ←/→ choose · ↑ back"
                 }
-                FooterTab::Chef => "enter start the chef, who knows every session · ←/→ choose · ↑ back",
+                FooterTab::Chef => {
+                    "enter start the chef, who knows every session · ←/→ choose · ↑ back"
+                }
             }
         } else if self.is_running() && self.detachable {
             "esc to interrupt · ctrl+c to detach"
@@ -627,7 +635,8 @@ impl App {
         // ones that matter least first: usage, verbose, thinking, effort, cost, ctx, model.
         let hint_width = (hint.width() as u16 + 1).min(stats_row.width);
         let [stats_area, hint_area] =
-            Layout::horizontal([Constraint::Min(0), Constraint::Length(hint_width)]).areas(stats_row);
+            Layout::horizontal([Constraint::Min(0), Constraint::Length(hint_width)])
+                .areas(stats_row);
         for drop in [6, 2, 3, 4, 7, 5, 1] {
             let width: usize = stats.iter().map(|s| s.content.width()).sum();
             if width < stats_area.width as usize {
@@ -683,9 +692,19 @@ impl App {
             style(FooterTab::Remote, remote_color).bold(),
         );
         spans.push(Span::from(SEPARATOR).fg(Color::DarkGray));
-        add(&mut spans, FooterTab::Web, " ◉ Web ".into(), style(FooterTab::Web, secondary));
+        add(
+            &mut spans,
+            FooterTab::Web,
+            " ◉ Web ".into(),
+            style(FooterTab::Web, secondary),
+        );
         if let Some(stats) = self.diff_stats() {
-            add(&mut spans, FooterTab::Diff, " ± Diff ".into(), style(FooterTab::Diff, secondary));
+            add(
+                &mut spans,
+                FooterTab::Diff,
+                " ± Diff ".into(),
+                style(FooterTab::Diff, secondary),
+            );
             spans.extend(stats);
         }
         if self.shows_chef_tab() {
@@ -695,7 +714,12 @@ impl App {
                 state @ "on" => (format!(" 🫔 Chef {state} "), super::chef::CHEF),
                 state => (format!(" 🫔 Chef {state} "), secondary),
             };
-            add(&mut spans, FooterTab::Chef, label, style(FooterTab::Chef, color).bold());
+            add(
+                &mut spans,
+                FooterTab::Chef,
+                label,
+                style(FooterTab::Chef, color).bold(),
+            );
         }
         self.tab_areas = areas;
         let tabs_width: usize = spans.iter().map(|s| s.content.width()).sum();
@@ -962,7 +986,11 @@ fn draw_queued(frame: &mut Frame, area: Rect, queued: &[String]) {
 
 /// Wraps input text to `width` columns, returning visual rows and the
 /// (row, col) of the byte offset `cursor`.
-pub(super) fn wrap_input(input: &str, cursor: usize, width: usize) -> (Vec<String>, (usize, usize)) {
+pub(super) fn wrap_input(
+    input: &str,
+    cursor: usize,
+    width: usize,
+) -> (Vec<String>, (usize, usize)) {
     let mut rows = vec![String::new()];
     let mut col = 0;
     let mut pos = None;

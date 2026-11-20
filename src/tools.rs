@@ -350,7 +350,11 @@ struct BashArgs {
 }
 
 async fn bash(a: BashArgs) -> Result<String> {
-    shell::run(&a.command, Duration::from_secs(a.timeout_secs.unwrap_or(120))).await
+    shell::run(
+        &a.command,
+        Duration::from_secs(a.timeout_secs.unwrap_or(120)),
+    )
+    .await
 }
 
 /// Bounds tool output for the model. Errors and summaries (compiler errors, failing tests)
@@ -403,7 +407,8 @@ fn spill(s: &str) -> Result<PathBuf> {
     static PRUNED: std::sync::Once = std::sync::Once::new();
     PRUNED.call_once(|| prune_spills(&dir, Duration::from_secs(7 * 24 * 3600)));
     let path = dir.join(format!("{}.txt", crate::session::new_id()));
-    crate::secure::write_private(&path, s).with_context(|| format!("writing {}", path.display()))?;
+    crate::secure::write_private(&path, s)
+        .with_context(|| format!("writing {}", path.display()))?;
     Ok(path)
 }
 
@@ -481,11 +486,19 @@ mod tests {
         for path in ["/dev/zero", "/dev/urandom"] {
             for tool in ["read_file", "edit_file"] {
                 let error = execute(tool, args(path)).await.unwrap_err();
-                assert!(format!("{error:#}").contains("isn't a regular file"), "{tool}: {error:#}");
+                assert!(
+                    format!("{error:#}").contains("isn't a regular file"),
+                    "{tool}: {error:#}"
+                );
             }
         }
         assert!(execute("read_file", args("/nope")).await.is_err());
-        assert!(execute("read_file", args("Cargo.toml")).await.unwrap().contains("[package]"));
+        assert!(
+            execute("read_file", args("Cargo.toml"))
+                .await
+                .unwrap()
+                .contains("[package]")
+        );
     }
 
     #[test]

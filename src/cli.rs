@@ -91,9 +91,7 @@ pub struct Cli {
 impl Cli {
     pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Self> {
         let mut args = args.into_iter().peekable();
-        let mut cli = Self {
-            ..Self::default()
-        };
+        let mut cli = Self { ..Self::default() };
         let session_id = |arg: &str| {
             arg.parse::<u32>()
                 .with_context(|| format!("{arg:?} isn't a session id; `tamale ls` lists them"))

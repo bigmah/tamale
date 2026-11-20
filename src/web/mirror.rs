@@ -82,7 +82,9 @@ impl Mirror {
                 .entries
                 .iter()
                 .find_map(|e| match e {
-                    Entry::User(text) => Some(text.lines().next().unwrap_or("").chars().take(80).collect()),
+                    Entry::User(text) => {
+                        Some(text.lines().next().unwrap_or("").chars().take(80).collect())
+                    }
                     _ => None,
                 })
                 .unwrap_or_default(),

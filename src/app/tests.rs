@@ -122,7 +122,9 @@ async fn add_dir_lists_scope_and_accepts_spaces_and_quotes_during_a_turn() {
     let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
     let (mut app, _rx) = App::new_with_channel(client, test_settings("test-model"), workspace);
     app.command("/add-dir list");
-    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("No additional directories")));
+    assert!(
+        matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("No additional directories"))
+    );
     app.command("/add-dir ../shared files");
     assert_eq!(
         app.workspace.additional_dirs,
@@ -254,7 +256,10 @@ fn footer_tabs_open_by_click_or_by_down_arrows_enter() {
     app.settings.hub.key = Some(tamale_hub_protocol::encode_key(&[1; 32]));
     let lines = screen_lines(&mut app, 100, 30);
     let footer = &lines[28];
-    assert!(footer.starts_with(" ≡ Sessions  ⇄ Remote off │ ◉ Web "), "{footer}");
+    assert!(
+        footer.starts_with(" ≡ Sessions  ⇄ Remote off │ ◉ Web "),
+        "{footer}"
+    );
 
     let click = |column, row| {
         Event::Mouse(MouseEvent {
@@ -316,7 +321,11 @@ fn footer_tabs_open_by_click_or_by_down_arrows_enter() {
     for _ in 0..3 {
         app.on_event(key(KeyCode::Left));
     }
-    assert_eq!(app.tab_focus, Some(FooterTab::Sessions), "nothing further left");
+    assert_eq!(
+        app.tab_focus,
+        Some(FooterTab::Sessions),
+        "nothing further left"
+    );
     // ↑, Esc and typing all go back to the prompt; typing still types.
     app.on_event(key(KeyCode::Up));
     assert_eq!(app.tab_focus, None);
@@ -373,12 +382,20 @@ fn footer_tabs_open_by_click_or_by_down_arrows_enter() {
     assert_eq!(app.settings.hub.key_bytes(), Ok([7; 32]));
     // Not while connected with another one.
     app.set_hub_viewers(Some(0));
-    app.command(&format!("/remote {}", tamale_hub_protocol::encode_key(&[8; 32])));
+    app.command(&format!(
+        "/remote {}",
+        tamale_hub_protocol::encode_key(&[8; 32])
+    ));
     assert!(app.take_web_request().is_none());
     assert_eq!(app.settings.hub.key_bytes(), Ok([7; 32]));
     app.set_hub_viewers(None);
     // Keys come from the hub's site, so `pair` and `rekey` went with the pairing key.
-    for command in ["/remote nonsense", "/remote pair", "/remote rekey", "/web remote"] {
+    for command in [
+        "/remote nonsense",
+        "/remote pair",
+        "/remote rekey",
+        "/web remote",
+    ] {
         app.command(command);
         assert!(app.take_web_request().is_none(), "{command}");
     }
@@ -427,7 +444,10 @@ fn the_remote_tab_says_whether_the_hub_is_connected_and_stays_clickable() {
     app.set_hub_viewers(Some(2));
     assert!(footer(&mut app).contains("⇄ Remote on · 2 viewing"));
     app.set_hub_viewers(None);
-    assert!(footer(&mut app).contains("⇄ Remote off"), "a stale live doesn't count");
+    assert!(
+        footer(&mut app).contains("⇄ Remote off"),
+        "a stale live doesn't count"
+    );
 }
 
 #[test]
@@ -459,12 +479,18 @@ fn the_web_session_screen_shows_what_became_of_the_hub() {
     let refused = screen(Some(HubState::Connecting(Some(
         "The hub refused this session".into(),
     ))));
-    assert!(refused.contains("The hub refused this session"), "{refused}");
+    assert!(
+        refused.contains("The hub refused this session"),
+        "{refused}"
+    );
     assert!(!refused.contains("anywhere through the hub"));
     assert!(screen(Some(HubState::Connecting(None))).contains("Connecting to the hub"));
     let live = screen(Some(HubState::Live("https://hub.example/open/ab")));
     assert!(live.contains("https://hub.example/open/ab"), "{live}");
-    assert!(live.contains("back to the session"), "esc says what it does");
+    assert!(
+        live.contains("back to the session"),
+        "esc says what it does"
+    );
     assert!(live.contains("turn remote off"), "{live}");
     let local = screen(None);
     assert!(!local.contains("hub"));
@@ -1022,7 +1048,10 @@ fn status_shows_where_inference_comes_from_even_with_a_long_cwd() {
     let row: String = (0..80)
         .map(|x| buffer[(x, 10)].symbol().to_string())
         .collect();
-    assert!(row.starts_with(" ≡ Sessions  ⇄ Remote off │ ◉ Web "), "the tabs stay: {row}");
+    assert!(
+        row.starts_with(" ≡ Sessions  ⇄ Remote off │ ◉ Web "),
+        "the tabs stay: {row}"
+    );
     assert!(row.contains("…"), "{row}");
     assert!(row.ends_with(" · via Anthropic API "), "{row}");
 
@@ -1031,16 +1060,30 @@ fn status_shows_where_inference_comes_from_even_with_a_long_cwd() {
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
     terminal.draw(|f| app.draw(f)).unwrap();
     let buffer = terminal.backend().buffer();
-    let row = |y| (0..34).map(|x| buffer[(x, y)].symbol().to_string()).collect::<String>();
-    assert!(row(10).starts_with(" ≡ Sessions  ⇄ Remote off"), "{}", row(10));
-    assert!(row(11).ends_with("shift+tab mode · ↓ tabs · /help "), "{}", row(11));
+    let row = |y| {
+        (0..34)
+            .map(|x| buffer[(x, y)].symbol().to_string())
+            .collect::<String>()
+    };
+    assert!(
+        row(10).starts_with(" ≡ Sessions  ⇄ Remote off"),
+        "{}",
+        row(10)
+    );
+    assert!(
+        row(11).ends_with("shift+tab mode · ↓ tabs · /help "),
+        "{}",
+        row(11)
+    );
 
     // Stats give way whole, not cut off by the hint, and the cost outlasts the usage.
     let backend = ratatui::backend::TestBackend::new(100, 12);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
     terminal.draw(|f| app.draw(f)).unwrap();
     let buffer = terminal.backend().buffer();
-    let row = (0..100).map(|x| buffer[(x, 11)].symbol().to_string()).collect::<String>();
+    let row = (0..100)
+        .map(|x| buffer[(x, 11)].symbol().to_string())
+        .collect::<String>();
     assert!(row.contains("· $0.00 "), "{row}");
     assert!(!row.contains("↑0"), "{row}");
 }
@@ -1288,7 +1331,10 @@ async fn add_dir_browser_walks_the_tree_and_adds_the_highlighted_directory() {
 
     let shown = screen(&mut app);
     assert!(shown.contains("Add directory to scope"), "{shown}");
-    assert!(shown.contains("project/  in scope") && shown.contains("zeta/"), "{shown}");
+    assert!(
+        shown.contains("project/  in scope") && shown.contains("zeta/"),
+        "{shown}"
+    );
 
     // Typing filters (and keeps keys from the prompt); → opens, ← goes back up.
     type_text(&mut app, "sha");
@@ -1296,9 +1342,16 @@ async fn add_dir_browser_walks_the_tree_and_adds_the_highlighted_directory() {
     assert!(app.input.is_empty());
     let browser = app.dir_browser.as_ref().unwrap();
     assert_eq!(browser.filtered(), ["nested"]);
-    assert_eq!(browser.highlighted(), root.join("shared"), "row 0 is the directory itself");
+    assert_eq!(
+        browser.highlighted(),
+        root.join("shared"),
+        "row 0 is the directory itself"
+    );
     app.on_event(key(KeyCode::Left));
-    assert_eq!(app.dir_browser.as_ref().unwrap().highlighted(), root.join("shared"));
+    assert_eq!(
+        app.dir_browser.as_ref().unwrap().highlighted(),
+        root.join("shared")
+    );
     app.on_event(key(KeyCode::Char('.')));
     assert_eq!(app.dir_browser.as_ref().unwrap().filtered(), [".hidden"]);
     app.on_event(key(KeyCode::Backspace));
@@ -1528,7 +1581,15 @@ async fn goals_continue_until_the_checker_confirms_them() {
     assert_eq!(app.checkpoints.len(), 2);
     assert!(matches!(app.entries.last(), Some(Entry::User(t)) if t.contains("turn 2 of 20")));
     assert!(format!("{:?}", app.history).contains("`parse` still fails."));
-    assert!(app.goal.as_ref().unwrap().last_check.as_ref().unwrap().contains("`parse`"));
+    assert!(
+        app.goal
+            .as_ref()
+            .unwrap()
+            .last_check
+            .as_ref()
+            .unwrap()
+            .contains("`parse`")
+    );
 
     // Blocked pauses without checking; resume continues, counting on.
     goal_reply(&mut app, "Which database should I use?\n[goal blocked]");
@@ -1551,7 +1612,11 @@ async fn goals_continue_until_the_checker_confirms_them() {
     app.command("/goal resume");
 
     goal_work(&mut app, "All 42 tests pass.");
-    goal_checked(&mut app, "Ran cargo test: 42 passed.\n\n**[goal met]**", false);
+    goal_checked(
+        &mut app,
+        "Ran cargo test: 42 passed.\n\n**[goal met]**",
+        false,
+    );
     assert!(!app.is_running());
     assert!(app.goal.is_none());
     let n = app.entries.len();
@@ -1639,7 +1704,10 @@ async fn goals_pause_when_stuck_and_resume_with_a_message() {
     assert!(!app.goal.as_ref().unwrap().paused);
     assert!(matches!(app.entries.last(), Some(Entry::User(t)) if t == "Rewrite the intro first."));
     assert!(format!("{:?}", app.history).contains("resumes the paused goal"));
-    assert_eq!(app.goal.as_ref().unwrap().notes, ["Rewrite the intro first."]);
+    assert_eq!(
+        app.goal.as_ref().unwrap().notes,
+        ["Rewrite the intro first."]
+    );
 
     // Messages typed while the checker runs go along with the continuation.
     goal_work(&mut app, "Rewrote the intro.");
@@ -1727,7 +1795,10 @@ async fn goals_are_saved_and_restored_paused() {
     let saved = app.saved_goal().unwrap();
     assert_eq!(saved.condition, "all tests pass");
     assert_eq!(saved.turns, 2);
-    assert_eq!(saved.last_check.as_deref(), Some("Two still fail.\n[goal not met]"));
+    assert_eq!(
+        saved.last_check.as_deref(),
+        Some("Two still fail.\n[goal not met]")
+    );
     app.task.take().unwrap().abort();
     app.finish_saves().await;
 
@@ -1817,8 +1888,14 @@ async fn diff_viewer_browses_files_hunks_and_follows_edits() {
     let lines = screen_lines(&mut app, 110, 24);
     let text = lines.join("\n");
     println!("{text}");
-    assert!(text.contains("working tree vs HEAD · 2 files +3 −1"), "{text}");
-    assert!(text.contains("src/app/"), "directory chains are merged:\n{text}");
+    assert!(
+        text.contains("working tree vs HEAD · 2 files +3 −1"),
+        "{text}"
+    );
+    assert!(
+        text.contains("src/app/"),
+        "directory chains are merged:\n{text}"
+    );
     assert!(text.contains("U notes.txt"), "{text}");
     // The first file in tree order (directories first) is shown.
     assert!(text.contains("view.rs modified"), "{text}");
@@ -1827,9 +1904,11 @@ async fn diff_viewer_browses_files_hunks_and_follows_edits() {
     assert!(text.contains("      3 + line three"), "{text}");
     assert!(text.contains(" 2 hunks "), "{text}");
     // Changed lines are tinted across the pane, not just under their text.
-    let row = lines.iter().position(|l| l.contains("+ line three")).unwrap() as u16;
-    let mut terminal =
-        ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 24)).unwrap();
+    let row = lines
+        .iter()
+        .position(|l| l.contains("+ line three"))
+        .unwrap() as u16;
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 24)).unwrap();
     terminal.draw(|frame| app.draw(frame)).unwrap();
     assert_eq!(terminal.backend().buffer()[(100, row)].bg, diff::ADDED_BG);
 
@@ -1837,7 +1916,11 @@ async fn diff_viewer_browses_files_hunks_and_follows_edits() {
     let small = screen_lines(&mut app, 110, 12).join("\n");
     assert!(small.contains("hunk 1/2"), "{small}");
     app.on_event(key(KeyCode::Char('n')));
-    assert!(screen_lines(&mut app, 110, 12).join("\n").contains("hunk 2/2"));
+    assert!(
+        screen_lines(&mut app, 110, 12)
+            .join("\n")
+            .contains("hunk 2/2")
+    );
     app.on_event(key(KeyCode::Char('n')));
     let text = screen_lines(&mut app, 110, 24).join("\n");
     assert!(text.contains("notes.txt untracked"), "{text}");
@@ -1847,7 +1930,10 @@ async fn diff_viewer_browses_files_hunks_and_follows_edits() {
     app.on_event(key(KeyCode::Home));
     app.on_event(key(KeyCode::Left));
     let text = screen_lines(&mut app, 110, 24).join("\n");
-    assert!(text.contains("▸ src/app/") && !text.contains("M view.rs"), "{text}");
+    assert!(
+        text.contains("▸ src/app/") && !text.contains("M view.rs"),
+        "{text}"
+    );
 
     // Edits show up after a refresh, and the selected file stays selected.
     std::fs::write(work.join("README.md"), "hello\nworld\n").unwrap();
@@ -1877,7 +1963,9 @@ async fn diff_outside_a_repository_reports_an_error() {
     let event = rx.recv().await.unwrap();
     app.on_app_event(event);
     assert!(!app.diff_open);
-    assert!(matches!(app.entries.last(), Some(Entry::Error(e)) if e.contains("not inside a git repository")));
+    assert!(
+        matches!(app.entries.last(), Some(Entry::Error(e)) if e.contains("not inside a git repository"))
+    );
     // Without a repository there is no Diff tab.
     assert!(app.tab_spans().is_none());
     let _ = std::fs::remove_dir_all(&work);
@@ -2007,8 +2095,14 @@ async fn diff_viewer_expands_unchanged_lines() {
     // A large gap opens next to the changes on both sides first.
     app.on_event(key(KeyCode::Enter));
     let text = screen_lines(&mut app, 110, 60).join("\n");
-    assert!(text.contains("line 16") && text.contains("line 22"), "{text}");
-    assert!(text.contains("↕ 5 unchanged lines  @@") && !text.contains("line 19"), "{text}");
+    assert!(
+        text.contains("line 16") && text.contains("line 22"),
+        "{text}"
+    );
+    assert!(
+        text.contains("↕ 5 unchanged lines  @@") && !text.contains("line 19"),
+        "{text}"
+    );
     app.on_event(key(KeyCode::Char('n')));
     app.on_event(key(KeyCode::Enter));
     let text = screen_lines(&mut app, 110, 60).join("\n");
@@ -2023,13 +2117,20 @@ async fn diff_viewer_expands_unchanged_lines() {
     app.on_event(key(KeyCode::Char('r')));
     let event = rx.recv().await.unwrap();
     app.on_app_event(event);
-    assert!(screen_lines(&mut app, 110, 60).join("\n").contains("line 17"));
+    assert!(
+        screen_lines(&mut app, 110, 60)
+            .join("\n")
+            .contains("line 17")
+    );
     app.on_event(key(KeyCode::Char('E')));
     let text = screen_lines(&mut app, 110, 60).join("\n");
     assert!(text.contains("line 17") && !text.contains("↕"), "{text}");
     app.on_event(key(KeyCode::Char('E')));
     let text = screen_lines(&mut app, 110, 60).join("\n");
-    assert!(!text.contains("line 17") && text.contains("↕ 25 unchanged lines"), "{text}");
+    assert!(
+        !text.contains("line 17") && text.contains("↕ 25 unchanged lines"),
+        "{text}"
+    );
     let _ = std::fs::remove_dir_all(&work);
 }
 
@@ -2074,7 +2175,11 @@ async fn visual_selection_in_the_diff_quotes_lines_into_the_prompt() {
     // Esc leaves visual mode rather than the tab.
     app.on_event(key(KeyCode::Esc));
     assert!(app.diff_open);
-    assert!(!screen_lines(&mut app, 100, 30).join("\n").contains("VISUAL"));
+    assert!(
+        !screen_lines(&mut app, 100, 30)
+            .join("\n")
+            .contains("VISUAL")
+    );
 
     app.on_event(key(KeyCode::Char('v')));
     app.on_event(key(KeyCode::Char('k')));
@@ -2087,7 +2192,10 @@ async fn visual_selection_in_the_diff_quotes_lines_into_the_prompt() {
         "Context first\n\nIn `a.rs` (lines 1–2):\n```diff\n one\n-two\n+2\n```\n\n"
     );
     assert_eq!(app.cursor, app.input.len());
-    assert!(app.history.is_empty(), "nothing is sent until you add a question");
+    assert!(
+        app.history.is_empty(),
+        "nothing is sent until you add a question"
+    );
     let _ = std::fs::remove_dir_all(&work);
 }
 
@@ -2296,8 +2404,15 @@ async fn the_startup_note_stays_out_of_saves_but_rewinding_still_lines_up() {
     app.begin_turn_as("hi".into(), "hi".into());
     let (entries, checkpoints) = app.entries_to_save();
     assert_eq!(entries.len(), app.entries.len() - 1);
-    assert!(!entries.iter().any(|e| matches!(e, Entry::Info(t) if t == "1 open")));
-    assert_eq!(checkpoints[0].entries_len, app.checkpoints[0].entries_len - 1);
+    assert!(
+        !entries
+            .iter()
+            .any(|e| matches!(e, Entry::Info(t) if t == "1 open"))
+    );
+    assert_eq!(
+        checkpoints[0].entries_len,
+        app.checkpoints[0].entries_len - 1
+    );
     assert!(before <= checkpoints[0].entries_len);
 }
 
@@ -2437,9 +2552,18 @@ async fn sessions_tab_lists_both_kinds_and_drives_a_remote_one() {
         hub_session(crate::web::sid(), "this-box", "this very session"),
     ])));
     let shown = screen(&mut app);
-    assert!(shown.contains("This machine") && shown.contains("local one"), "{shown}");
-    assert!(shown.contains("far away") && shown.contains("far-box"), "{shown}");
-    assert!(!shown.contains("this-box") && !shown.contains("this very"), "{shown}");
+    assert!(
+        shown.contains("This machine") && shown.contains("local one"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("far away") && shown.contains("far-box"),
+        "{shown}"
+    );
+    assert!(
+        !shown.contains("this-box") && !shown.contains("this very"),
+        "{shown}"
+    );
 
     // A draft waits while the other session has the prompt.
     app.input = "my draft".into();
@@ -2456,23 +2580,41 @@ async fn sessions_tab_lists_both_kinds_and_drives_a_remote_one() {
     app.on_app_event(AppEvent::Remote(generation, RemoteEvent::Live));
     app.on_app_event(AppEvent::Remote(
         generation,
-        entries(0, vec![Entry::User("hello there".into()), Entry::Assistant("general".into())]),
+        entries(
+            0,
+            vec![
+                Entry::User("hello there".into()),
+                Entry::Assistant("general".into()),
+            ],
+        ),
     ));
     app.on_app_event(AppEvent::Remote(
         generation - 1,
         entries(0, vec![Entry::User("stale".into())]),
     ));
     let shown = screen(&mut app);
-    assert!(shown.contains("hello there") && shown.contains("general"), "{shown}");
+    assert!(
+        shown.contains("hello there") && shown.contains("general"),
+        "{shown}"
+    );
     assert!(!shown.contains("stale"), "{shown}");
-    assert!(shown.contains("connected") && shown.contains("far-box"), "{shown}");
-    assert!(app.entries.iter().all(|e| !matches!(e, Entry::User(_))), "this session's are its own");
+    assert!(
+        shown.contains("connected") && shown.contains("far-box"),
+        "{shown}"
+    );
+    assert!(
+        app.entries.iter().all(|e| !matches!(e, Entry::User(_))),
+        "this session's are its own"
+    );
     app.on_app_event(AppEvent::Remote(
         generation,
         entries(1, vec![Entry::Assistant("kenobi".into())]),
     ));
     let shown = screen(&mut app);
-    assert!(shown.contains("kenobi") && !shown.contains("general"), "{shown}");
+    assert!(
+        shown.contains("kenobi") && !shown.contains("general"),
+        "{shown}"
+    );
 
     // Sent text leaves the prompt; approvals show and take the keyboard.
     type_text(&mut app, "do it");
@@ -2488,7 +2630,10 @@ async fn sessions_tab_lists_both_kinds_and_drives_a_remote_one() {
         }))),
     ));
     let shown = screen(&mut app);
-    assert!(shown.contains("rm -rf target") && shown.contains("Approve on far-box"), "{shown}");
+    assert!(
+        shown.contains("rm -rf target") && shown.contains("Approve on far-box"),
+        "{shown}"
+    );
     type_text(&mut app, "x");
     assert_eq!(app.input, "", "typing goes to the prompt's keys");
 
@@ -2506,7 +2651,10 @@ async fn sessions_tab_lists_both_kinds_and_drives_a_remote_one() {
     ));
     app.on_event(key(KeyCode::Esc));
     assert!(app.remote_view.is_some(), "esc interrupts while it works");
-    app.on_event(Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)));
+    app.on_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('c'),
+        KeyModifiers::CONTROL,
+    )));
     assert!(app.remote_view.is_none());
     assert!(!app.should_quit, "leaving it doesn't quit this session");
     assert_eq!(app.input, "my draft");
@@ -2609,7 +2757,10 @@ async fn question_prompt_picks_toggles_types_and_submits() {
                 .collect::<String>()
         };
     let text = screen(&mut app, &mut terminal);
-    assert!(text.contains("Which database?") && text.contains("The safe choice"), "{text}");
+    assert!(
+        text.contains("Which database?") && text.contains("The safe choice"),
+        "{text}"
+    );
     assert!(text.contains("Type something else") && text.contains("Submit"));
     assert!(text.contains("answer the agent's questions"));
 
@@ -2630,19 +2781,28 @@ async fn question_prompt_picks_toggles_types_and_submits() {
     }
     // Backspace, as DEL or as the ^H many terminals send (crossterm's Ctrl+H).
     app.on_event(key(KeyCode::Backspace));
-    app.on_event(Event::Key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL)));
+    app.on_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('h'),
+        KeyModifiers::CONTROL,
+    )));
     app.on_event(key(KeyCode::Char('s')));
     assert!(app.input.is_empty());
     app.on_event(key(KeyCode::Enter));
     // The review page lists the answers; Enter sends them.
     let text = screen(&mut app, &mut terminal);
-    assert!(text.contains("Review your answers") && text.contains("Auth, Metrics"), "{text}");
+    assert!(
+        text.contains("Review your answers") && text.contains("Auth, Metrics"),
+        "{text}"
+    );
     app.on_event(key(KeyCode::Enter));
     assert!(app.question.is_none());
     assert_eq!(
         answer.try_recv().unwrap(),
         Reply::Answers(vec![
-            Answer { chosen: vec!["SQLite".into()], other: None },
+            Answer {
+                chosen: vec!["SQLite".into()],
+                other: None
+            },
             Answer {
                 chosen: vec!["Auth".into(), "Metrics".into()],
                 other: Some("rate limits".into()),
@@ -2659,7 +2819,10 @@ async fn question_prompt_picks_toggles_types_and_submits() {
     app.on_event(key(KeyCode::Enter));
     assert_eq!(
         answer.try_recv().unwrap(),
-        Reply::Answers(vec![Answer { chosen: vec![], other: Some("MySQL".into()) }])
+        Reply::Answers(vec![Answer {
+            chosen: vec![],
+            other: Some("MySQL".into())
+        }])
     );
 
     // A message from the web UI answers in words; slash commands don't.
@@ -2667,18 +2830,27 @@ async fn question_prompt_picks_toggles_types_and_submits() {
     app.web_send("/help".into());
     assert!(app.question.is_some());
     app.web_send("whatever is simplest".into());
-    assert_eq!(answer.try_recv().unwrap(), Reply::Text("whatever is simplest".into()));
+    assert_eq!(
+        answer.try_recv().unwrap(),
+        Reply::Text("whatever is simplest".into())
+    );
 
     // The iPhone app's picker sends one answer per question, each saying something.
     let mut answer = open(&mut app, questions.clone(), true);
     let view = app.web_view();
     assert_eq!(view.question.as_ref().unwrap().questions, questions);
-    let unit = |label: &str| Answer { chosen: vec![label.into()], other: None };
+    let unit = |label: &str| Answer {
+        chosen: vec![label.into()],
+        other: None,
+    };
     app.web_answer(vec![unit("SQLite")]);
     app.web_answer(vec![unit("SQLite"), Answer::default()]);
     assert!(app.question.is_some());
     app.web_answer(vec![unit("SQLite"), unit("Auth")]);
-    assert_eq!(answer.try_recv().unwrap(), Reply::Answers(vec![unit("SQLite"), unit("Auth")]));
+    assert_eq!(
+        answer.try_recv().unwrap(),
+        Reply::Answers(vec![unit("SQLite"), unit("Auth")])
+    );
 
     // Esc dismisses the questions (and interrupts the turn).
     let mut answer = open(&mut app, questions, true);
@@ -2740,17 +2912,24 @@ async fn a_chef_shows_its_kitchen_beside_a_welcome() {
         Workspace::current().unwrap(),
     );
     app.set_chef();
-    let session = |id: &str, host: &str, cwd: &str, title: &str, state| crate::web::KitchenSession {
-        id: id.into(),
-        host: host.into(),
-        cwd: cwd.into(),
-        title: title.into(),
-        model: "claude-opus-5-5".into(),
-        state,
-        viewers: 0,
-    };
+    let session =
+        |id: &str, host: &str, cwd: &str, title: &str, state| crate::web::KitchenSession {
+            id: id.into(),
+            host: host.into(),
+            cwd: cwd.into(),
+            title: title.into(),
+            model: "claude-opus-5-5".into(),
+            state,
+            viewers: 0,
+        };
     app.on_app_event(AppEvent::Kitchen(Ok(vec![
-        session("a1b2c3", "laptop", "~/dev/api", "add rate limits to the public API", "working"),
+        session(
+            "a1b2c3",
+            "laptop",
+            "~/dev/api",
+            "add rate limits to the public API",
+            "working",
+        ),
         session("d4e5f6", "vps-1", "~/web", "fix the login page", "idle"),
         session("0a9b8c", "laptop", "~/dev/tamale", "", "approval"),
     ])));
@@ -2832,8 +3011,11 @@ async fn the_chef_elsewhere_opens_here_and_leaving_it_leaves_tamale() {
     assert!(app.remote_view.is_none() && !app.should_quit);
 
     // `tamale chef`: there's nothing behind it to go back to.
-    let (mut app, _rx) =
-        App::new_with_channel(Backend::Unset, settings.clone(), Workspace::current().unwrap());
+    let (mut app, _rx) = App::new_with_channel(
+        Backend::Unset,
+        settings.clone(),
+        Workspace::current().unwrap(),
+    );
     app.open_remote_chef(chef.clone());
     assert!(app.is_remote_only() && app.remote_view.is_some());
     app.on_event(key(KeyCode::Esc));
@@ -2861,7 +3043,10 @@ async fn the_chef_tab_is_a_switch_that_says_on_or_off() {
     app.set_detachable();
     let footer = |app: &mut App| screen_lines(app, 120, 30)[28].clone();
     let first = footer(&mut app);
-    assert!(first.contains("Chef ") && !first.contains("Chef o"), "before the first look: {first:?}");
+    assert!(
+        first.contains("Chef ") && !first.contains("Chef o"),
+        "before the first look: {first:?}"
+    );
 
     app.on_app_event(AppEvent::ChefRunning(false));
     assert!(footer(&mut app).contains("Chef off"));
@@ -2877,10 +3062,14 @@ async fn the_chef_tab_is_a_switch_that_says_on_or_off() {
     assert!(app.chef_stopping);
     assert!(footer(&mut app).contains("Chef stopping"));
 
-    app.on_app_event(AppEvent::ChefStopped(Ok(Some("Stopped the tamale chef on this machine.".into()))));
+    app.on_app_event(AppEvent::ChefStopped(Ok(Some(
+        "Stopped the tamale chef on this machine.".into(),
+    ))));
     assert!(!app.chef_stopping);
     assert!(footer(&mut app).contains("Chef off"));
-    assert!(matches!(app.entries.last(), Some(Entry::Info(m)) if m.contains("/chef starts it again")));
+    assert!(
+        matches!(app.entries.last(), Some(Entry::Info(m)) if m.contains("/chef starts it again"))
+    );
 }
 
 #[tokio::test]
@@ -2951,10 +3140,16 @@ fn ctrl_h_is_backspace_in_the_prompt_too() {
         Workspace::current().unwrap(),
     );
     type_text(&mut app, "hello");
-    app.on_event(Event::Key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL)));
+    app.on_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('h'),
+        KeyModifiers::CONTROL,
+    )));
     assert_eq!(app.input, "hell");
     // Ctrl+Backspace still takes the word.
-    app.on_event(Event::Key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::CONTROL)));
+    app.on_event(Event::Key(KeyEvent::new(
+        KeyCode::Backspace,
+        KeyModifiers::CONTROL,
+    )));
     assert_eq!(app.input, "");
 }
 
@@ -2992,9 +3187,7 @@ fn compat_backend(base_url: &str) -> Backend {
 
 #[tokio::test]
 async fn the_web_model_picker_gets_the_list_the_terminal_shows() {
-    let model = |id: &str, name: &str| {
-        serde_json::json!({ "id": id, "object": "model", "created": 0, "owned_by": "x", "name": name })
-    };
+    let model = |id: &str, name: &str| serde_json::json!({ "id": id, "object": "model", "created": 0, "owned_by": "x", "name": name });
     let base_url = models_server(serde_json::json!([
         model("z-ai/glm-4.6", "Z.ai: GLM 4.6"),
         model("moonshotai/kimi-k2", "MoonshotAI: Kimi K2"),
@@ -3027,7 +3220,10 @@ async fn the_web_model_picker_gets_the_list_the_terminal_shows() {
     app.on_app_event(AppEvent::Models(models));
     assert_eq!(app.models.as_ref().map(Vec::len), Some(2));
     let again = app.web_models(8).await;
-    assert_eq!((&again["models"], &again["seq"]), (&reply["models"], &8.into()));
+    assert_eq!(
+        (&again["models"], &again["seq"]),
+        (&reply["models"], &8.into())
+    );
 }
 
 #[tokio::test]
@@ -3044,5 +3240,8 @@ async fn without_a_list_the_web_model_picker_gets_the_built_in_one_and_why() {
         serde_json::json!([{ "id": "served-model", "name": "served-model" }])
     );
     assert_eq!(reply["current"], "served-model");
-    assert!(reply["error"].as_str().is_some_and(|e| !e.is_empty()), "{reply}");
+    assert!(
+        reply["error"].as_str().is_some_and(|e| !e.is_empty()),
+        "{reply}"
+    );
 }

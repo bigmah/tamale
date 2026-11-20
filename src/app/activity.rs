@@ -136,7 +136,13 @@ pub(crate) fn step(entries: &[Entry], waiting: Option<&str>, compacting: bool) -
         .enumerate()
         .rev()
         .find(|(_, e)| matches!(e, Entry::Tool { output: None, .. }));
-    if let Some((i, Entry::Tool { name, description, .. })) = running {
+    if let Some((
+        i,
+        Entry::Tool {
+            name, description, ..
+        },
+    )) = running
+    {
         if i + 1 == run.len() {
             return at(description, StepKind::Tool);
         }
@@ -270,9 +276,7 @@ fn line(
     if interruptible {
         spans.push(Span::styled(
             " · esc to interrupt",
-            Style::new()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::DIM),
+            Style::new().fg(Color::DarkGray).add_modifier(Modifier::DIM),
         ));
     }
     Line::from(spans)
@@ -371,7 +375,10 @@ mod tests {
     #[test]
     fn steps_name_what_the_run_is_doing() {
         let user = Entry::User("go".into());
-        assert_eq!(step(std::slice::from_ref(&user), None, false).kind, StepKind::Think);
+        assert_eq!(
+            step(std::slice::from_ref(&user), None, false).kind,
+            StepKind::Think
+        );
         let reading = [user.clone(), tool("read_file", "Read the config", false)];
         let s = step(&reading, None, false);
         assert_eq!(

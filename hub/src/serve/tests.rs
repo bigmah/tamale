@@ -11,7 +11,10 @@ fn only_the_hubs_page_may_frame_a_session() {
         framed_by_hub("sandbox allow-scripts; frame-ancestors 'self'", hub),
         "sandbox allow-scripts; frame-ancestors 'self' https://hub.example"
     );
-    assert_eq!(framed_by_hub("default-src 'self'", hub), "default-src 'self'");
+    assert_eq!(
+        framed_by_hub("default-src 'self'", hub),
+        "default-src 'self'"
+    );
 }
 
 #[test]
@@ -74,8 +77,14 @@ fn forwarded_for_counts_only_behind_a_local_proxy() {
 fn rate_limits_go_by_the_network_not_the_address() {
     let ip = |text: &str| text.parse::<IpAddr>().unwrap();
     // Anywhere in a /64 is one customer; the next /64 is another.
-    assert_eq!(limit_bucket(ip("2001:db8:1:2:aaaa::1")), ip("2001:db8:1:2::"));
-    assert_eq!(limit_bucket(ip("2001:db8:1:2:ffff:ffff:ffff:ffff")), ip("2001:db8:1:2::"));
+    assert_eq!(
+        limit_bucket(ip("2001:db8:1:2:aaaa::1")),
+        ip("2001:db8:1:2::")
+    );
+    assert_eq!(
+        limit_bucket(ip("2001:db8:1:2:ffff:ffff:ffff:ffff")),
+        ip("2001:db8:1:2::")
+    );
     assert_ne!(limit_bucket(ip("2001:db8:1:3::1")), ip("2001:db8:1:2::"));
     // IPv4 is itself, however it arrives.
     assert_eq!(limit_bucket(ip("192.0.2.7")), ip("192.0.2.7"));
@@ -123,7 +132,11 @@ fn a_backlog_refuses_what_wont_fit_and_gives_it_all_back() {
     let two = Backlog::new(total.clone(), 100);
     assert!(one.add(100));
     assert!(!one.add(1), "over this socket's limit");
-    assert_eq!(total.load(Ordering::Relaxed), 100, "what didn't fit isn't counted");
+    assert_eq!(
+        total.load(Ordering::Relaxed),
+        100,
+        "what didn't fit isn't counted"
+    );
     one.sent(50);
     assert!(one.add(50));
     assert!(two.add(100));
@@ -136,7 +149,11 @@ fn a_backlog_refuses_what_wont_fit_and_gives_it_all_back() {
     assert!(!last.add(1), "over the hub's limit");
 
     drop((one, two, others, last));
-    assert_eq!(total.load(Ordering::Relaxed), 0, "what was waiting goes with its socket");
+    assert_eq!(
+        total.load(Ordering::Relaxed),
+        0,
+        "what was waiting goes with its socket"
+    );
 }
 
 mod end_to_end {
@@ -582,7 +599,10 @@ mod end_to_end {
         let module = module.await.unwrap();
         assert_eq!(module.status(), 200);
         assert_eq!(module.headers()["content-encoding"], "gzip");
-        assert_eq!(module.bytes().await.unwrap().as_ref(), [0x1f, 0x8b, 0, 0xff]);
+        assert_eq!(
+            module.bytes().await.unwrap().as_ref(),
+            [0x1f, 0x8b, 0, 0xff]
+        );
 
         // Paths outside the tunnel never reach tamale.
         let r = http
@@ -711,13 +731,23 @@ mod end_to_end {
                 .send()
         };
         assert_eq!(get().await.unwrap().status(), 404);
-        setup.hub.apple_app_id.set("TEAM.com.example.tamale".into()).unwrap();
+        setup
+            .hub
+            .apple_app_id
+            .set("TEAM.com.example.tamale".into())
+            .unwrap();
         let r = get().await.unwrap();
         assert_eq!(r.status(), 200);
         assert_eq!(r.headers()["content-type"], "application/json");
         let body: Value = r.json().await.unwrap();
-        assert_eq!(body["applinks"]["details"][0]["appIDs"][0], "TEAM.com.example.tamale");
-        assert_eq!(body["applinks"]["details"][0]["components"][0]["/"], "/open/*");
+        assert_eq!(
+            body["applinks"]["details"][0]["appIDs"][0],
+            "TEAM.com.example.tamale"
+        );
+        assert_eq!(
+            body["applinks"]["details"][0]["components"][0]["/"],
+            "/open/*"
+        );
         let _ = std::fs::remove_dir_all(&setup.store.dir);
     }
 
@@ -731,7 +761,14 @@ mod end_to_end {
         let session_host = format!("{sid}.hub.localhost:{port}");
         let base = format!("http://127.0.0.1:{port}");
         let http = reqwest::Client::new();
-        let failures = |hub: &Hub| hub.failures.lock().unwrap().values().map(|f| f.0).sum::<u32>();
+        let failures = |hub: &Hub| {
+            hub.failures
+                .lock()
+                .unwrap()
+                .values()
+                .map(|f| f.0)
+                .sum::<u32>()
+        };
 
         let mut agent = agent_hello(port, &setup.auth, &sid).await;
         assert!(next_text(&mut agent).await.contains("\"welcome\""));
@@ -842,7 +879,10 @@ mod end_to_end {
         match ws(
             port,
             "/ws",
-            &[("host", session_host.clone()), ("authorization", wrong.clone())],
+            &[
+                ("host", session_host.clone()),
+                ("authorization", wrong.clone()),
+            ],
         )
         .await
         {
@@ -886,7 +926,10 @@ mod end_to_end {
         let mut tab = ws(
             port,
             "/ws",
-            &[("host", session_host.clone()), ("authorization", bearer.clone())],
+            &[
+                ("host", session_host.clone()),
+                ("authorization", bearer.clone()),
+            ],
         )
         .await
         .unwrap();
@@ -957,7 +1000,12 @@ mod end_to_end {
         for bad in [
             hello(&other, None, true, None),
             hello(&other, Some("NOT-HEX"), true, None),
-            hello(&other, Some(&"a".repeat(32)), true, Some("x".repeat(protocol::MAX_SEALED + 1))),
+            hello(
+                &other,
+                Some(&"a".repeat(32)),
+                true,
+                Some("x".repeat(protocol::MAX_SEALED + 1)),
+            ),
         ] {
             let mut agent = ws(port, "/agent", &auth).await.unwrap();
             agent.send(say(&bad)).await.unwrap();
@@ -966,17 +1014,27 @@ mod end_to_end {
         // So is a protocol from the future; an older tamale still connects, in plaintext.
         let mut agent = ws(port, "/agent", &auth).await.unwrap();
         let future = r#"{"t":"hello","proto":99,"sid":"11111111111111111111111111111111","label":{"host":"","cwd":"","model":""}}"#;
-        agent.send(tungstenite::Message::Text(future.into())).await.unwrap();
+        agent
+            .send(tungstenite::Message::Text(future.into()))
+            .await
+            .unwrap();
         assert_eq!(close_code(&mut agent).await, close::BAD_HELLO);
         let mut old = ws(port, "/agent", &auth).await.unwrap();
         let v1 = r#"{"t":"hello","proto":1,"sid":"22222222222222222222222222222222","label":{"host":"old","cwd":"~","model":"m"}}"#;
-        old.send(tungstenite::Message::Text(v1.into())).await.unwrap();
+        old.send(tungstenite::Message::Text(v1.into()))
+            .await
+            .unwrap();
         assert!(next_text(&mut old).await.contains("\"welcome\""));
 
         let mid = "a".repeat(32);
         let mut agent = ws(port, "/agent", &auth).await.unwrap();
         agent
-            .send(say(&hello(&sid, Some(&mid), true, Some("SEALED-LABEL".into()))))
+            .send(say(&hello(
+                &sid,
+                Some(&mid),
+                true,
+                Some("SEALED-LABEL".into()),
+            )))
             .await
             .unwrap();
         assert!(next_text(&mut agent).await.contains("\"welcome\""));
@@ -991,15 +1049,34 @@ mod end_to_end {
             .await
             .unwrap();
 
-        let r = http.post(format!("{base}/api/tokens")).header("host", &dash)
-            .header("origin", &origin).json(&json!({"add": setup.auth})).send().await.unwrap();
+        let r = http
+            .post(format!("{base}/api/tokens"))
+            .header("host", &dash)
+            .header("origin", &origin)
+            .json(&json!({"add": setup.auth}))
+            .send()
+            .await
+            .unwrap();
         let th = set_cookie(&r);
 
         let session = loop {
-            let list: Value = http.get(format!("{base}/api/sessions")).header("host", &dash)
-                .header("cookie", &th).send().await.unwrap().json().await.unwrap();
-            let row = list["sessions"].as_array().unwrap().iter()
-                .find(|s| s["sid"] == sid.as_str()).cloned().unwrap();
+            let list: Value = http
+                .get(format!("{base}/api/sessions"))
+                .header("host", &dash)
+                .header("cookie", &th)
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            let row = list["sessions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|s| s["sid"] == sid.as_str())
+                .cloned()
+                .unwrap();
             if row["sealed_status"] == "SEALED-STATUS" {
                 break row;
             }
@@ -1013,33 +1090,75 @@ mod end_to_end {
             assert_eq!(session[field], "", "{field}");
         }
 
-        let ticket: Value = http.post(format!("{base}/api/ticket")).header("host", &dash)
-            .header("origin", &origin).header("cookie", &th).json(&json!({"sid": sid}))
-            .send().await.unwrap().json().await.unwrap();
+        let ticket: Value = http
+            .post(format!("{base}/api/ticket"))
+            .header("host", &dash)
+            .header("origin", &origin)
+            .header("cookie", &th)
+            .json(&json!({"sid": sid}))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
         assert_eq!(ticket["mid"], mid.as_str());
         assert_eq!(ticket["e2e"], true);
-        let path = ticket["url"].as_str().unwrap().split_once(&session_host).unwrap().1.to_string();
-        let r = http.get(format!("{base}{path}")).header("host", &session_host).send().await.unwrap();
+        let path = ticket["url"]
+            .as_str()
+            .unwrap()
+            .split_once(&session_host)
+            .unwrap()
+            .1
+            .to_string();
+        let r = http
+            .get(format!("{base}{path}"))
+            .header("host", &session_host)
+            .send()
+            .await
+            .unwrap();
         assert_eq!(r.status(), 303);
-        assert_eq!(r.headers()["location"], "/?e2e=1", "the page must insist on the handshake");
+        assert_eq!(
+            r.headers()["location"],
+            "/?e2e=1",
+            "the page must insist on the handshake"
+        );
         let ts = set_cookie(&r);
 
         // Artifacts aren't asked of tamale at all; the frame page and script are.
-        let r = http.get(format!("{base}/artifact/abc")).header("host", &session_host)
-            .header("cookie", &ts).send().await.unwrap();
+        let r = http
+            .get(format!("{base}/artifact/abc"))
+            .header("host", &session_host)
+            .header("cookie", &ts)
+            .send()
+            .await
+            .unwrap();
         assert_eq!(r.status(), 404);
-        let tunnelled = http.get(format!("{base}/artifact-frame")).header("host", &session_host)
-            .header("cookie", &ts).send();
+        let tunnelled = http
+            .get(format!("{base}/artifact-frame"))
+            .header("host", &session_host)
+            .header("cookie", &ts)
+            .send();
         let (r, get) = tokio::join!(tunnelled, next_text(&mut agent));
         assert!(get.contains("\"/artifact-frame\""), "{get}");
         assert!(!get.contains("/artifact/abc"), "{get}");
         let _ = r;
 
         // The hub's page has what it needs for the keys.
-        let r = http.get(format!("{base}/seal.js")).header("host", &dash).send().await.unwrap();
+        let r = http
+            .get(format!("{base}/seal.js"))
+            .header("host", &dash)
+            .send()
+            .await
+            .unwrap();
         assert_eq!(r.status(), 200);
         assert!(r.text().await.unwrap().contains("machineId"));
-        let r = http.get(format!("{base}/qrcode.js")).header("host", &dash).send().await.unwrap();
+        let r = http
+            .get(format!("{base}/qrcode.js"))
+            .header("host", &dash)
+            .send()
+            .await
+            .unwrap();
         assert_eq!(r.status(), 200);
     }
 
@@ -1062,8 +1181,14 @@ mod end_to_end {
         let auth = new_auth();
 
         // Another site can't make keys in a visitor's name.
-        let r = http.post(format!("{base}/api/keys")).header("host", &dash)
-            .header("origin", "http://evil.example").json(&json!({ "auth": auth })).send().await.unwrap();
+        let r = http
+            .post(format!("{base}/api/keys"))
+            .header("host", &dash)
+            .header("origin", "http://evil.example")
+            .json(&json!({ "auth": auth }))
+            .send()
+            .await
+            .unwrap();
         assert_eq!(r.status(), 403);
 
         // Only well-formed auth values, and never a key.
@@ -1072,7 +1197,13 @@ mod end_to_end {
             assert_eq!(r.status(), 400, "{bad}");
         }
 
-        let r = post("/api/keys", "", json!({ "auth": auth, "label": "My Laptop" })).await.unwrap();
+        let r = post(
+            "/api/keys",
+            "",
+            json!({ "auth": auth, "label": "My Laptop" }),
+        )
+        .await
+        .unwrap();
         assert_eq!(r.status(), 200);
         let th = set_cookie(&r);
         let made: Value = r.json().await.unwrap();
@@ -1082,12 +1213,22 @@ mod end_to_end {
 
         // Nothing about the key comes back, and it can't be registered twice.
         assert_eq!(made.as_object().unwrap().len(), 1);
-        let r = post("/api/keys", "", json!({ "auth": auth })).await.unwrap();
+        let r = post("/api/keys", "", json!({ "auth": auth }))
+            .await
+            .unwrap();
         assert_eq!(r.status(), 409);
 
         // The browser that made it holds it, and machines can connect with it.
-        let list: Value = http.get(format!("{base}/api/sessions")).header("host", &dash)
-            .header("cookie", &th).send().await.unwrap().json().await.unwrap();
+        let list: Value = http
+            .get(format!("{base}/api/sessions"))
+            .header("host", &dash)
+            .header("cookie", &th)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
         assert_eq!(list["keys"][0]["name"], "my-laptop");
         assert_eq!(list["keys"][0]["id"], state::hash(&auth)[..16]);
         assert_eq!(list["signup"], true);
@@ -1096,40 +1237,92 @@ mod end_to_end {
         assert!(next_text(&mut a).await.contains("\"welcome\""));
 
         // Two CLI keys plus this one and another, and the test hub holds at most four.
-        let r = post("/api/keys", "", json!({ "auth": new_auth() })).await.unwrap();
+        let r = post("/api/keys", "", json!({ "auth": new_auth() }))
+            .await
+            .unwrap();
         assert_eq!(r.status(), 200);
-        let r = post("/api/keys", "", json!({ "auth": new_auth() })).await.unwrap();
+        let r = post("/api/keys", "", json!({ "auth": new_auth() }))
+            .await
+            .unwrap();
         assert_eq!(r.status(), 503);
 
         // Only a holder can replace a key, and only with a well-formed auth value.
         let new = new_auth();
-        let r = post("/api/keys/rotate", "", json!({ "name": "my-laptop", "auth": new })).await.unwrap();
+        let r = post(
+            "/api/keys/rotate",
+            "",
+            json!({ "name": "my-laptop", "auth": new }),
+        )
+        .await
+        .unwrap();
         assert_eq!(r.status(), 404);
-        let r = post("/api/keys/rotate", &th, json!({ "name": "my-laptop", "auth": "short" })).await.unwrap();
+        let r = post(
+            "/api/keys/rotate",
+            &th,
+            json!({ "name": "my-laptop", "auth": "short" }),
+        )
+        .await
+        .unwrap();
         assert_eq!(r.status(), 400);
-        let r = post("/api/keys/rotate", &th, json!({ "name": "my-laptop", "auth": setup.auth })).await.unwrap();
+        let r = post(
+            "/api/keys/rotate",
+            &th,
+            json!({ "name": "my-laptop", "auth": setup.auth }),
+        )
+        .await
+        .unwrap();
         assert_eq!(r.status(), 409, "not to another key's");
-        let r = post("/api/keys/rotate", &th, json!({ "name": "my-laptop", "auth": new })).await.unwrap();
+        let r = post(
+            "/api/keys/rotate",
+            &th,
+            json!({ "name": "my-laptop", "auth": new }),
+        )
+        .await
+        .unwrap();
         assert_eq!(r.status(), 200);
         let new_th = set_cookie(&r);
         assert_ne!(new_th, th);
         // Its sessions end, the old key no longer lists anything or connects.
-        let code = tokio::time::timeout(Duration::from_secs(6), close_code(&mut a)).await.unwrap();
+        let code = tokio::time::timeout(Duration::from_secs(6), close_code(&mut a))
+            .await
+            .unwrap();
         assert_eq!(code, close::BAD_TOKEN);
-        let old: Value = http.get(format!("{base}/api/sessions")).header("host", &dash)
-            .header("cookie", &th).send().await.unwrap().json().await.unwrap();
+        let old: Value = http
+            .get(format!("{base}/api/sessions"))
+            .header("host", &dash)
+            .header("cookie", &th)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
         assert_eq!(old["keys"].as_array().unwrap().len(), 0);
         assert!(
-            ws(port, "/agent", &[("host", dash.clone()), ("authorization", format!("Bearer {auth}"))])
-                .await
-                .is_err()
+            ws(
+                port,
+                "/agent",
+                &[
+                    ("host", dash.clone()),
+                    ("authorization", format!("Bearer {auth}"))
+                ]
+            )
+            .await
+            .is_err()
         );
         let mut b = agent_hello(port, &new, sid).await;
         assert!(next_text(&mut b).await.contains("\"welcome\""));
 
-        let r = post("/api/keys/delete", &new_th, json!({ "name": "my-laptop" })).await.unwrap();
+        let r = post("/api/keys/delete", &new_th, json!({ "name": "my-laptop" }))
+            .await
+            .unwrap();
         assert_eq!(r.status(), 200);
-        assert!(r.headers()["set-cookie"].to_str().unwrap().contains("Max-Age=0"));
+        assert!(
+            r.headers()["set-cookie"]
+                .to_str()
+                .unwrap()
+                .contains("Max-Age=0")
+        );
         assert!(setup.store.load().unwrap().by_name("my-laptop").is_none());
         let _ = std::fs::remove_dir_all(&setup.store.dir);
     }
@@ -1141,49 +1334,98 @@ mod end_to_end {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let public = Public::parse(&format!("http://hub.localhost:{port}"), true).unwrap();
-        let closed = Hub::new(public, Store { dir: dir.clone() }, Signup { open: false, max_keys: 500 }).unwrap();
+        let closed = Hub::new(
+            public,
+            Store { dir: dir.clone() },
+            Signup {
+                open: false,
+                max_keys: 500,
+            },
+        )
+        .unwrap();
         tokio::spawn(run(closed, listener));
         let dash = format!("hub.localhost:{port}");
         let http = reqwest::Client::new();
-        let r = http.post(format!("http://127.0.0.1:{port}/api/keys")).header("host", &dash)
-            .header("origin", format!("http://{dash}")).json(&json!({ "auth": new_auth() }))
-            .send().await.unwrap();
+        let r = http
+            .post(format!("http://127.0.0.1:{port}/api/keys"))
+            .header("host", &dash)
+            .header("origin", format!("http://{dash}"))
+            .json(&json!({ "auth": new_auth() }))
+            .send()
+            .await
+            .unwrap();
         assert_eq!(r.status(), 403);
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let public = Public::parse(&format!("http://hub.localhost:{port}"), true).unwrap();
-        let open = Hub::new(public, Store { dir: dir.clone() }, Signup { open: true, max_keys: 500 }).unwrap();
+        let open = Hub::new(
+            public,
+            Store { dir: dir.clone() },
+            Signup {
+                open: true,
+                max_keys: 500,
+            },
+        )
+        .unwrap();
         tokio::spawn(run(open, listener));
         let dash = format!("hub.localhost:{port}");
         for n in 0..=SIGNUPS_PER_IP {
-            let r = http.post(format!("http://127.0.0.1:{port}/api/keys")).header("host", &dash)
-                .header("origin", format!("http://{dash}")).json(&json!({ "auth": new_auth() }))
-                .send().await.unwrap();
-            assert_eq!(r.status(), if n < SIGNUPS_PER_IP { 200 } else { 429 }, "key {n}");
+            let r = http
+                .post(format!("http://127.0.0.1:{port}/api/keys"))
+                .header("host", &dash)
+                .header("origin", format!("http://{dash}"))
+                .json(&json!({ "auth": new_auth() }))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                r.status(),
+                if n < SIGNUPS_PER_IP { 200 } else { 429 },
+                "key {n}"
+            );
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
     async fn unused_page_keys_expire_but_cli_keys_stay() {
-        let dir = std::env::temp_dir().join(format!("tamale-hub-expire-{}", state::hex(&state::random::<8>().unwrap())));
+        let dir = std::env::temp_dir().join(format!(
+            "tamale-hub-expire-{}",
+            state::hex(&state::random::<8>().unwrap())
+        ));
         let store = Store::open(Some(dir.clone())).unwrap();
-        store.edit(|s| {
-            let mut old_web = Key::new("old-web", "a1", true);
-            old_web.created = 0;
-            let mut idle_web = Key::new("idle-web", "a2", true);
-            idle_web.last_used = Some(state::now() - IDLE_EXPIRY - 10);
-            let mut old_cli = Key::new("old-cli", "a3", false);
-            old_cli.created = 0;
-            let fresh_web = Key::new("fresh-web", "a4", true);
-            s.keys.extend([old_web, idle_web, old_cli, fresh_web]);
-            Ok(())
-        }).unwrap();
+        store
+            .edit(|s| {
+                let mut old_web = Key::new("old-web", "a1", true);
+                old_web.created = 0;
+                let mut idle_web = Key::new("idle-web", "a2", true);
+                idle_web.last_used = Some(state::now() - IDLE_EXPIRY - 10);
+                let mut old_cli = Key::new("old-cli", "a3", false);
+                old_cli.created = 0;
+                let fresh_web = Key::new("fresh-web", "a4", true);
+                s.keys.extend([old_web, idle_web, old_cli, fresh_web]);
+                Ok(())
+            })
+            .unwrap();
         let public = Public::parse("http://hub.localhost:1", true).unwrap();
-        let hub = Hub::new(public, Store { dir: dir.clone() }, Signup { open: true, max_keys: 10 }).unwrap();
+        let hub = Hub::new(
+            public,
+            Store { dir: dir.clone() },
+            Signup {
+                open: true,
+                max_keys: 10,
+            },
+        )
+        .unwrap();
         hub.sweep();
-        let names: Vec<String> = store.load().unwrap().keys.into_iter().map(|k| k.name).collect();
+        let names: Vec<String> = store
+            .load()
+            .unwrap()
+            .keys
+            .into_iter()
+            .map(|k| k.name)
+            .collect();
         assert_eq!(names, ["old-cli", "fresh-web"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1220,7 +1462,13 @@ mod end_to_end {
         assert_eq!(r.headers()["x-frame-options"], "SAMEORIGIN");
         let csp = r.headers()["content-security-policy"].to_str().unwrap();
         assert!(csp.contains("frame-ancestors 'self'"), "{csp}");
-        assert!(csp.contains(&format!("frame-src 'self' http://*.hub.localhost:{}", setup.port)), "{csp}");
+        assert!(
+            csp.contains(&format!(
+                "frame-src 'self' http://*.hub.localhost:{}",
+                setup.port
+            )),
+            "{csp}"
+        );
         assert!(r.text().await.unwrap().contains("tamale-hub"));
         let _ = std::fs::remove_dir_all(&setup.store.dir);
     }
@@ -1290,7 +1538,11 @@ mod end_to_end {
         })
         .await;
         let closed = serde_json::to_string(&ToAgent::Close { c }).unwrap();
-        assert_eq!(next_text(&mut agent).await, closed, "tamale is told it's gone");
+        assert_eq!(
+            next_text(&mut agent).await,
+            closed,
+            "tamale is told it's gone"
+        );
         until("what was queued being let go", || {
             hub.queued.load(Ordering::Relaxed) == 0
         })
@@ -1358,7 +1610,11 @@ mod end_to_end {
         let first = format!("{:032x}", 1);
         let hub = setup.hub.clone();
         until("the first session going offline", || {
-            hub.sessions.lock().unwrap().get(&first).is_some_and(|s| s.agent.is_none())
+            hub.sessions
+                .lock()
+                .unwrap()
+                .get(&first)
+                .is_some_and(|s| s.agent.is_none())
         })
         .await;
         // ...until a new session needs its place.
@@ -1375,7 +1631,11 @@ mod end_to_end {
         let dash = format!("hub.localhost:{port}");
         let (gone, live, theirs) = ("d".repeat(32), "e".repeat(32), "f".repeat(32));
         let mut agents = Vec::new();
-        for (sid, auth) in [(&gone, &setup.auth), (&live, &setup.auth), (&theirs, &setup.other_auth)] {
+        for (sid, auth) in [
+            (&gone, &setup.auth),
+            (&live, &setup.auth),
+            (&theirs, &setup.other_auth),
+        ] {
             let mut agent = agent_hello(port, auth, sid).await;
             assert!(next_text(&mut agent).await.contains("\"welcome\""));
             agents.push(agent);
@@ -1386,7 +1646,9 @@ mod end_to_end {
         let hub = setup.hub.clone();
         until("both going offline", || {
             let sessions = hub.sessions.lock().unwrap();
-            [&gone, &theirs].iter().all(|sid| sessions.get(*sid).is_some_and(|s| s.agent.is_none()))
+            [&gone, &theirs]
+                .iter()
+                .all(|sid| sessions.get(*sid).is_some_and(|s| s.agent.is_none()))
         })
         .await;
         let http = reqwest::Client::new();
@@ -1457,7 +1719,11 @@ mod end_to_end {
         drop(theirs);
         let hub = setup.hub.clone();
         until("the other key's chef going", || {
-            hub.sessions.lock().unwrap().get(&second).is_none_or(|s| s.agent.is_none())
+            hub.sessions
+                .lock()
+                .unwrap()
+                .get(&second)
+                .is_none_or(|s| s.agent.is_none())
         })
         .await;
         hub.sessions.lock().unwrap().remove(&second);
@@ -1488,12 +1754,19 @@ mod end_to_end {
         // Gone offline, it gives way to a new chef, and is refused when it comes back.
         drop(again);
         until("the chef going offline", || {
-            hub.sessions.lock().unwrap().get(&first).is_some_and(|s| s.agent.is_none())
+            hub.sessions
+                .lock()
+                .unwrap()
+                .get(&first)
+                .is_some_and(|s| s.agent.is_none())
         })
         .await;
         let mut new = agent_hello_as(port, &setup.auth, &second, true).await;
         assert!(next_text(&mut new).await.contains("\"welcome\""));
-        assert!(!hub.sessions.lock().unwrap().contains_key(&first), "the old one left the list");
+        assert!(
+            !hub.sessions.lock().unwrap().contains_key(&first),
+            "the old one left the list"
+        );
         let mut old = agent_hello_as(port, &setup.auth, &first, true).await;
         assert_eq!(close_code(&mut old).await, close::CHEF_TAKEN);
         drop((new, session));
@@ -1523,9 +1796,18 @@ mod end_to_end {
             chef: false,
         };
         for label in [
-            Label { host: long.clone(), ..Label::default() },
-            Label { cwd: long.clone(), ..Label::default() },
-            Label { model: long.clone(), ..Label::default() },
+            Label {
+                host: long.clone(),
+                ..Label::default()
+            },
+            Label {
+                cwd: long.clone(),
+                ..Label::default()
+            },
+            Label {
+                model: long.clone(),
+                ..Label::default()
+            },
         ] {
             let mut agent = ws(port, "/agent", &auth).await.unwrap();
             agent.send(say(&hello(label))).await.unwrap();
@@ -1595,9 +1877,15 @@ mod end_to_end {
             .await
             .unwrap();
         // Popups keep their opener: a session's frame sends an artifact to the tab it opens.
-        assert_eq!(r.headers()["cross-origin-opener-policy"], "same-origin-allow-popups");
+        assert_eq!(
+            r.headers()["cross-origin-opener-policy"],
+            "same-origin-allow-popups"
+        );
         assert_eq!(r.headers()["cross-origin-resource-policy"], "same-origin");
-        assert!(r.headers().get("strict-transport-security").is_none(), "this one's http");
+        assert!(
+            r.headers().get("strict-transport-security").is_none(),
+            "this one's http"
+        );
         let _ = std::fs::remove_dir_all(&setup.store.dir);
     }
 }

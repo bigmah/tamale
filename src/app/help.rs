@@ -115,9 +115,15 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
     (
         "Prompt",
         &[
-            ("Enter", "Send message (while the agent runs: queue it for the next step)"),
+            (
+                "Enter",
+                "Send message (while the agent runs: queue it for the next step)",
+            ),
             ("Alt+Enter / Shift+Enter", "Insert newline"),
-            ("↑ / ↓", "Move between lines; at the top/bottom, recall earlier prompts"),
+            (
+                "↑ / ↓",
+                "Move between lines; at the top/bottom, recall earlier prompts",
+            ),
             ("Ctrl+J", "Insert newline"),
             ("←/→, Home/End", "Move cursor"),
             ("Ctrl+A / Ctrl+E", "Start / end of line"),
@@ -128,7 +134,10 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
                 "Ctrl+V / Shift+Insert",
                 "Paste clipboard text without sending",
             ),
-            ("Terminal paste (Cmd+V)", "Pastes text; big pastes show collapsed"),
+            (
+                "Terminal paste (Cmd+V)",
+                "Pastes text; big pastes show collapsed",
+            ),
         ],
     ),
     (
@@ -144,11 +153,26 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
                 "↓ (below the prompt)",
                 "Focus the tabs: ←/→ pick Sessions (like /sessions), Remote (like /remote), Web (like /web), Diff or Chef, Enter opens it (x on Chef stops the chef when it's on); ↑ or Esc back",
             ),
-            ("Ctrl+O / click Web", "Open the web UI on your Wi-Fi, like /web"),
-            ("Click Remote", "Connect to the hub or show its QR code, like /remote"),
-            ("Click Sessions", "See and join other sessions, like /sessions"),
-            ("v / V (in a diff)", "Select lines; Enter quotes them into the prompt, y copies"),
-            ("Esc", "Interrupt the agent (unsent queued messages return to the input)"),
+            (
+                "Ctrl+O / click Web",
+                "Open the web UI on your Wi-Fi, like /web",
+            ),
+            (
+                "Click Remote",
+                "Connect to the hub or show its QR code, like /remote",
+            ),
+            (
+                "Click Sessions",
+                "See and join other sessions, like /sessions",
+            ),
+            (
+                "v / V (in a diff)",
+                "Select lines; Enter quotes them into the prompt, y copies",
+            ),
+            (
+                "Esc",
+                "Interrupt the agent (unsent queued messages return to the input)",
+            ),
             (
                 "Shift+Tab",
                 "Cycle permission mode: ask → accept-edits → auto",
@@ -179,7 +203,10 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("↑/↓, j/k", "Move selection"),
             ("Enter", "Join the session; this one keeps running"),
-            ("x", "Stop the session (twice if it's mid-turn); it stays saved"),
+            (
+                "x",
+                "Stop the session (twice if it's mid-turn); it stays saved",
+            ),
             ("Esc", "Close"),
         ],
     ),
@@ -208,9 +235,15 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
         "Agent questions",
         &[
             ("↑/↓, j/k", "Move between options"),
-            ("Enter / 1–9", "Pick an option (or confirm a multiple choice)"),
+            (
+                "Enter / 1–9",
+                "Pick an option (or confirm a multiple choice)",
+            ),
             ("Space", "Toggle an option of a multiple choice"),
-            ("Last option", "Type your own answer (Enter confirms, Esc back)"),
+            (
+                "Last option",
+                "Type your own answer (Enter confirms, Esc back)",
+            ),
             ("←/→, Tab", "Go between questions and the Submit page"),
             ("Esc", "Interrupt the agent"),
         ],

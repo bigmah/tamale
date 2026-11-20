@@ -191,7 +191,8 @@ fn with_view_cookie(hub: &Hub, mut response: Response, tokens: &[String]) -> Res
     let value = if tokens.is_empty() {
         hub.public.set_cookie("th", "", 0)
     } else {
-        hub.public.set_cookie("th", &tokens.join(","), VIEW_COOKIE_LIFE)
+        hub.public
+            .set_cookie("th", &tokens.join(","), VIEW_COOKIE_LIFE)
     };
     if let Ok(v) = value.parse() {
         response.headers_mut().insert(header::SET_COOKIE, v);
@@ -277,14 +278,21 @@ pub(super) async fn api_key_new(
         }
         Err(e) => {
             eprintln!("making a key: {e:#}");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "Couldn't save the new key.");
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't save the new key.",
+            );
         }
     };
     let _ = hub.reload();
     eprintln!("key {name} made from the page by {ip}");
     let (mut tokens, _) = hub.views(&headers);
     tokens.push(request.auth);
-    with_view_cookie(&hub, guard(Json(json!({ "name": name })).into_response()), &tokens)
+    with_view_cookie(
+        &hub,
+        guard(Json(json!({ "name": name })).into_response()),
+        &tokens,
+    )
 }
 
 #[derive(Deserialize)]

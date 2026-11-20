@@ -355,7 +355,6 @@ async fn run(
     }
 }
 
-
 /// Once the session is over (see [`Relay::end`]).
 async fn session_over(end: &mut watch::Receiver<bool>) {
     let over = end.wait_for(|end| *end).await.is_ok();
@@ -593,7 +592,9 @@ fn open_tab(
     out: &mpsc::UnboundedSender<ToHub>,
 ) -> u64 {
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let tail = cipher.as_ref().and_then(|cipher| cipher.lock().unwrap().tail);
+    let tail = cipher
+        .as_ref()
+        .and_then(|cipher| cipher.lock().unwrap().tail);
     let id = shared.add_client(tx, true, tail);
     let out = out.clone();
     tokio::spawn(async move {

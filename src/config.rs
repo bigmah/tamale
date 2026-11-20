@@ -55,9 +55,8 @@ impl HubSettings {
     pub fn key_bytes(&self) -> Result<[u8; 32], String> {
         let site = self.site();
         match &self.key {
-            Some(key) => tamale_hub_protocol::decode_key(key).ok_or_else(|| {
-                format!("TAMALE_HUB_KEY isn't a key (thk_…). Make one at {site}")
-            }),
+            Some(key) => tamale_hub_protocol::decode_key(key)
+                .ok_or_else(|| format!("TAMALE_HUB_KEY isn't a key (thk_…). Make one at {site}")),
             None if self.old_token => Err(format!(
                 "TAMALE_HUB_TOKEN has been replaced: set TAMALE_HUB_KEY instead. Make a key at {site}"
             )),

@@ -4,8 +4,8 @@ mod backend;
 #[cfg(unix)]
 mod background;
 mod browser;
-mod chef;
 mod checkpoint;
+mod chef;
 mod cli;
 mod clipboard;
 mod config;
@@ -100,7 +100,10 @@ async fn start(cli: cli::Cli) -> Result<()> {
             .then(background::hold_chef_lock)
             .transpose()?;
         // Listening before anything slow, so the client has something to connect to.
-        let host = cli.server.then(|| background::Host::bind(cli.chef)).transpose()?;
+        let host = cli
+            .server
+            .then(|| background::Host::bind(cli.chef))
+            .transpose()?;
         (host, chef_lock)
     };
     #[cfg(not(unix))]

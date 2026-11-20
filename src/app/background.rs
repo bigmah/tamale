@@ -8,9 +8,9 @@ use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState};
 
+use super::remote::session_name;
 use super::view::tilde;
 use super::{App, AppEvent};
-use super::remote::session_name;
 use crate::background::{self, State, Status};
 use crate::remote::{self, HubSession};
 use crate::session::{self, Entry};
@@ -214,23 +214,25 @@ impl App {
             KeyCode::Char('p') if ctrl => picker.selected = picker.selected.saturating_sub(1),
             KeyCode::Down | KeyCode::Char('j') => picker.selected = (picker.selected + 1).min(last),
             KeyCode::Char('n') if ctrl => picker.selected = (picker.selected + 1).min(last),
-            KeyCode::Enter => {
-                match rows.get(picker.selected) {
-                    Some(Row::Local(id)) => {
-                        let id = *id;
-                        self.sessions_picker = None;
-                        self.join_session(id);
-                    }
-                    Some(Row::Hub(sid)) => {
-                        let session = picker.hub_sessions().into_iter().find(|h| h.sid == *sid).cloned();
-                        self.sessions_picker = None;
-                        if let Some(session) = session {
-                            self.open_remote_view(session);
-                        }
-                    }
-                    None => {}
+            KeyCode::Enter => match rows.get(picker.selected) {
+                Some(Row::Local(id)) => {
+                    let id = *id;
+                    self.sessions_picker = None;
+                    self.join_session(id);
                 }
-            }
+                Some(Row::Hub(sid)) => {
+                    let session = picker
+                        .hub_sessions()
+                        .into_iter()
+                        .find(|h| h.sid == *sid)
+                        .cloned();
+                    self.sessions_picker = None;
+                    if let Some(session) = session {
+                        self.open_remote_view(session);
+                    }
+                }
+                None => {}
+            },
             KeyCode::Char('x') | KeyCode::Delete => match rows.get(picker.selected).cloned() {
                 Some(row @ Row::Local(id)) => {
                     let Some(session) = picker.sessions.iter().find(|s| s.id == id) else {
@@ -254,7 +256,11 @@ impl App {
                 }
                 Some(row @ Row::Hub(_)) => {
                     let Row::Hub(sid) = &row else { return };
-                    let Some(session) = picker.hub_sessions().into_iter().find(|h| h.sid == *sid).cloned()
+                    let Some(session) = picker
+                        .hub_sessions()
+                        .into_iter()
+                        .find(|h| h.sid == *sid)
+                        .cloned()
                     else {
                         return;
                     };
@@ -319,7 +325,11 @@ impl App {
         }
     }
 
-    pub(super) fn on_hub_session_closed(&mut self, session: HubSession, result: Result<(), String>) {
+    pub(super) fn on_hub_session_closed(
+        &mut self,
+        session: HubSession,
+        result: Result<(), String>,
+    ) {
         let stopped = result.is_ok();
         match result {
             Ok(()) => {
@@ -450,8 +460,17 @@ impl App {
     }
 }
 
-fn session_item(title: &str, label: &'static str, color: Color, detail: String) -> ListItem<'static> {
-    let title = if title.is_empty() { "(new session)" } else { title };
+fn session_item(
+    title: &str,
+    label: &'static str,
+    color: Color,
+    detail: String,
+) -> ListItem<'static> {
+    let title = if title.is_empty() {
+        "(new session)"
+    } else {
+        title
+    };
     ListItem::new(vec![
         Line::from(title.to_string()),
         Line::from(vec![

@@ -87,7 +87,11 @@ fn a_page_stops_at_its_size_limit_but_always_has_an_entry() {
         Entry::User("y".repeat(MAX_PAGE_BYTES * 2)),
     ];
     mirror.update(&view(&entries));
-    assert_eq!(from(&mirror.full(Some(60))[1]), (3, 1), "one entry over the limit still goes");
+    assert_eq!(
+        from(&mirror.full(Some(60))[1]),
+        (3, 1),
+        "one entry over the limit still goes"
+    );
     let page: Value = serde_json::from_str(&mirror.older(3)).unwrap();
     assert_eq!(page["from"], 2, "two would pass the limit with their JSON");
 }
@@ -138,13 +142,21 @@ fn native_clients_get_markdown_artifact_blocks_and_stable_hashes() {
 
     let reply = &items[0];
     assert_eq!(reply["md"], "Sure.\n\n<!-- artifact 0 -->\n\nMore.");
-    assert!(reply["html"].as_str().unwrap().contains("data-src"), "the page's html stays");
+    assert!(
+        reply["html"].as_str().unwrap().contains("data-src"),
+        "the page's html stays"
+    );
     let block = &reply["artifacts"][0];
     assert_eq!(block["title"], "T");
     assert_eq!(block["done"], true);
     assert_eq!(block["hash"], content_hash(doc));
     let id = block["id"].as_str().unwrap();
-    assert!(reply["html"].as_str().unwrap().contains(&format!("/artifact/{id}")));
+    assert!(
+        reply["html"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("/artifact/{id}"))
+    );
 
     assert_eq!(items[1]["md"], "*noted*");
     assert!(items[1].get("artifacts").is_none());
@@ -157,9 +169,18 @@ fn native_clients_get_markdown_artifact_blocks_and_stable_hashes() {
     // The artifact reply names the document by the same hash, though the page served has
     // tamale's scripts added.
     let artifacts = mirror.artifacts.lock().unwrap();
-    let reply = artifact_reply(id, artifacts.pages.get(id).map(|p| &**p), artifacts.hashes.get(id).map(|h| h.as_str()));
+    let reply = artifact_reply(
+        id,
+        artifacts.pages.get(id).map(|p| &**p),
+        artifacts.hashes.get(id).map(|h| h.as_str()),
+    );
     assert_eq!(reply["hash"], content_hash(doc));
-    assert!(reply["html"].as_str().unwrap().contains("tamaleArtifactHeight"));
+    assert!(
+        reply["html"]
+            .as_str()
+            .unwrap()
+            .contains("tamaleArtifactHeight")
+    );
     assert_eq!(
         content_hash("abc"),
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
@@ -196,8 +217,7 @@ fn artifacts_are_saved_once_under_their_title() {
 
 #[test]
 fn saved_artifacts_list_the_current_session_first_and_share_chat_urls() {
-    let root =
-        std::env::temp_dir().join(format!("tamale-saved-test-{}", crate::session::new_id()));
+    let root = std::env::temp_dir().join(format!("tamale-saved-test-{}", crate::session::new_id()));
     let (now, old, empty) = (root.join("now"), root.join("old"), root.join("empty"));
     let store = Mutex::new(Artifacts::default());
     save_artifact(&old, "<title>Old</title>").unwrap();
@@ -213,7 +233,10 @@ fn saved_artifacts_list_the_current_session_first_and_share_chat_urls() {
     assert_eq!(sessions[0]["current"], true);
     assert_eq!(sessions[0]["items"][0]["title"], "New");
     assert_eq!(sessions[0]["items"][0]["url"], chat_url.as_str());
-    assert_eq!(sessions[0]["items"][0]["hash"], content_hash("<title>New</title>"));
+    assert_eq!(
+        sessions[0]["items"][0]["hash"],
+        content_hash("<title>New</title>")
+    );
     assert_eq!(sessions[1]["items"][0]["title"], "Old");
     let _ = std::fs::remove_dir_all(root);
 }
@@ -225,8 +248,13 @@ async fn a_page_checking_its_connection_hears_back() {
     let id = server.shared.add_client(tx, true, None);
     while rx.try_recv().is_ok() {}
     handle(&server.shared, id, json!({ "t": "ping" }));
-    let Some(Out::Text(pong)) = rx.recv().await else { panic!("no answer") };
-    assert_eq!(serde_json::from_str::<Value>(&pong).unwrap(), json!({ "t": "pong" }));
+    let Some(Out::Text(pong)) = rx.recv().await else {
+        panic!("no answer")
+    };
+    assert_eq!(
+        serde_json::from_str::<Value>(&pong).unwrap(),
+        json!({ "t": "pong" })
+    );
 }
 
 #[tokio::test]
@@ -234,7 +262,10 @@ async fn a_terminal_says_what_it_is_and_gets_ordinary_replies() {
     let mut server = Server::start(false).await.unwrap();
     let (tx, _rx) = mpsc::unbounded_channel();
     let id = server.shared.add_client(tx, true, None);
-    assert!(matches!(server.events.recv().await, Some(WebEvent::Connected(_))));
+    assert!(matches!(
+        server.events.recv().await,
+        Some(WebEvent::Connected(_))
+    ));
     assert_eq!((server.remote_tabs(), server.web_remote_tabs()), (1, 1));
     handle(&server.shared, id, json!({ "t": "send", "text": "a" }));
     assert!(matches!(server.events.recv().await, Some(WebEvent::Send(t)) if t == "a"));
@@ -258,12 +289,25 @@ async fn a_tab_asks_for_the_changes_and_for_just_their_counts() {
     std::fs::create_dir_all(&repo).unwrap();
     std::fs::write(repo.join("a.txt"), "one\ntwo\n").unwrap();
     let git = |args: &[&str]| {
-        let done = std::process::Command::new("git").arg("-C").arg(&repo).args(args).output().unwrap();
+        let done = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(args)
+            .output()
+            .unwrap();
         assert!(done.status.success(), "git {args:?}");
     };
     git(&["init", "-q"]);
     git(&["add", "."]);
-    git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "first"]);
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-qm",
+        "first",
+    ]);
     std::fs::write(repo.join("a.txt"), "one\nTWO\nthree\n").unwrap();
 
     let server = Server::start(false).await.unwrap();
@@ -284,7 +328,10 @@ async fn a_tab_asks_for_the_changes_and_for_just_their_counts() {
 
     let stat = reply(json!({ "t": "diff_stat", "seq": 1 })).await;
     assert_eq!(stat["t"], "diff_stat");
-    assert_eq!((&stat["files"], &stat["added"], &stat["removed"]), (&json!(1), &json!(2), &json!(1)));
+    assert_eq!(
+        (&stat["files"], &stat["added"], &stat["removed"]),
+        (&json!(1), &json!(2), &json!(1))
+    );
     assert_eq!(stat["seq"], 1);
     let diff = reply(json!({ "t": "diff", "seq": 2 })).await;
     assert_eq!(diff["files"][0]["path"], "a.txt");
@@ -305,7 +352,10 @@ async fn the_share_link_is_the_hubs_while_connected_to_one() {
     };
     // Nothing listens there: the link doesn't wait for the connection.
     server.connect_hub("ws://127.0.0.1:1", "token", label, None);
-    assert_eq!(server.share_url(), relay::open_url("ws://127.0.0.1:1", relay::sid()));
+    assert_eq!(
+        server.share_url(),
+        relay::open_url("ws://127.0.0.1:1", relay::sid())
+    );
     assert!(server.disconnect_hub());
     assert_eq!(server.share_url(), local);
 }
@@ -379,18 +429,34 @@ async fn relayed_tabs_get_the_same_session_and_pages_as_local_ones() {
         get(move |headers: HeaderMap, upgrade: WebSocketUpgrade| {
             let (frames_tx, auth_tx) = (frames_tx.clone(), auth_tx.clone());
             async move {
-                let _ = auth_tx.send(
-                    headers[header::AUTHORIZATION].to_str().unwrap().to_string(),
-                );
+                let _ = auth_tx.send(headers[header::AUTHORIZATION].to_str().unwrap().to_string());
                 upgrade.on_upgrade(move |mut ws| async move {
-                    let send = |f: &ToAgent| Message::Text(serde_json::to_string(f).unwrap().into());
-                    let Some(Ok(Message::Text(hello))) = ws.next().await else { return };
+                    let send =
+                        |f: &ToAgent| Message::Text(serde_json::to_string(f).unwrap().into());
+                    let Some(Ok(Message::Text(hello))) = ws.next().await else {
+                        return;
+                    };
                     let _ = frames_tx.send(serde_json::from_str(&hello).unwrap());
                     ws.send(send(&ToAgent::Welcome { proto: 1 })).await.unwrap();
                     ws.send(send(&ToAgent::Open { c: 7 })).await.unwrap();
-                    ws.send(send(&ToAgent::Get { r: 1, path: "/".into() })).await.unwrap();
-                    ws.send(send(&ToAgent::Get { r: 2, path: "/ws".into() })).await.unwrap();
-                    ws.send(send(&ToAgent::Get { r: 3, path: "/pullspace/pullspace_bg.wasm".into() })).await.unwrap();
+                    ws.send(send(&ToAgent::Get {
+                        r: 1,
+                        path: "/".into(),
+                    }))
+                    .await
+                    .unwrap();
+                    ws.send(send(&ToAgent::Get {
+                        r: 2,
+                        path: "/ws".into(),
+                    }))
+                    .await
+                    .unwrap();
+                    ws.send(send(&ToAgent::Get {
+                        r: 3,
+                        path: "/pullspace/pullspace_bg.wasm".into(),
+                    }))
+                    .await
+                    .unwrap();
                     while let Some(Ok(Message::Text(t))) = ws.next().await {
                         let _ = frames_tx.send(serde_json::from_str(&t).unwrap());
                     }
@@ -408,14 +474,25 @@ async fn relayed_tabs_get_the_same_session_and_pages_as_local_ones() {
     server.connect_hub(&hub, "f00d", Label::default(), None);
     assert_eq!(auth.recv().await.unwrap(), "Bearer f00d");
     let next = async |frames: &mut mpsc::UnboundedReceiver<ToHub>| {
-        tokio::time::timeout(std::time::Duration::from_secs(5), frames.recv()).await.unwrap().unwrap()
+        tokio::time::timeout(std::time::Duration::from_secs(5), frames.recv())
+            .await
+            .unwrap()
+            .unwrap()
     };
-    let ToHub::Hello { sid, .. } = next(&mut frames).await else { panic!("no hello") };
+    let ToHub::Hello { sid, .. } = next(&mut frames).await else {
+        panic!("no hello")
+    };
     assert_eq!(sid, relay::sid());
 
     // The channel registers as a remote tab, which the app welcomes as it would a local one.
     let id = loop {
-        if let Some(WebEvent::Connected(id)) = tokio::time::timeout(std::time::Duration::from_secs(5), server.events.recv()).await.unwrap() { break id }
+        if let Some(WebEvent::Connected(id)) =
+            tokio::time::timeout(std::time::Duration::from_secs(5), server.events.recv())
+                .await
+                .unwrap()
+        {
+            break id;
+        }
     };
     assert_eq!((server.tabs(), server.remote_tabs()), (1, 1));
     server.welcome(id);
@@ -427,20 +504,47 @@ async fn relayed_tabs_get_the_same_session_and_pages_as_local_ones() {
     let mut got_status = false;
     while !(got_page && got_404 && got_module && got_entries && got_status) {
         match next(&mut frames).await {
-            ToHub::Got { r: 3, status, headers, body, base64 } => {
+            ToHub::Got {
+                r: 3,
+                status,
+                headers,
+                body,
+                base64,
+            } => {
                 // The review panel's module: bytes, so base64, and gzipped.
                 use base64::Engine;
                 assert_eq!(status, 200);
                 assert!(base64);
-                let bytes = base64::engine::general_purpose::STANDARD.decode(body).unwrap();
-                assert_eq!(bytes, pullspace_embed::file("/pullspace/pullspace_bg.wasm").unwrap().body);
-                assert!(headers.iter().any(|(k, v)| k == "content-encoding" && v == "gzip"));
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(body)
+                    .unwrap();
+                assert_eq!(
+                    bytes,
+                    pullspace_embed::file("/pullspace/pullspace_bg.wasm")
+                        .unwrap()
+                        .body
+                );
+                assert!(
+                    headers
+                        .iter()
+                        .any(|(k, v)| k == "content-encoding" && v == "gzip")
+                );
                 got_module = true;
             }
-            ToHub::Got { r: 1, status, headers, body, .. } => {
+            ToHub::Got {
+                r: 1,
+                status,
+                headers,
+                body,
+                ..
+            } => {
                 assert_eq!(status, 200);
                 assert!(body.contains("<script type=\"module\" src=\"/app.js\">"));
-                assert!(headers.iter().any(|(k, v)| k == "content-security-policy" && v == PAGE_CSP));
+                assert!(
+                    headers
+                        .iter()
+                        .any(|(k, v)| k == "content-security-policy" && v == PAGE_CSP)
+                );
                 got_page = true;
             }
             ToHub::Got { r: 2, status, .. } => {
@@ -459,14 +563,23 @@ async fn relayed_tabs_get_the_same_session_and_pages_as_local_ones() {
         }
     }
     assert!(matches!(server.hub_state(), Some(HubState::Live(_))));
-    assert!(server.hub_url().unwrap().ends_with(&format!("/open/{}", relay::sid())));
+    assert!(
+        server
+            .hub_url()
+            .unwrap()
+            .ends_with(&format!("/open/{}", relay::sid()))
+    );
     assert!(server.disconnect_hub());
     assert_eq!(server.remote_tabs(), 0);
 }
 
 /// A stand-in hub for tests of the relay: frames the test sends go to the agent, and
 /// what the agent sends comes back.
-async fn stand_in_hub() -> (String, mpsc::UnboundedSender<tamale_hub_protocol::ToAgent>, mpsc::UnboundedReceiver<String>) {
+async fn stand_in_hub() -> (
+    String,
+    mpsc::UnboundedSender<tamale_hub_protocol::ToAgent>,
+    mpsc::UnboundedReceiver<String>,
+) {
     use tamale_hub_protocol::ToAgent;
     let (to_agent, from_test) = mpsc::unbounded_channel::<ToAgent>();
     let (to_test, from_agent) = mpsc::unbounded_channel::<String>();
@@ -518,7 +631,9 @@ async fn a_dropped_hub_connection_comes_back_without_a_word() {
             let first = count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0;
             async move {
                 upgrade.on_upgrade(move |mut ws| async move {
-                    let Some(Ok(Message::Text(_))) = ws.next().await else { return };
+                    let Some(Ok(Message::Text(_))) = ws.next().await else {
+                        return;
+                    };
                     let welcome = serde_json::to_string(&ToAgent::Welcome { proto: 2 }).unwrap();
                     ws.send(Message::Text(welcome.into())).await.unwrap();
                     let _ = to_test.send(());
@@ -538,7 +653,10 @@ async fn a_dropped_hub_connection_comes_back_without_a_word() {
     let mut server = Server::start(false).await.unwrap();
     server.connect_hub(&hub, "f00d", Label::default(), None);
     for _ in 0..2 {
-        tokio::time::timeout(Duration::from_secs(5), hellos.recv()).await.unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(5), hellos.recv())
+            .await
+            .unwrap()
+            .unwrap();
     }
     // Long enough for the second connection's welcome to be acted on.
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -563,7 +681,9 @@ async fn a_chef_says_so_in_the_clear_and_hears_when_the_key_has_one() {
             let to_test = to_test.clone();
             async move {
                 upgrade.on_upgrade(move |mut ws| async move {
-                    let Some(Ok(Message::Text(hello))) = ws.next().await else { return };
+                    let Some(Ok(Message::Text(hello))) = ws.next().await else {
+                        return;
+                    };
                     let _ = to_test.send(hello.to_string());
                     let refusal = axum::extract::ws::CloseFrame {
                         code: close::CHEF_TAKEN,
@@ -579,16 +699,36 @@ async fn a_chef_says_so_in_the_clear_and_hears_when_the_key_has_one() {
     tokio::spawn(async move { axum::serve(listener, app).await });
 
     let mut server = Server::start(false).await.unwrap();
-    let label = Label { host: "laptop".into(), chef: true, ..Default::default() };
+    let label = Label {
+        host: "laptop".into(),
+        chef: true,
+        ..Default::default()
+    };
     server.connect_hub(&hub, "f00d", label, Some(e2e::Keys::from_psk([3u8; 32])));
-    let hello = tokio::time::timeout(Duration::from_secs(5), hellos.recv()).await.unwrap().unwrap();
-    let ToHub::Hello { chef, label, sealed, .. } = serde_json::from_str(&hello).unwrap() else {
+    let hello = tokio::time::timeout(Duration::from_secs(5), hellos.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let ToHub::Hello {
+        chef,
+        label,
+        sealed,
+        ..
+    } = serde_json::from_str(&hello).unwrap()
+    else {
         panic!("no hello")
     };
     assert!(chef, "{hello}");
-    assert!(label.host.is_empty() && sealed.is_some(), "the rest stays sealed: {hello}");
+    assert!(
+        label.host.is_empty() && sealed.is_some(),
+        "the rest stays sealed: {hello}"
+    );
     loop {
-        match tokio::time::timeout(Duration::from_secs(5), server.events.recv()).await.unwrap().unwrap() {
+        match tokio::time::timeout(Duration::from_secs(5), server.events.recv())
+            .await
+            .unwrap()
+            .unwrap()
+        {
             WebEvent::ChefTaken(why) => {
                 assert!(why.contains("already has a tamale chef"), "{why}");
                 break;
@@ -607,22 +747,36 @@ async fn a_tab_can_close_the_session_and_the_hub_hears_it_ended() {
     let mut server = Server::start(false).await.unwrap();
     server.connect_hub(&hub, "f00d", Label::default(), None);
     let mut next_event = async || {
-        tokio::time::timeout(Duration::from_secs(5), server.events.recv()).await.unwrap().unwrap()
+        tokio::time::timeout(Duration::from_secs(5), server.events.recv())
+            .await
+            .unwrap()
+            .unwrap()
     };
     loop {
-        if let WebEvent::Hub(Ok(_)) = next_event().await { break }
+        if let WebEvent::Hub(Ok(_)) = next_event().await {
+            break;
+        }
     }
     to_agent.send(ToAgent::Open { c: 1 }).unwrap();
     let close = r#"{"t":"close"}"#.to_string();
     to_agent.send(ToAgent::Msg { c: 1, data: close }).unwrap();
     loop {
-        if let WebEvent::Close = next_event().await { break }
+        if let WebEvent::Close = next_event().await {
+            break;
+        }
     }
 
-    tokio::time::timeout(Duration::from_secs(5), server.end()).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), server.end())
+        .await
+        .unwrap();
     loop {
-        let frame = tokio::time::timeout(Duration::from_secs(5), frames.recv()).await.unwrap().unwrap();
-        if frame == r#"{"t":"end"}"# { break }
+        let frame = tokio::time::timeout(Duration::from_secs(5), frames.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if frame == r#"{"t":"end"}"# {
+            break;
+        }
     }
     assert!(server.hub_url().is_none());
 }
@@ -639,39 +793,73 @@ async fn an_encrypted_relay_shows_the_hub_nothing_and_takes_nothing_from_it() {
     let mut server = Server::start(false).await.unwrap();
     let entries = vec![
         Entry::User(SECRET.into()),
-        Entry::Assistant(format!("```html artifact\n<title>T</title><p>{SECRET}</p>\n```")),
+        Entry::Assistant(format!(
+            "```html artifact\n<title>T</title><p>{SECRET}</p>\n```"
+        )),
     ];
     server.sync(view(&entries));
     let keys = e2e::Keys::from_psk(psk);
     server.connect_hub(
         &hub,
         "f00d",
-        Label { host: "laptop".into(), cwd: LABEL.into(), model: "m".into(), ..Default::default() },
+        Label {
+            host: "laptop".into(),
+            cwd: LABEL.into(),
+            model: "m".into(),
+            ..Default::default()
+        },
         Some(keys.clone()),
     );
     // The link shown on the terminal has nothing secret in it.
-    assert!(server.hub_url().unwrap().ends_with(&format!("/open/{}", relay::sid())));
+    assert!(
+        server
+            .hub_url()
+            .unwrap()
+            .ends_with(&format!("/open/{}", relay::sid()))
+    );
 
     // Everything the hub is sent, checked as it passes.
     let next = async |frames: &mut mpsc::UnboundedReceiver<String>| -> ToHub {
-        let text = tokio::time::timeout(Duration::from_secs(5), frames.recv()).await.unwrap().unwrap();
-        assert!(!text.contains(SECRET) && !text.contains(LABEL) && !text.contains("laptop"), "{text}");
+        let text = tokio::time::timeout(Duration::from_secs(5), frames.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            !text.contains(SECRET) && !text.contains(LABEL) && !text.contains("laptop"),
+            "{text}"
+        );
         serde_json::from_str(&text).unwrap()
     };
-    let ToHub::Hello { mid, e2e: on, sealed, label, .. } = next(&mut frames).await else { panic!("no hello") };
+    let ToHub::Hello {
+        mid,
+        e2e: on,
+        sealed,
+        label,
+        ..
+    } = next(&mut frames).await
+    else {
+        panic!("no hello")
+    };
     assert_eq!((mid.as_deref(), on), (Some(keys.mid.as_str()), true));
     assert!(sealed.is_some());
     assert_eq!(label, Label::default());
-    let ToHub::Status { title, sealed, .. } = next(&mut frames).await else { panic!("no status") };
+    let ToHub::Status { title, sealed, .. } = next(&mut frames).await else {
+        panic!("no status")
+    };
     assert!(title.is_empty() && sealed.is_some());
 
     // Frames until channel `c` says something, or closes.
     async fn answer(frames: &mut mpsc::UnboundedReceiver<String>, c: u64) -> Result<Value, String> {
         loop {
-            let text = tokio::time::timeout(Duration::from_secs(5), frames.recv()).await.unwrap().unwrap();
+            let text = tokio::time::timeout(Duration::from_secs(5), frames.recv())
+                .await
+                .unwrap()
+                .unwrap();
             assert!(!text.contains(SECRET), "{text}");
             match serde_json::from_str::<ToHub>(&text).unwrap() {
-                ToHub::Msg { c: from, data } if from == c => return Ok(serde_json::from_str(&data).unwrap()),
+                ToHub::Msg { c: from, data } if from == c => {
+                    return Ok(serde_json::from_str(&data).unwrap());
+                }
                 ToHub::Close { c: from, reason } if from == c => return Err(reason),
                 _ => {}
             }
@@ -680,7 +868,9 @@ async fn an_encrypted_relay_shows_the_hub_nothing_and_takes_nothing_from_it() {
     let nonce = |v: &Value| {
         use base64::Engine;
         assert_eq!(v["t"], "hs0");
-        base64::engine::general_purpose::STANDARD.decode(v["n"].as_str().unwrap()).unwrap()
+        base64::engine::general_purpose::STANDARD
+            .decode(v["n"].as_str().unwrap())
+            .unwrap()
     };
     let msg = |c, data: String| ToAgent::Msg { c, data };
 
@@ -700,7 +890,9 @@ async fn an_encrypted_relay_shows_the_hub_nothing_and_takes_nothing_from_it() {
     to_agent.send(ToAgent::Open { c: 4 }).unwrap();
     let n = nonce(&answer(&mut frames, 4).await.unwrap());
     let hs1 = Initiator::new(&[1u8; 32], relay::sid(), &n, None).hs1(b"{}");
-    to_agent.send(msg(4, json!({ "t": "hs1", "m": hs1 }).to_string())).unwrap();
+    to_agent
+        .send(msg(4, json!({ "t": "hs1", "m": hs1 }).to_string()))
+        .unwrap();
     assert_eq!(answer(&mut frames, 4).await.unwrap_err(), "e2e: wrong key");
     assert_eq!(server.remote_tabs(), 0, "no tab has been made");
 
@@ -709,17 +901,23 @@ async fn an_encrypted_relay_shows_the_hub_nothing_and_takes_nothing_from_it() {
     let n = nonce(&answer(&mut frames, 8).await.unwrap());
     let mut browser = Initiator::new(&psk, relay::sid(), &n, None);
     let hs1 = browser.hs1(b"{}");
-    to_agent.send(msg(8, json!({ "t": "hs1", "m": hs1 }).to_string())).unwrap();
+    to_agent
+        .send(msg(8, json!({ "t": "hs1", "m": hs1 }).to_string()))
+        .unwrap();
     let hs2 = answer(&mut frames, 8).await.unwrap();
     assert_eq!(hs2["t"], "hs2");
     let mut browser = browser.finish(hs2["m"].as_str().unwrap()).unwrap();
 
     // Only now is it a tab, and what it's sent is sealed.
     let id = loop {
-        let event = tokio::time::timeout(Duration::from_secs(5), server.events.recv()).await.unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(5), server.events.recv())
+            .await
+            .unwrap();
         match event {
             Some(WebEvent::Connected(id)) => break id,
-            Some(WebEvent::Send(_) | WebEvent::Approve(..) | WebEvent::Answer(_)) => panic!("a forged message got through"),
+            Some(WebEvent::Send(_) | WebEvent::Approve(..) | WebEvent::Answer(_)) => {
+                panic!("a forged message got through")
+            }
             _ => {}
         }
     };
@@ -738,21 +936,46 @@ async fn an_encrypted_relay_shows_the_hub_nothing_and_takes_nothing_from_it() {
     let _ = opened(answer(&mut frames, 8).await.unwrap()); // questions
 
     // The hub can't tunnel an artifact; the frame page holds nothing.
-    to_agent.send(ToAgent::Get { r: 1, path: format!("/artifact/{artifact_id}") }).unwrap();
-    to_agent.send(ToAgent::Get { r: 2, path: "/artifact-frame".into() }).unwrap();
+    to_agent
+        .send(ToAgent::Get {
+            r: 1,
+            path: format!("/artifact/{artifact_id}"),
+        })
+        .unwrap();
+    to_agent
+        .send(ToAgent::Get {
+            r: 2,
+            path: "/artifact-frame".into(),
+        })
+        .unwrap();
     let mut got = 0;
     while got < 2 {
         match next(&mut frames).await {
-            ToHub::Got { r: 1, status, body, .. } => {
+            ToHub::Got {
+                r: 1, status, body, ..
+            } => {
                 assert_eq!(status, 404);
                 assert!(body.is_empty());
                 got += 1;
             }
-            ToHub::Got { r: 2, status, headers, body, .. } => {
+            ToHub::Got {
+                r: 2,
+                status,
+                headers,
+                body,
+                ..
+            } => {
                 assert_eq!(status, 200);
                 assert!(body.contains("tamaleArtifactHtml"));
-                let csp = &headers.iter().find(|(k, _)| k == "content-security-policy").unwrap().1;
-                assert!(csp.starts_with("sandbox allow-scripts ") && !csp.contains("allow-same-origin"), "{csp}");
+                let csp = &headers
+                    .iter()
+                    .find(|(k, _)| k == "content-security-policy")
+                    .unwrap()
+                    .1;
+                assert!(
+                    csp.starts_with("sandbox allow-scripts ") && !csp.contains("allow-same-origin"),
+                    "{csp}"
+                );
                 got += 1;
             }
             _ => {}
@@ -763,23 +986,41 @@ async fn an_encrypted_relay_shows_the_hub_nothing_and_takes_nothing_from_it() {
     let send_sealed = |browser: &mut e2e::Channel, c: u64, text: String| -> Vec<String> {
         let boxes = browser.seal(&text).unwrap();
         for m in &boxes {
-            to_agent.send(msg(c, json!({ "t": "box", "m": m }).to_string())).unwrap();
+            to_agent
+                .send(msg(c, json!({ "t": "box", "m": m }).to_string()))
+                .unwrap();
         }
         boxes
     };
-    let up = send_sealed(&mut browser, 8, json!({ "t": "artifact", "id": artifact_id }).to_string());
+    let up = send_sealed(
+        &mut browser,
+        8,
+        json!({ "t": "artifact", "id": artifact_id }).to_string(),
+    );
     let reply: Value = {
         let frame = answer(&mut frames, 8).await.unwrap();
-        serde_json::from_str(&browser.open(frame["m"].as_str().unwrap(), 64 << 20).unwrap().unwrap()).unwrap()
+        serde_json::from_str(
+            &browser
+                .open(frame["m"].as_str().unwrap(), 64 << 20)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap()
     };
     assert_eq!(reply["t"], "artifact");
     assert!(reply["html"].as_str().unwrap().contains(SECRET));
 
     // A genuine prompt gets through, in several pieces if need be.
     let long = "p".repeat(200_000);
-    send_sealed(&mut browser, 8, json!({ "t": "send", "text": long }).to_string());
+    send_sealed(
+        &mut browser,
+        8,
+        json!({ "t": "send", "text": long }).to_string(),
+    );
     loop {
-        let event = tokio::time::timeout(Duration::from_secs(5), server.events.recv()).await.unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(5), server.events.recv())
+            .await
+            .unwrap();
         if let Some(WebEvent::Send(text)) = event {
             assert_eq!(text, long);
             break;
@@ -787,14 +1028,18 @@ async fn an_encrypted_relay_shows_the_hub_nothing_and_takes_nothing_from_it() {
     }
 
     // A replay closes the channel, and the tab with it.
-    to_agent.send(msg(8, json!({ "t": "box", "m": up[0] }).to_string())).unwrap();
+    to_agent
+        .send(msg(8, json!({ "t": "box", "m": up[0] }).to_string()))
+        .unwrap();
     assert!(answer(&mut frames, 8).await.is_err());
     assert_eq!(server.remote_tabs(), 0);
 
     // A handshake recorded on channel 8, replayed on channel 9, fails.
     to_agent.send(ToAgent::Open { c: 9 }).unwrap();
     nonce(&answer(&mut frames, 9).await.unwrap());
-    to_agent.send(msg(9, json!({ "t": "hs1", "m": hs1 }).to_string())).unwrap();
+    to_agent
+        .send(msg(9, json!({ "t": "hs1", "m": hs1 }).to_string()))
+        .unwrap();
     assert_eq!(answer(&mut frames, 9).await.unwrap_err(), "e2e: wrong key");
 }
 
@@ -812,58 +1057,143 @@ async fn real_hub_relays_a_browser_end_to_end() {
     let mut server = Server::start(false).await.unwrap();
     let entries = vec![Entry::User("Remote smoke test".into())];
     server.sync(view(&entries));
-    server.connect_hub(&hub, &token, Label { host: "laptop".into(), cwd: "~/dev/tamale".into(), model: "test".into(), ..Default::default() }, None);
+    server.connect_hub(
+        &hub,
+        &token,
+        Label {
+            host: "laptop".into(),
+            cwd: "~/dev/tamale".into(),
+            model: "test".into(),
+            ..Default::default()
+        },
+        None,
+    );
     let deadline = std::time::Duration::from_secs(15);
     loop {
-        match tokio::time::timeout(deadline, server.events.recv()).await.unwrap().unwrap() {
+        match tokio::time::timeout(deadline, server.events.recv())
+            .await
+            .unwrap()
+            .unwrap()
+        {
             WebEvent::Hub(Ok(_)) => break,
             WebEvent::Hub(Err(e)) => panic!("{e}"),
             _ => {}
         }
     }
     let sid = relay::sid().to_string();
-    let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
+    let http = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
     let cookie_of = |r: &reqwest::Response| {
-        r.headers()["set-cookie"].to_str().unwrap().split(';').next().unwrap().to_string()
+        r.headers()["set-cookie"]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_string()
     };
-    let r = http.post(format!("{origin}/api/tokens")).header("origin", &origin)
-        .json(&json!({ "add": token })).send().await.unwrap();
+    let r = http
+        .post(format!("{origin}/api/tokens"))
+        .header("origin", &origin)
+        .json(&json!({ "add": token }))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), 200);
     let th = cookie_of(&r);
     assert!(th.starts_with("__Host-th="));
-    let list: Value = http.get(format!("{origin}/api/sessions")).header("cookie", &th)
-        .send().await.unwrap().json().await.unwrap();
-    assert!(list["sessions"].as_array().unwrap().iter().any(|s| s["sid"] == sid.as_str()), "{list}");
-    let ticket: Value = http.post(format!("{origin}/api/ticket")).header("origin", &origin)
-        .header("cookie", &th).json(&json!({ "sid": sid })).send().await.unwrap().json().await.unwrap();
-    let r = http.get(ticket["url"].as_str().unwrap()).send().await.unwrap();
+    let list: Value = http
+        .get(format!("{origin}/api/sessions"))
+        .header("cookie", &th)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        list["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["sid"] == sid.as_str()),
+        "{list}"
+    );
+    let ticket: Value = http
+        .post(format!("{origin}/api/ticket"))
+        .header("origin", &origin)
+        .header("cookie", &th)
+        .json(&json!({ "sid": sid }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let r = http
+        .get(ticket["url"].as_str().unwrap())
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), 303);
     let ts = cookie_of(&r);
     let session = origin.replacen("https://", &format!("https://{sid}."), 1);
-    let page = http.get(format!("{session}/")).header("cookie", &ts).send().await.unwrap();
+    let page = http
+        .get(format!("{session}/"))
+        .header("cookie", &ts)
+        .send()
+        .await
+        .unwrap();
     assert_eq!(page.status(), 200);
     assert_eq!(page.headers()[header::CONTENT_SECURITY_POLICY], PAGE_CSP);
     assert!(page.text().await.unwrap().contains("/app.js"));
 
-    let mut request = format!("{}/ws", session.replacen("https://", "wss://", 1)).into_client_request().unwrap();
-    request.headers_mut().insert("origin", session.parse().unwrap());
+    let mut request = format!("{}/ws", session.replacen("https://", "wss://", 1))
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert("origin", session.parse().unwrap());
     request.headers_mut().insert("cookie", ts.parse().unwrap());
     let (mut tab, _) = tokio_tungstenite::connect_async(request).await.unwrap();
     let id = loop {
-        match tokio::time::timeout(deadline, server.events.recv()).await.unwrap().unwrap() {
+        match tokio::time::timeout(deadline, server.events.recv())
+            .await
+            .unwrap()
+            .unwrap()
+        {
             WebEvent::Connected(id) => break id,
             _ => {}
         }
     };
     server.welcome(id);
     loop {
-        let Some(Ok(tungstenite::Message::Text(t))) = tokio::time::timeout(deadline, tab.next()).await.unwrap() else { panic!("tab closed") };
-        if t.contains("Remote smoke test") { break }
+        let Some(Ok(tungstenite::Message::Text(t))) =
+            tokio::time::timeout(deadline, tab.next()).await.unwrap()
+        else {
+            panic!("tab closed")
+        };
+        if t.contains("Remote smoke test") {
+            break;
+        }
     }
-    tab.send(tungstenite::Message::Text(r#"{"t":"send","text":"hello through the hub"}"#.into())).await.unwrap();
+    tab.send(tungstenite::Message::Text(
+        r#"{"t":"send","text":"hello through the hub"}"#.into(),
+    ))
+    .await
+    .unwrap();
     loop {
-        match tokio::time::timeout(deadline, server.events.recv()).await.unwrap().unwrap() {
-            WebEvent::Send(text) => { assert_eq!(text, "hello through the hub"); break }
+        match tokio::time::timeout(deadline, server.events.recv())
+            .await
+            .unwrap()
+            .unwrap()
+        {
+            WebEvent::Send(text) => {
+                assert_eq!(text, "hello through the hub");
+                break;
+            }
             _ => {}
         }
     }
@@ -905,7 +1235,9 @@ async fn fake_chef_page() {
     let empty = std::env::var_os("TAMALE_FAKE_EMPTY").is_some();
     let mut server = Server::start(false).await.unwrap();
     println!("URL={}", server.url);
-    let mut entries = vec![Entry::Info("Welcome! Type a request and press Enter. /help for commands.".into())];
+    let mut entries = vec![Entry::Info(
+        "Welcome! Type a request and press Enter. /help for commands.".into(),
+    )];
     if !empty {
         entries.extend([
             Entry::User("What is everyone working on?".into()),
@@ -946,9 +1278,30 @@ async fn fake_chef_page() {
     };
     let kitchen = Kitchen {
         sessions: vec![
-            session("0a9b8c", "laptop", "~/dev/tamale", "release 0.1.7 to crates.io", "approval", 0),
-            session("a1b2c3", "laptop", "~/dev/api", "add rate limits to the public API and make the tests pass", "working", 1),
-            session("d4e5f6", "vps-1", "~/web", "fix the login page redirect loop", "idle", 0),
+            session(
+                "0a9b8c",
+                "laptop",
+                "~/dev/tamale",
+                "release 0.1.7 to crates.io",
+                "approval",
+                0,
+            ),
+            session(
+                "a1b2c3",
+                "laptop",
+                "~/dev/api",
+                "add rate limits to the public API and make the tests pass",
+                "working",
+                1,
+            ),
+            session(
+                "d4e5f6",
+                "vps-1",
+                "~/web",
+                "fix the login page redirect loop",
+                "idle",
+                0,
+            ),
             session("77aa11", "mini", "~/dev/old-thing", "", "offline", 0),
         ],
         problem: None,
@@ -956,27 +1309,27 @@ async fn fake_chef_page() {
     };
     fn chef_view<'a>(entries: &'a [Entry], kitchen: &Kitchen) -> View<'a> {
         View {
-        status: Status {
-            project: "chef".into(),
-            cwd: "~".into(),
-            model: "Claude Opus 5.5".into(),
-            backend: "Anthropic API".into(),
-            signed_in: true,
-            mode: "ask".into(),
-            thinking: "adaptive".into(),
-            window: 200_000,
-            context: 18_000,
-            cost: 0.21,
-            chef: true,
-            asks: true,
-            ..Status::default()
-        },
-        entries,
-        approval: None,
-        question: None,
-        roots: Vec::new(),
-        artifact_dir: None,
-        kitchen: Some(kitchen.clone()),
+            status: Status {
+                project: "chef".into(),
+                cwd: "~".into(),
+                model: "Claude Opus 5.5".into(),
+                backend: "Anthropic API".into(),
+                signed_in: true,
+                mode: "ask".into(),
+                thinking: "adaptive".into(),
+                window: 200_000,
+                context: 18_000,
+                cost: 0.21,
+                chef: true,
+                asks: true,
+                ..Status::default()
+            },
+            entries,
+            approval: None,
+            question: None,
+            roots: Vec::new(),
+            artifact_dir: None,
+            kitchen: Some(kitchen.clone()),
         }
     }
     let view = |entries| chef_view(entries, &kitchen);
@@ -1014,18 +1367,34 @@ async fn fake_review_page() {
     let repo = match std::env::var("TAMALE_FAKE_ROOT") {
         Ok(root) => PathBuf::from(root),
         Err(_) => {
-            let repo = std::env::temp_dir().join(format!("tamale-review-{}", crate::session::new_id()));
+            let repo =
+                std::env::temp_dir().join(format!("tamale-review-{}", crate::session::new_id()));
             std::fs::create_dir_all(repo.join("src")).unwrap();
             let body: Vec<String> = (1..=60).map(|i| format!("fn line_{i}() {{}}")).collect();
             std::fs::write(repo.join("src/main.rs"), body.join("\n") + "\n").unwrap();
             std::fs::write(repo.join("gone.txt"), "going\n").unwrap();
             let git = |args: &[&str]| {
-                let done = std::process::Command::new("git").arg("-C").arg(&repo).args(args).output().unwrap();
+                let done = std::process::Command::new("git")
+                    .arg("-C")
+                    .arg(&repo)
+                    .args(args)
+                    .output()
+                    .unwrap();
                 assert!(done.status.success(), "git {args:?}");
             };
             git(&["init", "-q"]);
             git(&["add", "."]);
-            git(&["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qm", "first"]);
+            git(&[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-qm",
+                "first",
+            ]);
             let mut changed = body.clone();
             changed[29] = "fn line_thirty_changed() {}".into();
             std::fs::write(repo.join("src/main.rs"), changed.join("\n") + "\n").unwrap();
@@ -1044,7 +1413,9 @@ async fn fake_review_page() {
         description: description.into(),
         output: Some((output.into(), false)),
     };
-    let mut entries = vec![Entry::Info("Welcome! Type a request and press Enter. /help for commands.".into())];
+    let mut entries = vec![Entry::Info(
+        "Welcome! Type a request and press Enter. /help for commands.".into(),
+    )];
     if std::env::var_os("TAMALE_FAKE_EMPTY").is_none() {
         entries.extend([
             Entry::User("Cap how much of a file the page is handed at once.".into()),
@@ -1063,7 +1434,10 @@ async fn fake_review_page() {
     }
     let mut v = view(&entries);
     v.status = Status {
-        project: repo.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+        project: repo
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
         cwd: repo.display().to_string(),
         model: "Claude Opus 5.5".into(),
         backend: "Anthropic API".into(),
@@ -1080,11 +1454,19 @@ async fn fake_review_page() {
     server.sync(v);
     println!("URL={}", server.url);
     // With a hub (TAMALE_HUB_URL, TAMALE_HUB_KEY), encrypted, and a link into it.
-    if let (Ok(hub), Ok(key)) = (std::env::var("TAMALE_HUB_URL"), std::env::var("TAMALE_HUB_KEY")) {
+    if let (Ok(hub), Ok(key)) = (
+        std::env::var("TAMALE_HUB_URL"),
+        std::env::var("TAMALE_HUB_KEY"),
+    ) {
         use base64::Engine;
         let key = tamale_hub_protocol::decode_key(&key).expect("a key");
         let token = tamale_hub_protocol::auth_value(&key);
-        server.connect_hub(&hub, &token, Label::default(), Some(e2e::Keys::from_key(&key)));
+        server.connect_hub(
+            &hub,
+            &token,
+            Label::default(),
+            Some(e2e::Keys::from_key(&key)),
+        );
         loop {
             match server.events.recv().await.unwrap() {
                 WebEvent::Hub(Ok(_)) => break,
@@ -1092,14 +1474,40 @@ async fn fake_review_page() {
                 _ => {}
             }
         }
-        let origin = hub.replacen("wss://", "https://", 1).replacen("ws://", "http://", 1);
-        let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
-        let r = http.post(format!("{origin}/api/tokens")).header("origin", &origin)
-            .json(&json!({ "add": token })).send().await.unwrap();
-        let th = r.headers()["set-cookie"].to_str().unwrap().split(';').next().unwrap().to_string();
-        let ticket: Value = http.post(format!("{origin}/api/ticket")).header("origin", &origin)
-            .header("cookie", &th).json(&json!({ "sid": relay::sid() })).send().await.unwrap().json().await.unwrap();
-        let psk = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(tamale_hub_protocol::e2e_secret(&key));
+        let origin = hub
+            .replacen("wss://", "https://", 1)
+            .replacen("ws://", "http://", 1);
+        let http = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let r = http
+            .post(format!("{origin}/api/tokens"))
+            .header("origin", &origin)
+            .json(&json!({ "add": token }))
+            .send()
+            .await
+            .unwrap();
+        let th = r.headers()["set-cookie"]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_string();
+        let ticket: Value = http
+            .post(format!("{origin}/api/ticket"))
+            .header("origin", &origin)
+            .header("cookie", &th)
+            .json(&json!({ "sid": relay::sid() }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let psk = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(tamale_hub_protocol::e2e_secret(&key));
         println!("HUB_URL={}#k={psk}", ticket["url"].as_str().unwrap());
     }
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(seconds);
@@ -1128,12 +1536,25 @@ async fn fake_session_for_the_apple_app() {
     std::fs::write(repo.join("src/main.rs"), body.join("\n") + "\n").unwrap();
     std::fs::write(repo.join("gone.txt"), "going\n").unwrap();
     let git = |args: &[&str]| {
-        let done = std::process::Command::new("git").arg("-C").arg(&repo).args(args).output().unwrap();
+        let done = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(args)
+            .output()
+            .unwrap();
         assert!(done.status.success(), "git {args:?}");
     };
     git(&["init", "-q"]);
     git(&["add", "."]);
-    git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "first"]);
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-qm",
+        "first",
+    ]);
     let mut changed = body.clone();
     changed[29] = "line thirty, changed".into();
     std::fs::write(repo.join("src/main.rs"), changed.join("\n") + "\n").unwrap();
@@ -1151,15 +1572,16 @@ async fn fake_session_for_the_apple_app() {
     ];
     entries.extend((0..history).flat_map(|i| {
         [
-            Entry::Assistant(format!("Old answer {i}.\n\nWith a second paragraph to give it height.")),
+            Entry::Assistant(format!(
+                "Old answer {i}.\n\nWith a second paragraph to give it height."
+            )),
             Entry::User(format!("Old question {i}")),
         ]
     }));
-    entries.extend([
-        Entry::Assistant(
-            "Here it is.\n\n```html artifact\n<!doctype html><title>The plan</title><h1>Plan</h1>\n```".into(),
-        ),
-    ]);
+    entries.extend([Entry::Assistant(
+        "Here it is.\n\n```html artifact\n<!doctype html><title>The plan</title><h1>Plan</h1>\n```"
+            .into(),
+    )]);
     let mut approval = Some(Approval {
         name: "bash".into(),
         summary: "rm -rf target".into(),
@@ -1168,7 +1590,10 @@ async fn fake_session_for_the_apple_app() {
     });
     // "ask" gets questions instead of an approval.
     let mut question: Option<Questions> = None;
-    let sync = |server: &mut Server, entries: &[Entry], approval: &Option<Approval>, question: &Option<Questions>| {
+    let sync = |server: &mut Server,
+                entries: &[Entry],
+                approval: &Option<Approval>,
+                question: &Option<Questions>| {
         let mut v = view(entries);
         v.approval = approval.clone();
         v.question = question.clone();
@@ -1179,7 +1604,12 @@ async fn fake_session_for_the_apple_app() {
     server.connect_hub(
         &hub,
         &tamale_hub_protocol::auth_value(&key),
-        Label { host: "fake-host".into(), cwd: "~/dev/fake".into(), model: "fake-model".into(), ..Default::default() },
+        Label {
+            host: "fake-host".into(),
+            cwd: "~/dev/fake".into(),
+            model: "fake-model".into(),
+            ..Default::default()
+        },
         Some(e2e::Keys::from_key(&key)),
     );
     println!("SID={}", relay::sid());
@@ -1283,7 +1713,10 @@ async fn fake_session_for_the_apple_app() {
             }
             WebEvent::Approve(choice, reason) => {
                 approval = None;
-                entries.push(Entry::Info(format!("approved: {choice:?} {}", reason.unwrap_or_default())));
+                entries.push(Entry::Info(format!(
+                    "approved: {choice:?} {}",
+                    reason.unwrap_or_default()
+                )));
             }
             WebEvent::Interrupt => entries.push(Entry::Info("interrupted".into())),
             WebEvent::Hub(Err(e)) => eprintln!("hub: {e}"),

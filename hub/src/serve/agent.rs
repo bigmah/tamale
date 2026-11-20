@@ -88,7 +88,9 @@ async fn agent_socket(hub: Arc<Hub>, key: state::Key, ip: IpAddr, ws: WebSocket)
     }
     if mid.as_deref().is_some_and(|m| !protocol::valid_mid(m))
         || (e2e && mid.is_none())
-        || sealed.as_ref().is_some_and(|s| s.len() > protocol::MAX_SEALED)
+        || sealed
+            .as_ref()
+            .is_some_and(|s| s.len() > protocol::MAX_SEALED)
     {
         let _ = sink
             .send(reject(close::BAD_HELLO, "malformed encryption fields"))
@@ -130,9 +132,9 @@ async fn agent_socket(hub: Arc<Hub>, key: state::Key, ip: IpAddr, ws: WebSocket)
         // One chef per key: one that's online keeps the place, and a new one takes it from
         // one that's offline (which is refused in turn if it comes back).
         let chef_online = chef
-            && sessions
-                .iter()
-                .any(|(s, other)| *s != sid && other.key == key.name && other.chef && other.agent.is_some());
+            && sessions.iter().any(|(s, other)| {
+                *s != sid && other.key == key.name && other.chef && other.agent.is_some()
+            });
         if taken {
             Some((close::SID_TAKEN, "that session id is in use"))
         } else if chef_online {
@@ -274,14 +276,14 @@ async fn agent_socket(hub: Arc<Hub>, key: state::Key, ip: IpAddr, ws: WebSocket)
         let mut sessions = hub.sessions.lock().unwrap();
         if frame == ToHub::End {
             // Over for good: nothing to keep listing or for pages to wait for.
-            if sessions.get(&sid).is_some_and(|s| s.generation == generation)
+            if sessions
+                .get(&sid)
+                .is_some_and(|s| s.generation == generation)
                 && let Some(mut session) = sessions.remove(&sid)
             {
                 session.agent = None;
                 for (_, client) in session.clients.drain() {
-                    let _ = client
-                        .tx
-                        .send(Out::Close(4000, SESSION_ENDED.into()));
+                    let _ = client.tx.send(Out::Close(4000, SESSION_ENDED.into()));
                 }
                 eprintln!("agent ended: key {} session {}", key.name, short(&sid));
             }

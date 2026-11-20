@@ -22,9 +22,7 @@ impl App {
     /// both pickers.
     pub fn web_models(&self, seq: u64) -> BoxFuture<'static, Value> {
         let current = self.backend.model_label(&self.settings.model.name);
-        let reply = move |models: &[ModelInfo], error: Option<String>| {
-            json!({ "t": "models", "seq": seq, "current": current, "models": models, "error": error })
-        };
+        let reply = move |models: &[ModelInfo], error: Option<String>| json!({ "t": "models", "seq": seq, "current": current, "models": models, "error": error });
         if let Some(models) = &self.models {
             let reply = reply(models, None);
             return async move { reply }.boxed();
