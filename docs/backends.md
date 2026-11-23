@@ -10,12 +10,14 @@ identically, and the footer shows the backend next to the working directory
 | `api` (default) | `kind = "api"`, `--backend api`, `TAMALE_BACKEND` | `ANTHROPIC_API_KEY` |
 | `claude-code` | `kind = "claude-code"`, `--backend claude-code`, `TAMALE_BACKEND` | The Claude Code CLI's sign-in (Claude subscription or Console account) |
 | `codex` | `kind = "codex"`, `--backend codex`, `TAMALE_BACKEND` | The Codex CLI's sign-in (ChatGPT plan or OpenAI API key) |
+| `antigravity` | `kind = "antigravity"`, `--backend antigravity`, `TAMALE_BACKEND` | The Antigravity CLI's sign-in (Google account) |
 | a provider, e.g. `deepseek` | `kind = "deepseek"`, `--backend deepseek`, `TAMALE_BACKEND` | The provider's API key, e.g. `DEEPSEEK_API_KEY` (see [below](#openai-compatible-providers)) |
 
 `/backend` opens a picker to switch mid-session (↑/↓ or j/k to move, 1–9 to jump, Enter to
 switch, Esc to cancel; the current backend is marked with ●). `/backend api`,
-`/backend claude-code` and `/backend codex` (your default login of each CLI) switch
-directly. Codex logins work like Claude Code logins below (see [Codex](#codex)).
+`/backend claude-code`, `/backend codex` and `/backend antigravity` (your default login of
+each CLI) switch directly. Codex logins work like Claude Code logins below (see
+[Codex](#codex)); Antigravity has a single login (see [Antigravity](#antigravity)).
 
 If the `api` backend is selected and `ANTHROPIC_API_KEY` isn't set, tamale opens with this
 picker so you can choose (`-p` runs exit with an error instead). To skip it next time, set
@@ -98,6 +100,44 @@ The `codex` backend runs `codex exec --json` headlessly for each turn, so it nee
   size from Codex's session file for the context meter. Codex compacts its own thread,
   so tamale doesn't auto-compact before Codex turns (`/compact` still works). Costs
   aren't estimated for OpenAI models.
+
+## Antigravity
+
+The `antigravity` backend runs Google's
+[Antigravity CLI](https://antigravity.google/docs/cli/headless) (`agy`) headlessly for each
+turn, with `--input-format stream-json --output-format stream-json`. Install `agy` (set
+`backend.antigravity_path` if it isn't on `PATH`). It works like the other CLI backends:
+
+- **Signing in**: tamale checks the sign-in through `agy acp` (which, unlike `agy -p`,
+  doesn't start a browser sign-in when signed out) and runs `agy acp --login` when you're
+  signed out (at startup, on `/login`, or when switching to it). Antigravity keeps one login
+  in the system keychain, so the picker has one Antigravity row and no "add account" row;
+  `/login` switches its account. Sign out with `/logout` inside `agy`.
+- **Tools**: for each run tamale writes a custom agent and an MCP config to a private
+  temporary directory (removed afterwards) and passes it with `--add-dir`, so nothing is
+  written to your repository or Antigravity's settings. The agent's body is tamale's system
+  prompt, replacing Antigravity's, and its tool list is empty, so the model has none of
+  Antigravity's tools (shell, file edits, browser, subagents, …), only tamale's, served over
+  the same local MCP server. Calls to them are allowed in Antigravity for the run only
+  (`--settings`), so every call goes through tamale's permission rules, approval popup and
+  checkpoints. The MCP config holds the server's token, as Antigravity doesn't expand
+  environment variables there; the file is readable only by you. Slash commands are off,
+  so a prompt starting with `/` is a message.
+- **Conversations**: each tamale session keeps an Antigravity conversation and continues it
+  with `--conversation`; after anything that rewrites the history a new one starts with the
+  conversation replayed, as with Claude Code.
+- **Models**: `/model` lists `agy models`. tamale passes `model.name` when Antigravity knows
+  it: a slug like `gemini-3.8-flash-high`, or one without the effort, `gemini-3.8-flash`.
+  Claude models have to be one of Antigravity's slugs (`claude-opus-5-5-high`), so while
+  `model.name` is tamale's default Claude model, Antigravity picks its own default and the
+  footer says `antigravity default`. `--effort`/`/effort` is passed as `--effort`, lowered to
+  the closest level the model has, and left out for slugs that name their own effort.
+  `/thinking` and `agent.max_tokens` don't apply.
+- **Context and usage**: Antigravity reports the usage of each request, so the context meter
+  and totals work as on the API; tamale auto-compacts between turns as with Claude Code.
+  Usage of Antigravity's own side requests counts in the totals only. Costs aren't estimated.
+- **Not turned off**: Antigravity still adds a workspace's `AGENTS.md`/`GEMINI.md` and its
+  own rules to the prompt, which tamale's prompt may already include.
 
 ## OpenAI-compatible providers
 

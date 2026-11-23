@@ -68,14 +68,17 @@ The agent:
 - `src/agent.rs` – agent turns, tool execution and compaction
 - `src/agent/{request,reasoning,prompt,models}.rs` – streaming/retries, reasoning settings,
   instruction loading and model metadata/cost estimates
-- `src/backend.rs` – backend selection (API, Claude Code or Codex) and dispatch
+- `src/backend.rs` – backend selection (API, Claude Code, Codex or Antigravity) and dispatch
 - `src/backend/claude_code.rs` – running `claude -p`, its sign-in and stream translation
 - `src/backend/codex.rs` – running `codex exec`, its sign-in, event translation and usage
-- `src/backend/cli.rs` – what those two share: running a CLI for a turn, signing in and out,
+- `src/backend/antigravity.rs` – running `agy` with stream-json and a generated agent, its
+  sign-in (checked over ACP), event translation and models
+- `src/backend/cli.rs` – what those three share: running a CLI for a turn, signing in and out,
   and replaying a conversation it doesn't hold
 - `src/backend/compat.rs` – providers that speak OpenAI's Chat Completions API
-- `src/backend/logins.rs` – the Claude Code and Codex logins offered in the picker
-- `src/backend/mcp.rs` – the local MCP server that offers tamale's tools to Claude Code and Codex
+- `src/backend/logins.rs` – the Claude Code, Codex and Antigravity logins offered in the picker
+- `src/backend/mcp.rs` – the local MCP server that offers tamale's tools to Claude Code, Codex
+  and Antigravity
 - `src/backend/subagent.rs` – the `agent` tool: running a subagent on the current backend
 - `src/tools.rs` – tool definitions and implementations
 - `src/tools/search.rs`, `src/tools/web.rs` – built-in repository search and web tools

@@ -73,11 +73,11 @@ const COMMANDS: &[(&str, &str)] = &[
     ),
     (
         "/backend [kind]",
-        "Pick where inference comes from, incl. providers with a key and each Claude Code or Codex login (or /backend api|claude-code|codex|deepseek|…)",
+        "Pick where inference comes from, incl. providers with a key and each Claude Code, Codex or Antigravity login (or /backend api|claude-code|codex|antigravity|deepseek|…)",
     ),
     (
         "/login",
-        "Sign in to Claude Code or Codex (their backends; the footer shows where inference comes from)",
+        "Sign in to Claude Code, Codex or Antigravity (their backends; the footer shows where inference comes from)",
     ),
     (
         "/browser [off]",

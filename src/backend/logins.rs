@@ -1,6 +1,7 @@
 //! The CLI logins tamale can switch between. Claude Code keeps each login in its own
 //! config directory (`CLAUDE_CONFIG_DIR`) and Codex in its own home (`CODEX_HOME`), so a
-//! login is a CLI plus a directory:
+//! login is a CLI plus a directory (Antigravity has just the one login, in the system
+//! keychain):
 //!
 //! - the default one (the CLI's own default, or the variable from tamale's environment),
 //! - `~/.claude` or `~/.codex`, when that isn't the default and is signed in,
@@ -12,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
-use super::{Backend, BackendSettings, ClaudeCode, Codex, Kind};
+use super::{Antigravity, Backend, BackendSettings, ClaudeCode, Codex, Kind};
 
 /// Where accounts of `kind` added from the picker are kept.
 pub fn added_dir(kind: Kind) -> Option<PathBuf> {
@@ -42,6 +43,9 @@ pub fn new_login(kind: Kind, settings: &BackendSettings) -> Result<Backend> {
             Some(dir),
         )),
         Kind::Codex => Backend::Codex(Codex::signed_out(settings.codex_path.clone(), Some(dir))),
+        Kind::Antigravity => {
+            bail!("Antigravity has one login; /login with it selected switches its account")
+        }
         Kind::Api | Kind::Compat => bail!("API backends have no logins"),
     })
 }
@@ -57,22 +61,30 @@ pub async fn remove(login: &Backend) -> Result<()> {
         match login {
             Backend::ClaudeCode(cc) => cc.logout().await?,
             Backend::Codex(codex) => codex.logout().await?,
-            Backend::Api(_) | Backend::Compat(_) | Backend::Unset => {}
+            Backend::Api(_) | Backend::Compat(_) | Backend::Antigravity(_) | Backend::Unset => {}
         }
     }
     std::fs::remove_dir_all(&dir).with_context(|| format!("removing {}", dir.display()))?;
     Ok(())
 }
 
-/// Every known login of both CLIs with its sign-in state, each CLI's default first.
+/// Every known login of the CLIs with its sign-in state, each CLI's default first.
 /// Other logins are listed only when signed in, except added ones (so they can be signed
 /// in again or removed). A CLI that isn't installed is left out; other failures to run
 /// one are returned alongside the logins that were found.
 pub async fn list(settings: &BackendSettings) -> (Vec<Backend>, Vec<String>) {
-    let (claude, codex) = futures::join!(list_claude_code(settings), list_codex(settings));
+    let (claude, codex, antigravity) = futures::join!(
+        list_claude_code(settings),
+        list_codex(settings),
+        list_antigravity(settings)
+    );
     let mut logins = Vec::new();
     let mut errors = Vec::new();
-    for (kind, result) in [(Kind::ClaudeCode, claude), (Kind::Codex, codex)] {
+    for (kind, result) in [
+        (Kind::ClaudeCode, claude),
+        (Kind::Codex, codex),
+        (Kind::Antigravity, antigravity),
+    ] {
         match result {
             Ok(found) => logins.extend(found),
             Err(e) if not_installed(&e) && settings.kind != kind => {}
@@ -131,6 +143,11 @@ async fn list_codex(settings: &BackendSettings) -> Result<Vec<Backend>> {
         Backend::Codex(default),
         others.into_iter().flatten().map(Backend::Codex),
     ))
+}
+
+async fn list_antigravity(settings: &BackendSettings) -> Result<Vec<Backend>> {
+    let login = Antigravity::connect(settings.antigravity_path.clone()).await?;
+    Ok(vec![Backend::Antigravity(login)])
 }
 
 /// Directories that may hold other logins of `kind`, besides the default one.

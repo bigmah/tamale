@@ -1111,6 +1111,64 @@ fn codex_login(email: &str, dir: Option<&str>) -> Backend {
 }
 
 #[tokio::test]
+async fn antigravity_has_one_login_in_the_picker() {
+    use backend::Kind;
+    use backends::Choice;
+    let client = anthropic::Client::new("test-key").unwrap();
+    let (mut app, _rx) = App::new_with_channel(
+        Backend::Api(client),
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    app.settings.backend.providers.clear();
+    let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+    let mut agy = backend::Antigravity::signed_out("agy".into());
+    agy.account.logged_in = true;
+    let antigravity = Backend::Antigravity(agy);
+
+    // Listed after the other CLIs' logins, with no row to add another account.
+    app.command("/backend");
+    app.on_app_event(AppEvent::Logins(
+        vec![
+            antigravity.clone(),
+            codex_login("me@home.dev", None),
+            login("me@home.dev", None),
+        ],
+        vec![],
+    ));
+    let choices = app.backend_choices();
+    assert_eq!(
+        choices,
+        [
+            Choice::Api,
+            Choice::Login(2),
+            Choice::Login(1),
+            Choice::Login(0),
+            Choice::AddLogin(Kind::ClaudeCode),
+            Choice::AddLogin(Kind::Codex),
+        ]
+    );
+    app.on_key(key(KeyCode::Char('4')));
+    assert!(app.is_current(Choice::Login(0)));
+    assert_eq!(app.settings.backend.kind, Kind::Antigravity);
+    assert_eq!(app.backend_label(), "Antigravity");
+    app.command("/backend agy");
+    assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.starts_with("Already using")));
+
+    // Signing it out is Antigravity's own business.
+    app.command("/backend");
+    app.on_key(key(KeyCode::Char('d')));
+    assert!(matches!(app.entries.last(), Some(Entry::Error(e)) if e.contains("/logout")));
+    assert_eq!(app.logins.len(), 3);
+    app.on_key(key(KeyCode::Esc));
+
+    // `/login` signs in to it again.
+    app.command("/login");
+    let request = app.take_login_request().unwrap();
+    assert_eq!(request.login.kind(), Kind::Antigravity);
+}
+
+#[tokio::test]
 async fn backend_switches_keep_the_conversation_and_drop_the_old_thread() {
     use backend::Kind;
     use backends::{Choice, LoginRequest};

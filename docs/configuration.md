@@ -7,11 +7,12 @@ binary. Override just the fields you need in a personal or project TOML file:
 
 ```toml
 [backend]
-kind = "api" # or "claude-code" or "codex"
+kind = "api" # or "claude-code", "codex" or "antigravity"
 claude_path = "claude"
 claude_config_dirs = ["~/.claude-work"] # more Claude Code logins for the picker
 codex_path = "codex"
 codex_homes = ["~/.codex-work"] # more Codex logins for the picker
+antigravity_path = "agy"
 
 [model]
 name = "claude-opus-5-5"
@@ -54,8 +55,8 @@ Missing personal/project files are skipped; an explicit `--config` file must exi
 
 A repository is someone else's code until you've read it, so opening one can't do anything on
 its say-so. A project's `tamale.toml` can't set `[hub]` (where this session and your key's auth
-value go), `backend.claude_path`, `codex_path`, `claude_config_dirs` or `codex_homes` (what
-tamale runs) or `permissions.allow`, and it can make `permissions.mode` stricter but not looser.
+value go), `backend.claude_path`, `codex_path`, `antigravity_path`, `claude_config_dirs` or
+`codex_homes` (what tamale runs) or `permissions.allow`, and it can make `permissions.mode` stricter but not looser.
 tamale says what it ignored when it starts. All of them work from your own `config.toml` or a
 file you pass with `--config`.
 
@@ -63,7 +64,7 @@ The same settings apply to interactive and `-p` runs, tool follow-ups, retries a
 manual/automatic compaction. Settings load at startup; slash commands change the
 current session's settings without rewriting TOML files.
 
-`TAMALE_BACKEND` sets the backend (`api`, `claude-code`, `codex` or a provider's name, e.g.
+`TAMALE_BACKEND` sets the backend (`api`, `claude-code`, `codex`, `antigravity` or a provider's name, e.g.
 `deepseek`; see [Backends](backends.md#openai-compatible-providers)).
 `TAMALE_MODEL` sets the default model (otherwise `claude-opus-5-5`).
 `TAMALE_EFFORT` sets the default effort level (otherwise the API default).

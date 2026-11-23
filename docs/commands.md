@@ -35,7 +35,7 @@
   (its description) with no output, and only the last 5 steps of a run are shown. Verbose shows
   every step with the full call and an output preview.
 - `/help` opens a scrollable popup listing all commands, keys and tools
-- `/model` opens a model picker (the backend's live list: the Anthropic API's, Codex's or a
+- `/model` opens a model picker (the backend's live list: the Anthropic API's, Codex's, Antigravity's or a
   provider's; type to filter, Enter to switch), in the terminal and in the web UI alike.
   `/model <id>` switches directly. The conversation is kept when switching.
 - `/effort` opens an effort picker (↑/↓ or j/k to move, 1–6 to jump, Enter to apply, Esc to
@@ -72,8 +72,8 @@
     and counts their requests as part of the goal.
   - The goal is saved with the session: `/resume` (and `tamale --continue`) brings it back
     paused. `/clear` drops it.
-- `/backend` opens a backend picker; `/backend api|claude-code|codex|<provider>` (e.g. `deepseek`) switches directly, keeping the conversation
-- `/login` signs in to Claude Code or Codex (with their backends; see [Backends](backends.md))
+- `/backend` opens a backend picker; `/backend api|claude-code|codex|antigravity|<provider>` (e.g. `deepseek`) switches directly, keeping the conversation
+- `/login` signs in to Claude Code, Codex or Antigravity (with their backends; see [Backends](backends.md))
 - `/add-dir [path]` adds a directory to the agent's scope; without a path it opens a file tree
   browser to pick one, and `/add-dir list` lists the current scope
 - `/chef` goes to the tamale chef, which looks after all your sessions (see [The chef](chef.md)),

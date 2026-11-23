@@ -209,6 +209,10 @@ impl Settings {
             !self.backend.codex_path.as_os_str().is_empty(),
             "backend.codex_path must not be empty"
         );
+        ensure!(
+            !self.backend.antigravity_path.as_os_str().is_empty(),
+            "backend.antigravity_path must not be empty"
+        );
         if self.backend.kind == backend::Kind::Compat {
             self.backend.provider_settings(&self.backend.provider)?;
         }
@@ -323,11 +327,12 @@ or --config can.",
 
 /// The `[backend]` settings that say what tamale runs: the CLIs, the directories those CLIs
 /// load their own settings, hooks and MCP servers from, and the providers API keys go to.
-const BACKEND_PROGRAMS: [&str; 5] = [
+const BACKEND_PROGRAMS: [&str; 6] = [
     "claude_path",
     "claude_config_dirs",
     "codex_path",
     "codex_homes",
+    "antigravity_path",
     // Where requests, with your API keys, are sent.
     "providers",
 ];

@@ -1,7 +1,7 @@
-//! What the Claude Code and Codex backends share. Each runs a signed-in CLI headlessly
-//! for a turn: the prompt goes in on stdin, one JSON event comes out per line, and a
-//! conversation the CLI doesn't hold is replayed to it as text. What differs is each
-//! CLI's arguments, its events and its account, which stay in `claude_code` and `codex`.
+//! What the Claude Code, Codex, and Antigravity backends share. Each runs a signed-in CLI
+//! headlessly for a turn, and a conversation the CLI doesn't hold is replayed to it as text.
+//! What differs is each CLI's protocol, its events and its account, which stay in
+//! `claude_code`, `codex`, and `antigravity`.
 
 use std::collections::VecDeque;
 use std::path::Path;
@@ -98,6 +98,7 @@ pub(super) fn tools(
         workspace: turn.workspace.clone(),
         tx: tx.clone(),
         chef: turn.config.chef,
+        results: None,
     }
 }
 
@@ -189,7 +190,7 @@ pub(super) async fn stream(
 }
 
 /// Aborts a helper task when the run ends (or is interrupted).
-struct AbortOnDrop<T>(JoinHandle<T>);
+pub(super) struct AbortOnDrop<T>(pub(super) JoinHandle<T>);
 
 impl<T> Drop for AbortOnDrop<T> {
     fn drop(&mut self) {
@@ -198,7 +199,7 @@ impl<T> Drop for AbortOnDrop<T> {
 }
 
 /// Collects the last lines of a CLI's stderr, for error messages.
-fn stderr_tail(stderr: tokio::process::ChildStderr) -> AbortOnDrop<String> {
+pub(super) fn stderr_tail(stderr: tokio::process::ChildStderr) -> AbortOnDrop<String> {
     AbortOnDrop(tokio::spawn(async move {
         let mut tail = VecDeque::new();
         let mut lines = BufReader::new(stderr).lines();

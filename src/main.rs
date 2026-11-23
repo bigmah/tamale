@@ -154,6 +154,7 @@ async fn start(cli: cli::Cli) -> Result<()> {
     if !backend.signed_in() && !choose_backend {
         let (name, login) = match &backend {
             Backend::Codex(_) => ("Codex", "codex login"),
+            Backend::Antigravity(_) => ("Antigravity", "agy acp --login"),
             _ => ("Claude Code", "claude auth login"),
         };
         if cli.print_prompt.is_some() {

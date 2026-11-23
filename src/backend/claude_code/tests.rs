@@ -233,6 +233,7 @@ async fn bridge_serves_tamale_tools_over_mcp() {
         },
         tx,
         chef: false,
+        results: None,
     })
     .await
     .unwrap();
@@ -343,6 +344,7 @@ async fn bridge_refuses_calls_without_a_turn() {
         workspace: Workspace::current().unwrap(),
         tx,
         chef: false,
+        results: None,
     })
     .await
     .unwrap();

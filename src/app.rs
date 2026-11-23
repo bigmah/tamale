@@ -193,11 +193,12 @@ impl ResumePicker {
 
 pub struct App {
     backend: Backend,
-    /// The backend's own conversation for `history` (a Claude Code session or Codex
-    /// thread), cleared
+    /// The backend's own conversation for `history` (a Claude Code session, Codex
+    /// thread or Antigravity conversation), cleared
     /// whenever `history` is rewritten so the next turn starts a fresh one.
     thread: Option<String>,
-    /// CLI logins (Claude Code and Codex) known so far; the backend picker refreshes them.
+    /// CLI logins (Claude Code, Codex and Antigravity) known so far; the backend picker
+    /// refreshes them.
     logins: Vec<Backend>,
     /// Set by `/login` and the picker; the event loop suspends the TUI to run the sign-in.
     login_request: Option<backends::LoginRequest>,

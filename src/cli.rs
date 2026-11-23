@@ -24,12 +24,13 @@ kill <id>         End a session running in the background.
 update            Install the latest release of tamale, if this one is older.
 
 -b, --backend      api (ANTHROPIC_API_KEY), claude-code (your Claude Code sign-in),
-                   codex (your Codex sign-in), or an OpenAI-compatible provider with its
-                   own key: deepseek, kimi, gemini, openrouter, xai, groq, mistral, zai,
+                   codex (your Codex sign-in), antigravity (your Antigravity sign-in),
+                   or an OpenAI-compatible provider with its own key: deepseek, kimi, gemini, openrouter, xai, groq, mistral, zai,
                    openai, ollama, or one you add under [backend.providers].
 --add-dir <path>   Include another directory in the agent's scope (repeatable).
 --config <path>    Add a TOML settings file after user and project settings.
--m, --model <id>  Model ID (Anthropic, a Codex model on codex, or the provider's).
+-m, --model <id>  Model ID (Anthropic, a Codex or Antigravity model on those, or the
+                  provider's).
 -e, --effort      low, medium, high, xhigh, max, or default (API decides).
 --thinking        adaptive (on) or off.
 -c, --continue    Go back to the most recent session in this directory, running or saved.
@@ -43,8 +44,8 @@ update            Install the latest release of tamale, if this one is older.
 Settings: built-in defaults < ~/.config/tamale/config.toml < project tamale.toml
           < --config < TAMALE_* environment variables < CLI flags.
 The api backend requires ANTHROPIC_API_KEY (without it, tamale asks which backend to use);
-claude-code requires the `claude` CLI and
-codex the `codex` CLI (tamale offers to sign in when they aren't). See config/default.toml for all settings.";
+claude-code requires the `claude` CLI,
+codex the `codex` CLI and antigravity the `agy` CLI (tamale offers to sign in when they aren't). See config/default.toml for all settings.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Resume {

@@ -11,6 +11,8 @@
 #                `claude` CLI headlessly; sign in with `claude auth login` or /login
 #   codex        your Codex sign-in (ChatGPT plan or OpenAI API key), by running the
 #                `codex` CLI headlessly; sign in with `codex login` or /login
+#   antigravity  your Antigravity sign-in (Google account), by running the `agy` CLI
+#                headlessly; sign in with `agy` or /login
 #   <provider>   an OpenAI-compatible API with its own key: a name from
 #                [backend.providers] below (deepseek, kimi, gemini, openrouter, …)
 # Tools, permissions, undo and sessions work the same with each.
@@ -25,6 +27,9 @@ codex_path = "codex" # the Codex executable (searched on PATH)
 # to an account. ~/.codex is offered automatically when signed in. The codex backend uses
 # model.name unless it's a Claude model, in which case Codex picks its default.
 codex_homes = [] # e.g. ["~/.codex-work"]
+# The Antigravity CLI executable (searched on PATH). The antigravity backend uses model.name
+# when Antigravity knows it (see `agy models`), and otherwise Antigravity's default model.
+antigravity_path = "agy"
 
 # OpenAI-compatible providers (Chat Completions: POST {base_url}/chat/completions). Select
 # one with `kind = "<name>"`, --backend <name>, TAMALE_BACKEND or /backend <name>; the

@@ -50,7 +50,7 @@ directly, as `http://localhost:3000` is.
 ## Subagents
 
 The `agent` tool starts a subagent: a fresh agent on the current backend (API, Claude
-Code or Codex) and model, with the same system prompt and tools, but none of the
+Code, Codex or Antigravity) and model, with the same system prompt and tools, but none of the
 conversation. The model writes it a standalone task; the subagent works until done and
 only its final report comes back as the tool result, so the files and output it went
 through don't fill the main context. The model is told to use it for broad searches,

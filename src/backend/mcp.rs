@@ -1,11 +1,13 @@
 //! A minimal MCP server (streamable HTTP transport) that offers tamale's tools to a
-//! Claude Code or Codex run. Each call goes through the turn's permission checks and
-//! checkpoints, exactly like a call made by the API backend.
+//! Claude Code, Codex, or Antigravity run. Each call goes through the turn's permission
+//! checks and checkpoints, exactly like a call made by the API backend.
 //!
 //! The server listens on 127.0.0.1 for the length of one run, and every request has to carry
 //! a random token, so other local processes can't call the tools. The CLI gets the token in its
-//! environment ([`TOKEN_ENV`]): on its command line, any user on this machine could read it.
+//! environment ([`TOKEN_ENV`]) or, for Antigravity, in a config file only this user can read:
+//! on its command line, any user on this machine could read it.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -34,6 +36,17 @@ const MAX_BODY: usize = 16 << 20;
 /// SSE comments sent while a tool runs, so long commands don't hit client idle timeouts.
 const KEEPALIVE: Duration = Duration::from_secs(15);
 
+/// Recorded output of one MCP tool call, for backends whose event stream omits MCP outputs.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolResult {
+    pub name: String,
+    pub output: String,
+    pub is_error: bool,
+}
+
+/// Queue of completed MCP tool calls, recorded before the HTTP response is sent.
+pub type ToolResults = Arc<std::sync::Mutex<VecDeque<ToolResult>>>;
+
 /// What tool calls can do during a run.
 pub struct Tools {
     /// `None` refuses every call (used while compacting).
@@ -42,19 +55,31 @@ pub struct Tools {
     pub tx: mpsc::UnboundedSender<AgentEvent>,
     /// Whether it's a tamale chef's run, which lists the chef's tools.
     pub chef: bool,
+    /// Optional queue where each completed tool call's output is recorded.
+    pub results: Option<ToolResults>,
 }
 
 impl Tools {
     async fn call(&self, name: &str, args: Value) -> (String, bool) {
-        let Some(ctx) = &self.ctx else {
-            return (
+        let (output, is_error) = match &self.ctx {
+            Some(ctx) => {
+                // One call at a time, like the API backend (TurnCtx tracks checkpoints).
+                let mut ctx = ctx.lock().await;
+                ctx.call_tool(name, args, &self.workspace, &self.tx).await
+            }
+            None => (
                 "Tools are unavailable right now; respond with text only.".into(),
                 true,
-            );
+            ),
         };
-        // One call at a time, like the API backend (TurnCtx tracks checkpoints).
-        let mut ctx = ctx.lock().await;
-        ctx.call_tool(name, args, &self.workspace, &self.tx).await
+        if let Some(results) = &self.results {
+            results.lock().unwrap().push_back(ToolResult {
+                name: name.to_string(),
+                output: output.clone(),
+                is_error,
+            });
+        }
+        (output, is_error)
     }
 }
 

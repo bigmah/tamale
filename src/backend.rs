@@ -7,10 +7,13 @@
 //!   calls tamale's tools through a local MCP bridge.
 //! - [`Backend::Codex`]: a signed-in Codex CLI run headlessly with `codex exec`, through
 //!   the same bridge.
+//! - [`Backend::Antigravity`]: a signed-in Antigravity CLI (`agy`) run headlessly with
+//!   stream-json, through the same bridge.
 //! - [`Backend::Compat`]: any OpenAI-compatible API (DeepSeek, Kimi, Gemini, OpenRouter,
 //!   …) with its own API key, through the same agent loop.
 //! - [`Backend::Unset`]: none chosen yet, while the TUI asks which to use.
 
+pub mod antigravity;
 pub mod claude_code;
 mod cli;
 pub mod codex;
@@ -31,6 +34,7 @@ use tokio::sync::mpsc;
 
 use crate::agent::{self, AgentEvent, TurnConfig, TurnCtx};
 use crate::workspace::Workspace;
+pub use antigravity::Antigravity;
 pub use claude_code::ClaudeCode;
 use cli::Cli;
 pub use codex::Codex;
@@ -43,6 +47,7 @@ pub enum Kind {
     Api,
     ClaudeCode,
     Codex,
+    Antigravity,
     /// An OpenAI-compatible provider, named in [`BackendSettings::provider`].
     Compat,
 }
@@ -53,6 +58,9 @@ impl Kind {
             "api" | "anthropic" => Some(Self::Api),
             "claude-code" | "claude_code" | "claude" | "cc" => Some(Self::ClaudeCode),
             "codex" | "codex-cli" | "codex_cli" => Some(Self::Codex),
+            "antigravity" | "antigravity-cli" | "antigravity_cli" | "agy" => {
+                Some(Self::Antigravity)
+            }
             _ => None,
         }
     }
@@ -62,6 +70,7 @@ impl Kind {
             Self::Api => "api",
             Self::ClaudeCode => "claude-code",
             Self::Codex => "codex",
+            Self::Antigravity => "antigravity",
             Self::Compat => "openai-compatible",
         }
     }
@@ -72,8 +81,14 @@ impl Kind {
             Self::Api => "Anthropic API",
             Self::ClaudeCode => "Claude Code",
             Self::Codex => "Codex",
+            Self::Antigravity => "Antigravity",
             Self::Compat => "OpenAI-compatible API",
         }
+    }
+
+    /// Whether it's a CLI backend, with logins to sign in to.
+    pub fn is_login(self) -> bool {
+        matches!(self, Self::ClaudeCode | Self::Codex | Self::Antigravity)
     }
 }
 
@@ -95,6 +110,8 @@ pub struct BackendSettings {
     /// More Codex home directories (`CODEX_HOME`), each with its own login, offered in
     /// the backend picker when signed in.
     pub codex_homes: Vec<PathBuf>,
+    /// The Antigravity CLI executable (`agy`), for the `antigravity` backend.
+    pub antigravity_path: PathBuf,
 }
 
 /// `[backend]` as written: `kind` is a backend or a provider's name.
@@ -106,6 +123,7 @@ struct RawBackendSettings {
     claude_config_dirs: Vec<PathBuf>,
     codex_path: PathBuf,
     codex_homes: Vec<PathBuf>,
+    antigravity_path: PathBuf,
     #[serde(default)]
     providers: BTreeMap<String, ProviderSettings>,
 }
@@ -121,6 +139,7 @@ impl From<RawBackendSettings> for BackendSettings {
             claude_config_dirs: raw.claude_config_dirs,
             codex_path: raw.codex_path,
             codex_homes: raw.codex_homes,
+            antigravity_path: raw.antigravity_path,
         }
     }
 }
@@ -134,7 +153,7 @@ fn parse_selection(s: &str) -> (Kind, String) {
 }
 
 impl BackendSettings {
-    /// Selects a backend by name: `api`, `claude-code`, `codex` or a provider.
+    /// Selects a backend by name: `api`, `claude-code`, `codex`, `antigravity` or a provider.
     pub fn select(&mut self, name: &str) -> Result<()> {
         let (kind, provider) = parse_selection(name);
         if kind == Kind::Compat {
@@ -150,7 +169,7 @@ impl BackendSettings {
         self.providers.get(name).with_context(|| {
             let names: Vec<&str> = self.providers.keys().map(String::as_str).collect();
             format!(
-                "unknown backend: {name} (use api, claude-code, codex or a provider: {})",
+                "unknown backend: {name} (use api, claude-code, codex, antigravity or a provider: {})",
                 names.join(", ")
             )
         })
@@ -165,7 +184,7 @@ impl BackendSettings {
                 .get(&self.provider)
                 .filter(|p| !p.key_set())
                 .map(|p| p.api_key_env.clone()),
-            Kind::ClaudeCode | Kind::Codex => None,
+            Kind::ClaudeCode | Kind::Codex | Kind::Antigravity => None,
         }
     }
 }
@@ -184,7 +203,7 @@ pub struct Turn {
     /// The newest prompt on its own (the last text of `history`).
     pub prompt: String,
     /// A backend-side conversation that already holds `history` (a Claude Code session
-    /// or Codex thread).
+    /// Codex thread or Antigravity conversation).
     pub thread: Option<String>,
     pub config: TurnConfig,
     pub workspace: Workspace,
@@ -195,6 +214,7 @@ pub enum Backend {
     Api(anthropic::Client),
     ClaudeCode(ClaudeCode),
     Codex(Codex),
+    Antigravity(Antigravity),
     Compat(Compat),
     /// Nothing to run turns with yet: the API was configured without a key, and the TUI
     /// asks for a backend. Its kind stays [`Kind::Api`], as in the settings.
@@ -228,6 +248,9 @@ the claude-code backend)"
             Kind::Codex => Ok(Self::Codex(
                 Codex::connect(settings.codex_path.clone(), None).await?,
             )),
+            Kind::Antigravity => Ok(Self::Antigravity(
+                Antigravity::connect(settings.antigravity_path.clone()).await?,
+            )),
             Kind::Compat => {
                 let provider = settings.provider_settings(&settings.provider)?;
                 Ok(Self::Compat(Compat::connect(&settings.provider, provider)?))
@@ -240,6 +263,7 @@ the claude-code backend)"
             Self::Api(_) | Self::Unset => Kind::Api,
             Self::ClaudeCode(_) => Kind::ClaudeCode,
             Self::Codex(_) => Kind::Codex,
+            Self::Antigravity(_) => Kind::Antigravity,
             Self::Compat(_) => Kind::Compat,
         }
     }
@@ -251,6 +275,7 @@ the claude-code backend)"
             Self::Unset => "no backend".into(),
             Self::ClaudeCode(cc) => cc.label(),
             Self::Codex(codex) => codex.label(),
+            Self::Antigravity(antigravity) => antigravity.label(),
             Self::Compat(compat) => compat.label.clone(),
         }
     }
@@ -258,7 +283,7 @@ the claude-code backend)"
     /// The label plus the signed-in account, to tell logins apart.
     pub fn label_with_account(&self) -> String {
         match self {
-            Self::Api(_) | Self::Compat(_) | Self::Unset => self.label(),
+            Self::Api(_) | Self::Compat(_) | Self::Antigravity(_) | Self::Unset => self.label(),
             Self::ClaudeCode(cc) => cc.label_with_account(),
             Self::Codex(codex) => codex.label_with_account(),
         }
@@ -266,7 +291,7 @@ the claude-code backend)"
 
     pub fn email(&self) -> Option<&str> {
         match self {
-            Self::Api(_) | Self::Compat(_) | Self::Unset => None,
+            Self::Api(_) | Self::Compat(_) | Self::Antigravity(_) | Self::Unset => None,
             Self::ClaudeCode(cc) => cc.account.email.as_deref(),
             Self::Codex(codex) => codex.account.email.as_deref(),
         }
@@ -275,7 +300,8 @@ the claude-code backend)"
     /// The directory a CLI login lives in; `None` is the CLI's default.
     pub fn login_dir(&self) -> Option<&Path> {
         match self {
-            Self::Api(_) | Self::Compat(_) | Self::Unset => None,
+            // Antigravity has one login, in the system keychain.
+            Self::Api(_) | Self::Compat(_) | Self::Antigravity(_) | Self::Unset => None,
             Self::ClaudeCode(cc) => cc.config_dir.as_deref(),
             Self::Codex(codex) => codex.home.as_deref(),
         }
@@ -310,6 +336,7 @@ the claude-code backend)"
         match (self, other) {
             (Self::ClaudeCode(a), Self::ClaudeCode(b)) => a.same_account(b),
             (Self::Codex(a), Self::Codex(b)) => a.same_account(b),
+            (Self::Antigravity(a), Self::Antigravity(b)) => a.same_account(b),
             _ => false,
         }
     }
@@ -324,6 +351,7 @@ the claude-code backend)"
             Self::Unset => bail!("no backend is selected; pick one with /backend"),
             Self::ClaudeCode(cc) => cc.login().await,
             Self::Codex(codex) => codex.login().await,
+            Self::Antigravity(antigravity) => antigravity.login().await,
         }
     }
 
@@ -338,6 +366,7 @@ the claude-code backend)"
             Self::Unset => bail!("no backend is selected; pick one with /backend"),
             Self::ClaudeCode(cc) => Ok(cc.login_command()),
             Self::Codex(codex) => codex.login_command(),
+            Self::Antigravity(antigravity) => Ok(antigravity.login_command()),
         }
     }
 
@@ -348,6 +377,7 @@ the claude-code backend)"
             Self::Api(_) | Self::Compat(_) | Self::Unset => Ok(()),
             Self::ClaudeCode(cc) => cc.finish_login(success, status).await,
             Self::Codex(codex) => codex.finish_login(success, status).await,
+            Self::Antigravity(antigravity) => antigravity.finish_login(success, status).await,
         }
     }
 
@@ -355,6 +385,7 @@ the claude-code backend)"
     pub fn model_label(&self, name: &str) -> String {
         match self {
             Self::Codex(_) => codex::model(name).unwrap_or("codex default").to_string(),
+            Self::Antigravity(antigravity) => antigravity.model_label(name),
             Self::Compat(compat) => compat.model(name).to_string(),
             _ => name.to_string(),
         }
@@ -367,6 +398,7 @@ the claude-code backend)"
             Self::Unset => false,
             Self::ClaudeCode(cc) => cc.account.logged_in,
             Self::Codex(codex) => codex.account.logged_in,
+            Self::Antigravity(antigravity) => antigravity.account.logged_in,
         }
     }
 
@@ -391,6 +423,7 @@ the claude-code backend)"
             Self::Unset => no_backend(&tx),
             Self::ClaudeCode(cc) => cc.run(turn, ctx, tx).await,
             Self::Codex(codex) => codex.run(turn, ctx, tx).await,
+            Self::Antigravity(antigravity) => antigravity.run(turn, ctx, tx).await,
         }
     }
 
@@ -443,6 +476,7 @@ the claude-code backend)"
             Self::Unset => no_backend(&tx),
             Self::ClaudeCode(cc) => cc.compact(turn, instructions, tx).await,
             Self::Codex(codex) => codex.compact(turn, instructions, tx).await,
+            Self::Antigravity(antigravity) => antigravity.compact(turn, instructions, tx).await,
         }
     }
 
@@ -462,6 +496,10 @@ the claude-code backend)"
             // Claude Code has no model listing; it accepts the same model ids.
             Self::ClaudeCode(_) | Self::Unset => Ok(Vec::new()),
             Self::Codex(codex) => codex.list_models().await.map_err(|e| format!("{e:#}")),
+            Self::Antigravity(antigravity) => antigravity
+                .list_models()
+                .await
+                .map_err(|e| format!("{e:#}")),
             Self::Compat(compat) => compat.list_models().await.map_err(|e| format!("{e:#}")),
         }
     }

@@ -1,5 +1,6 @@
 //! Choosing where inference comes from: `/backend`, its picker, OpenAI-compatible
-//! providers, and Claude Code and Codex logins (`/login`, adding and removing accounts).
+//! providers, and Claude Code, Codex and Antigravity logins (`/login`, adding and removing
+//! accounts).
 
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -25,8 +26,10 @@ pub(super) enum Choice {
     AddLogin(Kind),
 }
 
-/// Kinds of CLI login the picker can add.
-const LOGIN_KINDS: [Kind; 2] = [Kind::ClaudeCode, Kind::Codex];
+/// Kinds of CLI login the picker lists, in order.
+const LOGIN_KINDS: [Kind; 3] = [Kind::ClaudeCode, Kind::Codex, Kind::Antigravity];
+/// Kinds of CLI login the picker can add (Antigravity has only one).
+const ADDABLE_KINDS: [Kind; 2] = [Kind::ClaudeCode, Kind::Codex];
 
 /// A row's identity: [`Choice::Login`] indexes shift when the list is refreshed.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -49,7 +52,7 @@ impl App {
     pub(super) fn backend_label(&self) -> String {
         let kind = self.backend.kind();
         let logins = self.logins.iter().filter(|l| l.kind() == kind).count();
-        if matches!(kind, Kind::ClaudeCode | Kind::Codex) && logins > 1 {
+        if kind.is_login() && logins > 1 {
             self.backend.label_with_account()
         } else {
             self.backend.label()
@@ -76,7 +79,7 @@ impl App {
                     .map(Choice::Login),
             );
         }
-        choices.extend(LOGIN_KINDS.map(Choice::AddLogin));
+        choices.extend(ADDABLE_KINDS.map(Choice::AddLogin));
         choices
     }
 
@@ -165,11 +168,12 @@ impl App {
             Backend::Unset => self.open_backend_picker(),
             Backend::Api(_) => self.entries.push(Entry::Info(
                 "This session uses the Anthropic API with ANTHROPIC_API_KEY. To use a Claude \
-Code or Codex sign-in instead, pick one with /backend."
+Code, Codex or Antigravity sign-in instead, pick one with /backend."
                     .into(),
             )),
             Backend::Compat(compat) => self.entries.push(Entry::Info(format!(
-                "{}. To use a Claude Code or Codex sign-in instead, pick one with /backend.",
+                "{}. To use a Claude Code, Codex or Antigravity sign-in instead, pick one with \
+/backend.",
                 compat.no_login()
             ))),
             _ if self.is_running() => self.entries.push(Entry::Error(
@@ -184,7 +188,8 @@ Code or Codex sign-in instead, pick one with /backend."
         }
     }
 
-    /// `/backend <kind>` switches directly (`claude-code` and `codex` are the default logins,
+    /// `/backend <kind>` switches directly (`claude-code`, `codex` and `antigravity` are the
+    /// default logins,
     /// a provider's name its API); without an argument it opens the picker. The
     /// conversation carries over.
     pub(super) fn switch_backend(&mut self, arg: Option<&str>) {
@@ -234,7 +239,7 @@ Code or Codex sign-in instead, pick one with /backend."
     /// Makes `backend` current. A CLI session from before doesn't hold the turns made
     /// since, so the next turn starts a new one.
     fn set_backend(&mut self, backend: Backend) {
-        if matches!(backend.kind(), Kind::ClaudeCode | Kind::Codex) {
+        if backend.kind().is_login() {
             self.remember_login(backend.clone());
         }
         if let Some(model) = backend.model_after(&self.backend, &self.settings.model.name) {
@@ -372,7 +377,7 @@ Code or Codex sign-in instead, pick one with /backend."
         self.logins.retain(|l| !listed.contains(&l.kind()));
         self.logins.extend(list);
         // The current login stays listed even if it was signed out meanwhile.
-        if matches!(self.backend.kind(), Kind::ClaudeCode | Kind::Codex) {
+        if self.backend.kind().is_login() {
             match self.logins.iter().find(|l| l.same_login(&self.backend)) {
                 Some(fresh) => self.backend = fresh.clone(),
                 None => self.logins.push(self.backend.clone()),
@@ -498,6 +503,7 @@ Code or Codex sign-in instead, pick one with /backend."
         if !logins::is_added(&login) {
             let logout = match login.kind() {
                 Kind::Codex => "codex logout",
+                Kind::Antigravity => "agy` and then `/logout",
                 _ => "claude auth logout",
             };
             self.entries.push(Entry::Error(format!(
