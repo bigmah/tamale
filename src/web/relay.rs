@@ -98,7 +98,7 @@ pub fn hostname() -> String {
         .unwrap_or_else(|_| "tamale".into())
 }
 
-/// Why tamale closed a channel, which the page acts on (see `src/web/app.js`).
+/// Why tamale closed a channel, which the page acts on (see `web/src/conn.rs`).
 const WRONG_KEY: &str = "e2e: wrong key";
 const BROKEN: &str = "e2e: the encrypted connection broke; reload to reconnect";
 const THROTTLED: &str = "e2e: too many failed handshakes; try again later";

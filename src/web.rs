@@ -66,8 +66,9 @@ use mirror::Mirror;
 
 const PAGE: &str = include_str!("web/index.html");
 const STYLE: &str = include_str!("web/app.css");
-const SCRIPT: &str = include_str!("web/app.js");
-const NOISE_SCRIPT: &str = include_str!("web/noise.js");
+/// The page's app: tamale's web UI in Dioxus (`web/`), built to WebAssembly by `web/build.sh`.
+const SCRIPT: &str = include_str!("web/dist/app.js");
+const MODULE: &[u8] = include_bytes!("web/dist/app_bg.wasm.gz");
 const ARTIFACT_FRAME: &str = include_str!("web/artifact-frame.html");
 
 /// What a tab asked for that the app has to handle.
@@ -304,11 +305,13 @@ impl IntoResponse for Asset {
 }
 
 /// Gemini's Live API is the one site the page talks to besides tamale (see `gemini`), and
-/// videos play from the `blob:` URLs the page makes of what it's sent.
+/// videos play from the `blob:` URLs the page makes of what it's sent. The page is a
+/// WebAssembly module (tamale's `web/`), which `wasm-unsafe-eval` lets the browser compile; it
+/// runs no script text, and sets styles through the CSSOM rather than inline.
 const PAGE_CSP: &str = "default-src 'self'; connect-src 'self' \
      https://generativelanguage.googleapis.com wss://generativelanguage.googleapis.com; \
-     img-src 'self' data: blob:; media-src blob:; \
-     style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; \
+     img-src 'self' data: blob:; media-src blob:; style-src 'self'; \
+     script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'; \
      form-action 'none'; frame-ancestors 'none'";
 
 /// Scripts run, but in an opaque origin that can't read this server's pages or open its
@@ -319,7 +322,7 @@ const ARTIFACT_CSP: &str = "sandbox allow-scripts allow-popups allow-modals allo
      font-src data: https:; media-src data: blob: https:; connect-src https:; \
      frame-ancestors 'self'";
 
-/// The page at `path` (`/`, `/app.js`, `/app.css` or `/artifact/<id>`), without checking
+/// The page at `path` (`/`, `/app.js`, `/app_bg.wasm`, `/app.css` or `/artifact/<id>`), without checking
 /// who asks: the HTTP routes check first, and a hub has checked its browser.
 fn asset(shared: &Shared, path: &str) -> Asset {
     let ok = |content_type, body: &str, extra: &[(HeaderName, &'static str)]| {
@@ -375,7 +378,19 @@ fn asset(shared: &Shared, path: &str) -> Asset {
         ),
         "/app.css" => ok("text/css; charset=utf-8", STYLE, &[]),
         "/app.js" => ok("text/javascript; charset=utf-8", SCRIPT, &[]),
-        "/noise.js" => ok("text/javascript; charset=utf-8", NOISE_SCRIPT, &[]),
+        // The app's module, gzipped. Its URL carries a version (see `web/build.sh`), so it
+        // can be cached for good.
+        "/app_bg.wasm" => Asset {
+            status: StatusCode::OK,
+            headers: vec![
+                (header::CONTENT_TYPE, "application/wasm"),
+                (header::CONTENT_ENCODING, "gzip"),
+                (header::CACHE_CONTROL, "private, max-age=31536000, immutable"),
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            ],
+            body: String::new(),
+            bytes: Some(MODULE),
+        },
         // Holds nothing itself: on an encrypted session the page posts an artifact to it.
         "/artifact-frame" => ok(
             "text/html; charset=utf-8",
@@ -464,7 +479,8 @@ impl Server {
             .route("/ws", get(socket))
             .route("/app.css", get(style))
             .route("/app.js", get(script))
-            .route("/noise.js", get(noise_script))
+            .route("/app_bg.wasm", get(module))
+            .route("/artifact-frame", get(artifact_frame))
             .route("/artifact/{id}", get(artifact))
             .route("/pullspace/", get(pullspace_file))
             .route("/pullspace/{file}", get(pullspace_file))
@@ -684,11 +700,19 @@ async fn script(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Respon
     asset(&shared, "/app.js").into_response()
 }
 
-async fn noise_script(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Response {
+async fn module(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Response {
     if !shared.own_host(&headers) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    asset(&shared, "/noise.js").into_response()
+    asset(&shared, "/app_bg.wasm").into_response()
+}
+
+/// Where an artifact is posted to when the app can't load it by URL (see artifact-frame.html).
+async fn artifact_frame(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Response {
+    if !shared.own_host(&headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    asset(&shared, "/artifact-frame").into_response()
 }
 
 /// An artifact, sandboxed (see [`ARTIFACT_CSP`]).

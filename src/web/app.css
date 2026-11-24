@@ -291,6 +291,10 @@ body.chef .endbtn:hover { color: var(--deleted); border-color: rgba(224, 108, 11
 .prose { overflow-wrap: break-word; }
 .prose > :first-child { margin-top: 0; }
 .prose > :last-child { margin-bottom: 0; }
+/* A reply is drawn block by block, each block in a wrapper of its own (web/src/ui/thread.rs). */
+.blk { display: contents; }
+.prose > .blk:first-child > :first-child { margin-top: 0; }
+.prose > .blk:last-child > :last-child { margin-bottom: 0; }
 .prose p, .prose ul, .prose ol, .prose blockquote, .prose .codeblock, .prose .table { margin: 0 0 0.8em; }
 .prose p { white-space: pre-line; }
 .prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 {

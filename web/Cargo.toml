@@ -1,0 +1,60 @@
+[package]
+name = "tamale-web"
+version = "0.1.0"
+edition = "2024"
+description = "tamale's web UI, in Dioxus: built for WebAssembly as the page /web serves, and as a desktop window that runs it"
+publish = false
+
+# Built by web/build.sh (the page) or with `--no-default-features --features desktop` (the
+# window that runs it), separately from tamale.
+[workspace]
+
+[features]
+default = ["web"]
+web = ["dioxus/web", "dep:web-sys", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys", "dep:gloo-timers", "getrandom/wasm_js"]
+desktop = ["dioxus/desktop"]
+
+[dependencies]
+dioxus = { version = "=0.7.10" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+snow = { version = "0.10", default-features = false, features = ["default-resolver-crypto"] }
+getrandom = "0.3"
+web-time = "1"
+futures-channel = "0.3"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+
+# The page.
+web-sys = { version = "0.3", optional = true, features = [
+    "AudioBuffer", "AudioBufferSourceNode", "AudioContext", "AudioDestinationNode", "AudioNode", "AudioParam",
+    "AudioProcessingEvent", "AudioScheduledSourceNode", "BaseAudioContext", "BinaryType", "Blob", "BlobPropertyBag",
+    "Clipboard", "CloseEvent", "CssStyleDeclaration", "Document", "DomRect", "DomTokenList", "Element", "Event",
+    "EventTarget", "GainNode", "Headers", "History", "HtmlElement", "HtmlIFrameElement", "HtmlInputElement",
+    "HtmlTextAreaElement", "IntersectionObserver", "IntersectionObserverEntry", "IntersectionObserverInit",
+    "KeyboardEvent", "Location", "MediaDevices", "MediaQueryList", "MediaStream", "MediaStreamAudioSourceNode",
+    "MediaStreamConstraints", "MediaStreamTrack", "MessageEvent", "Navigator", "NodeList", "Request", "RequestInit",
+    "Response", "ScriptProcessorNode", "ScrollBehavior", "ScrollIntoViewOptions", "ScrollLogicalPosition",
+    "ScrollToOptions", "Storage", "Url", "UrlSearchParams", "VisualViewport", "WebSocket", "Window",
+] }
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
+gloo-timers = { version = "0.3", optional = true, features = ["futures"] }
+
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.wasm-dev]
+inherits = "dev"
+opt-level = 1
+
+[profile.server-dev]
+inherits = "dev"
+
+[profile.android-dev]
+inherits = "dev"

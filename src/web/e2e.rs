@@ -4,7 +4,7 @@
 //! The handshake's secret (PSK) comes from the key every machine and browser share (see
 //! `tamale_hub_protocol::e2e_secret`), and never reaches the hub. From it come the id browsers find their key
 //! by and the key that seals the session list's labels. Each browser channel then runs a
-//! Noise NNpsk0 handshake for keys of its own; `src/web/noise.js` is the other end.
+//! Noise NNpsk0 handshake for keys of its own; the page's end is Rust, in `web/src/e2e.rs`.
 
 use std::path::PathBuf;
 
@@ -287,7 +287,7 @@ impl Channel {
 
 #[cfg(test)]
 pub mod testing {
-    //! The browser's side, for tests of tamale's. `noise.js` is the real one.
+    //! The browser's side, for tests of tamale's. `web/src/e2e.rs` is the real one.
     use super::*;
 
     pub struct Initiator {
@@ -451,10 +451,10 @@ mod tests {
             .collect()
     }
 
-    /// `noise.js` and the hub page's `seal.js` under Node against this module, byte for
+    /// The hub page's `seal.js` under Node against this module, byte for
     /// byte. Skipped without Node 22+, unless `CI` is set.
     #[test]
-    fn the_browser_code_agrees_with_this_code() {
+    fn the_hub_page_agrees_with_this_code() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let version = std::process::Command::new("node").arg("--version").output();
         let major = version
@@ -506,7 +506,7 @@ mod tests {
             "label": keys.seal(SID, "label", r#"{"host":"h","cwd":"~/x"}"#).unwrap(),
         });
         let output = std::process::Command::new("node")
-            .arg(root.join("src/web/noise.test.mjs"))
+            .arg(root.join("hub/static/seal.test.mjs"))
             .arg(vectors.to_string())
             .output()
             .unwrap();
@@ -543,19 +543,6 @@ mod tests {
                 "https://tamale-hub.com/#{}",
                 tamale_hub_protocol::encode_key(&key)
             )
-        );
-
-        // What noise.js sealed, opened here.
-        let up: Vec<String> = serde_json::from_value(answer["up"].clone()).unwrap();
-        let mut opened = Vec::new();
-        for sealed in &up {
-            if let Some(message) = tamale.open(sealed, BIG).unwrap() {
-                opened.push(message);
-            }
-        }
-        assert_eq!(
-            opened,
-            ["hello from the browser".to_string(), "".into(), long]
         );
     }
 }

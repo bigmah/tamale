@@ -1,5 +1,5 @@
-// One session's socket, `wss://<sid>.<hub>/ws`, as the web page's `connect()` runs it
-// (src/web/app.js): tamale opens an encrypted channel with `hs0` (a nonce), the app answers
+// One session's socket, `wss://<sid>.<hub>/ws`, as the web page's `connect` runs it
+// (web/src/conn.rs): tamale opens an encrypted channel with `hs0` (a nonce), the app answers
 // `hs1`, tamale `hs2`, and from then on every /web message travels sealed in `box` frames.
 // Reconnects with backoff, keeps retrying while the session's tamale is offline (503), and
 // stops for good on close code 4000 (the session ended, or the key is wrong).

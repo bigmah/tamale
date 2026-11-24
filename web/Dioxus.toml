@@ -1,0 +1,11 @@
+[application]
+name = "tamale-web"
+
+[web.app]
+title = "tamale"
+
+
+# The desktop app (`--features desktop`), bundled by `bundle-desktop.sh`.
+[bundle]
+identifier = "com.tamale.web"
+publisher = "tamale"

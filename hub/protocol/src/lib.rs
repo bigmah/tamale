@@ -146,7 +146,10 @@ pub fn tunnelled_path(path: &str) -> bool {
     matches!(
         path,
         "/" | "/app.js"
+            // The page's app, as WebAssembly (tamale's `web/`).
+            | "/app_bg.wasm"
             | "/app.css"
+            // tamale's page before it was WebAssembly; kept for older tamales.
             | "/noise.js"
             | "/artifact-frame"
             // The review panel: pullspace, in a frame (see tamale's `src/web/pullspace.rs`).
@@ -416,6 +419,7 @@ mod tests {
         assert!(tunnelled_path("/") && tunnelled_path("/app.js"));
         assert!(tunnelled_path("/artifact/9f2c"));
         assert!(tunnelled_path("/noise.js") && tunnelled_path("/artifact-frame"));
+        assert!(tunnelled_path("/app_bg.wasm"));
         assert!(tunnelled_path("/pullspace/") && tunnelled_path("/pullspace/pullspace_bg.wasm"));
         assert!(!tunnelled_path("/pullspace/../app.js") && !tunnelled_path("/pullspace/x"));
         assert!(!tunnelled_path("/artifact/../x") && !tunnelled_path("/artifact/"));

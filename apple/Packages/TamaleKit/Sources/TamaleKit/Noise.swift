@@ -1,7 +1,7 @@
 // The app's end of tamale's end-to-end encryption (see e2e.md and src/web/e2e.rs):
 // Noise_NNpsk0_25519_AESGCM_SHA256 as an initiator, over CryptoKit, with the fragmenting of
-// long messages above it. A port of src/web/noise.js, checked byte for byte against the
-// `snow` crate by the vectors in apple/Fixtures/e2e-vectors.json.
+// long messages above it. Checked byte for byte against the `snow` crate (which tamale and its
+// web page use) by the vectors in apple/Fixtures/e2e-vectors.json.
 
 import CryptoKit
 import Foundation

@@ -8,3 +8,4 @@ DerivedData/
 apple/build/
 apple/Packages/*/.build/
 apple/Packages/*/.swiftpm/
+/web/target

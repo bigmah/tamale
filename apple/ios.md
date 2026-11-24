@@ -23,7 +23,7 @@ remote control: see what a session is doing, answer approvals, send a prompt. On
 have made, with Apple Pencil notes on top, and a way to send those notes back to the agent as a
 revision.
 
-It's a client like the web UI (`src/web/app.js`). It speaks the same protocols, the hub
+It's a client like the web UI (`web/`). It speaks the same protocols, the hub
 (`hub/protocol`) and the `/web` JSON messages (`src/web.rs`), through the same end-to-end
 encryption (`e2e.md`). It doesn't need a new server, and tamale's behaviour stays the same.
 
@@ -93,7 +93,7 @@ apple/
 ### Crypto: Swift on CryptoKit, checked against Rust
 
 Everything e2e needs is in CryptoKit: `Curve25519.KeyAgreement`, `AES.GCM`, `SHA256`,
-`HKDF<SHA256>`, `HMAC`. `src/web/noise.js` does the same job in about 230 lines over WebCrypto,
+`HKDF<SHA256>`, `HMAC`. The web page once did the same job in about 230 lines over WebCrypto (it now uses `snow`),
 and a Swift port should be about that size.
 
 Divergence is the risk, and test vectors control it. A small Rust test (or a `cargo run

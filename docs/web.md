@@ -179,9 +179,34 @@ into HTML in tamale (`src/web/render.rs`, which uses pulldown-cmark), and code i
 highlighted with syntect into token classes that the stylesheet colours. Each sync sends
 only the entries that changed since the last one, at most every 40 ms. Reads of the
 workspace's files and changes are answered by the server task itself (`src/web/pullspace.rs`
-and `src/web/diff.rs`). The page is
-plain HTML, CSS and JavaScript (`src/web/index.html`, `app.css`, `app.js`). It is
-embedded in the binary, so there is no build step.
+and `src/web/diff.rs`).
+
+**The page** is a [Dioxus](https://dioxuslabs.com) app written in Rust (`web/`, a crate of
+its own outside tamale's workspace) and compiled to WebAssembly: `src/web/index.html` loads
+`/app.js`, which loads the module, `/app_bg.wasm`; `src/web/app.css` styles it. It holds the
+session as signals (`web/src/app.rs`) that the components (`web/src/ui/`) draw, keeps the
+connection (`web/src/conn.rs`), seals it end to end on a session reached through a hub
+(`web/src/e2e.rs`, the `snow` crate, checked byte for byte against tamale's vectors), and
+reaches the browser through web-sys (`web/src/host/web.rs`) rather than script, so the CSP
+only adds `wasm-unsafe-eval`. Replies keep coming as HTML rendered by tamale; the page splits
+them into their top-level blocks, so streaming redraws only the last one and artifacts above
+it don't reload. The built app is checked in under `src/web/dist` (the module gzipped, about
+640 KB), so building tamale needs no wasm toolchain. After changing `web/`, run
+`web/build.sh` (it needs the `dx` CLI, `cargo install dioxus-cli --version 0.7.10`, and the
+`wasm32-unknown-unknown` target), then rebuild tamale. `cd web && cargo test` runs its own
+tests. A hub passes `/app_bg.wasm` through like pullspace's module; a hub from before the
+page was WebAssembly doesn't, and needs updating.
+
+**The desktop app** is a window that runs this same page, the same Dioxus app, in the
+system's webview (`web/src/shell.rs`, `--features desktop`): `cd web && cargo run --release
+--no-default-features --features desktop -- 'http://127.0.0.1:…/?t=…'` with the address `/web`
+prints, or a hub's address (`https://tamale-hub.com`) for the session list and encrypted
+sessions. Started without one, it asks. Everything works as in a browser tab: the code view,
+artifacts, the hub. Links and tabs the page opens go to your browser, downloads to
+`~/Downloads`. `web/bundle-desktop.sh` makes `TamaleWeb.app`, which may use the microphone to
+talk to tamale with Gemini; run bare, macOS doesn't let it, and the voice card takes typing.
+`--check` opens the code view, prints what the window shows as JSON and quits, for checking
+it from a script.
 
 **The code view** is pullspace's own WebAssembly build, from the `pullspace-embed` crate
 in [pullspace's repository](https://github.com/bigmah/pullspace) (`crates/embed`). The crate
