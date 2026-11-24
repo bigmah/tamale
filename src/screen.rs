@@ -51,6 +51,12 @@ fn push_title() {
 fn pop_title() {
     let mut out = std::io::stdout();
     let _ = write!(out, "\x1b[23;0t");
+    // WezTerm has no title stack, so the pop does nothing there. A pane titled exactly
+    // "wezterm" (its built-in default) shows the foreground process's name instead, which
+    // is what the tab said before tamale started.
+    if std::env::var("TERM_PROGRAM").is_ok_and(|p| p == "WezTerm") {
+        let _ = execute!(out, SetTitle("wezterm"));
+    }
     let _ = out.flush();
 }
 
