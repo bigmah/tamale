@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="color-scheme" content="dark">
+<title>tamale</title>
+<style>
+:root {
+  --bg: #17181d; --bg-1: #1e2026; --bg-2: #24262e; --bg-3: #2c2f38; --border: #33363f;
+  --fg: #d4d8e0; --fg-dim: #9aa0b0; --fg-faint: #848a9c; --fg-bright: #e8ecf4;
+  --accent: #5c9cf5; --accent-soft: rgba(92, 156, 245, 0.16); --on-accent: #0f1116;
+  --added: #4fbf7a; --modified: #e2b34c; --deleted: #e06c75;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { font: 14px/1.45 var(--sans); background: var(--bg); color: var(--fg); -webkit-user-select: none; user-select: none; cursor: default; }
+main { max-width: 760px; margin: 0 auto; padding: 44px 28px 60px; }
+header { display: flex; align-items: center; gap: 10px; margin-bottom: 26px; }
+header h1 { font-size: 20px; font-weight: 650; color: var(--fg-bright); margin: 0; letter-spacing: -0.01em; }
+header .mark { font-size: 24px; }
+header .spacer { flex: 1; }
+h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--fg-faint); margin: 30px 0 10px; }
+button { font: inherit; color: inherit; cursor: pointer; }
+.primary { background: var(--accent); color: var(--on-accent); border: 0; border-radius: 8px; padding: 7px 14px; font-weight: 600; }
+.primary:hover { filter: brightness(1.08); }
+.primary:disabled { opacity: .5; cursor: default; }
+.quiet { background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; }
+.quiet:hover { background: var(--bg-3); }
+#sessions { display: flex; flex-direction: column; gap: 8px; }
+.row { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-1); }
+.row:hover { background: var(--bg-2); border-color: #3e424d; }
+.row .main { flex: 1; min-width: 0; }
+.row .top { display: flex; align-items: baseline; gap: 10px; }
+.row .name { font-weight: 600; color: var(--fg-bright); }
+.row .path { color: var(--fg-faint); font: 12px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .title { color: var(--fg-dim); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .title.new { font-style: italic; color: var(--fg-faint); }
+.state { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg-dim); white-space: nowrap; }
+.state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--fg-faint); }
+.state.Running::before { background: var(--added); box-shadow: 0 0 0 3px rgba(79,191,122,.18); }
+.state.NeedsApproval { color: var(--modified); }
+.state.NeedsApproval::before { background: var(--modified); }
+.row .end { opacity: 0; background: none; border: 0; color: var(--fg-faint); padding: 4px 8px; border-radius: 6px; }
+.row:hover .end { opacity: 1; }
+.row .end:hover { color: var(--deleted); background: rgba(224,108,117,.1); }
+.row.busy { opacity: .6; pointer-events: none; }
+.row .err { color: var(--deleted); font-size: 12px; margin-top: 4px; white-space: normal; }
+.empty { color: var(--fg-dim); padding: 22px; border: 1px dashed var(--border); border-radius: 10px; text-align: center; }
+form { display: flex; gap: 8px; }
+input { flex: 1; min-width: 0; padding: 8px 11px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-1); color: var(--fg); font: 13px var(--mono); -webkit-user-select: text; user-select: text; }
+input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.folders { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.folders button { background: var(--bg-1); border: 1px solid var(--border); border-radius: 999px; padding: 3px 11px; font-size: 12px; color: var(--fg-dim); }
+.folders button:hover { color: var(--fg); background: var(--bg-2); }
+.note { color: var(--fg-faint); font-size: 12px; margin-top: 8px; }
+#problem { display: none; margin-bottom: 18px; padding: 11px 14px; border-radius: 10px; background: rgba(224,108,117,.08); border: 1px solid rgba(224,108,117,.35); color: #f0b8bd; white-space: pre-wrap; -webkit-user-select: text; user-select: text; font-size: 13px; }
+code { font: 12px var(--mono); background: var(--bg-2); padding: 1px 5px; border-radius: 4px; }
+</style>
+<main>
+  <header>
+    <span class="mark">🫔</span><h1>tamale</h1><span class="spacer"></span>
+  </header>
+  <div id="problem"></div>
+  <h2>Running sessions</h2>
+  <div id="sessions"><div class="empty">Looking for sessions…</div></div>
+
+  <h2>New session</h2>
+  <form id="new">
+    <input id="folder" placeholder="Folder to work in" spellcheck="false" autocomplete="off">
+    <button type="button" class="quiet" id="choose">Choose…</button>
+    <button class="primary" id="start">Start</button>
+  </form>
+  <div class="folders" id="folders"></div>
+
+  <h2>Another machine</h2>
+  <form id="remote">
+    <input id="address" placeholder="A hub's address, or one /web printed" spellcheck="false" autocomplete="off">
+    <button class="quiet">Open</button>
+  </form>
+  <div class="note">Sessions keep running when you close this window; <code>tamale attach</code> picks them up in a terminal.</div>
+</main>
+<script>
+"use strict";
+const NONCE = "__NONCE__";
+const send = (m) => window.ipc.postMessage(JSON.stringify({ ...m, nonce: NONCE }));
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+};
+let home = "";
+const tilde = (p) => (home && (p === home || p.startsWith(home + "/")) ? "~" + p.slice(home.length) : p);
+const LABEL = { Running: "working", NeedsApproval: "needs you", Idle: "idle" };
+const errors = {};
+const pending = new Set();
+
+window.tamaleHome = {
+  render(list, homeDir) {
+    home = homeDir || home;
+    $("problem").style.display = "none";
+    const box = $("sessions");
+    box.replaceChildren();
+    if (!list.length) {
+      box.append(el("div", "empty", "No sessions are running. Start one below."));
+    }
+    const folders = new Set();
+    for (const s of list) {
+      folders.add(s.cwd);
+      const row = el("div", pending.has(s.id) ? "row busy" : "row");
+      row.dataset.id = s.id;
+      const main = el("div", "main");
+      const top = el("div", "top");
+      const name = s.chef ? "tamale chef" : s.cwd.split("/").filter(Boolean).pop() || s.cwd;
+      top.append(el("span", "name", name), el("span", "path", tilde(s.cwd)));
+      main.append(top, el("div", s.title ? "title" : "title new", s.title || "New session"));
+      if (errors[s.id]) main.append(el("div", "err", errors[s.id]));
+      const state = el("span", "state " + s.state, LABEL[s.state] || s.state);
+      if (s.attached) state.title = "Also open in a terminal";
+      const end = el("button", "end", "End");
+      end.title = "End this session (it stays saved)";
+      end.onclick = (e) => {
+        e.stopPropagation();
+        pending.add(s.id);
+        row.classList.add("busy");
+        send({ do: "end", id: s.id });
+      };
+      row.append(main, state, end);
+      row.onclick = () => {
+        delete errors[s.id];
+        pending.add(s.id);
+        row.classList.add("busy");
+        send({ do: "open", id: s.id });
+      };
+      box.append(row);
+    }
+    const chips = $("folders");
+    chips.replaceChildren();
+    for (const f of folders) {
+      const b = el("button", null, tilde(f));
+      b.type = "button";
+      b.onclick = () => { $("folder").value = tilde(f); $("folder").focus(); };
+      chips.append(b);
+    }
+  },
+  failed(id, why) {
+    pending.delete(id);
+    errors[id] = why;
+    send({ do: "list" });
+  },
+  problem(text) {
+    const p = $("problem");
+    p.textContent = text;
+    p.style.display = "block";
+    $("start").disabled = false;
+  },
+  chosen(path) {
+    $("folder").value = tilde(path);
+  },
+};
+
+$("new").onsubmit = (e) => {
+  e.preventDefault();
+  const folder = $("folder").value.trim();
+  if (!folder) return $("folder").focus();
+  $("start").disabled = true;
+  send({ do: "new", folder });
+};
+$("choose").onclick = () => send({ do: "choose" });
+$("remote").onsubmit = (e) => {
+  e.preventDefault();
+  const url = $("address").value.trim();
+  if (/^https?:\/\//.test(url)) send({ do: "url", url });
+};
+send({ do: "list" });
+setInterval(() => document.hidden || send({ do: "list" }), 2000);
+</script>
+</html>

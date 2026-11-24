@@ -433,6 +433,20 @@ async fn web_request(app: &mut App, web: &mut Option<web::Server>, request: WebR
     }
 }
 
+/// Serves the web page, if it isn't already, for `tamale web` or the desktop app, and gives
+/// its address. Unlike `/web`, the terminal goes on showing the conversation, and no
+/// browser opens: whoever asked opens the page.
+#[cfg(unix)]
+async fn serve_web(web: &mut Option<web::Server>) -> Result<String, String> {
+    if web.is_none() {
+        let server = web::Server::start(false)
+            .await
+            .map_err(|e| format!("Couldn't serve the web UI: {e:#}"))?;
+        *web = Some(server);
+    }
+    Ok(web.as_ref().expect("served above").local_url.clone())
+}
+
 /// Connects `server` to the hub in the settings.
 fn connect_hub(app: &App, server: &mut web::Server) -> Result<(), String> {
     let hub = app.settings_hub();
@@ -606,6 +620,10 @@ async fn run(
                         }
                         ScreenEvent::Attached => surface = Surface::Terminal,
                         ScreenEvent::Changed => {}
+                        #[cfg(unix)]
+                        ScreenEvent::Web(reply) => {
+                            let _ = reply.send(serve_web(&mut web).await);
+                        }
                         ScreenEvent::Quit => app.should_quit = true,
                     }
                     dirty = true;

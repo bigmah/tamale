@@ -35,7 +35,19 @@ const LOG_LINES: usize = 20;
 /// `tamale ls`, `attach` and `kill`.
 pub async fn run_command(command: &Command) -> Result<()> {
     match command {
-        Command::List => {
+        Command::List { json: true } => {
+            println!("{}", serde_json::to_string(&list())?);
+            Ok(())
+        }
+        Command::Web(id) => {
+            let id = match id {
+                Some(id) => *id,
+                None => start_server(std::iter::empty::<&str>()).await?,
+            };
+            println!("{}", web_address(id).await?);
+            Ok(())
+        }
+        Command::List { json: false } => {
             let servers = list();
             if servers.is_empty() {
                 println!("No sessions are running in the background.");
@@ -167,6 +179,23 @@ pub async fn stop(id: u32) -> Result<()> {
         bail!("Session {id} hasn't exited yet.");
     }
     Ok(())
+}
+
+/// Asks session `id` to serve its web page, if it isn't already, for the page's address.
+pub async fn web_address(id: u32) -> Result<String> {
+    let path = socket_path(&super::dir()?, id);
+    let mut stream = UnixStream::connect(&path)
+        .await
+        .map_err(|_| anyhow::anyhow!("No running session {id}; `tamale ls` lists them."))?;
+    write_message(&mut stream, &ToServer::Web).await?;
+    match read_message::<ToClient>(&mut stream).await {
+        Ok(Some(ToClient::Web(url))) => Ok(url),
+        Ok(Some(ToClient::Refused(why))) => bail!(why),
+        _ => bail!(
+            "Session {id} was started by an older tamale, which can't serve its page this way. \
+             Type /web in it instead."
+        ),
+    }
 }
 
 /// Starts a server with this command line's arguments and attaches to it.
@@ -384,6 +413,7 @@ async fn session(
                 }
                 Some(ToClient::Bye(bye)) => return Ok(Ending::Bye(bye)),
                 Some(ToClient::Refused(message)) => return Ok(Ending::Refused(message)),
+                Some(ToClient::Web(_)) => {}
             },
         }
     }

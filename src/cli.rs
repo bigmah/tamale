@@ -12,7 +12,8 @@ mod tests;
 
 pub const HELP: &str = "usage: tamale [--backend <kind>] [--add-dir <path>] [--config <path>] [--model <id>] [--effort <level>] [--thinking <mode>] [-c | -r] [--foreground] [-p <prompt> [--yes]]
        tamale chef [off]
-       tamale ls | attach [<id>] | kill <id>
+       tamale ls [--json] | attach [<id>] | kill <id>
+       tamale web <id> | web new
        tamale update
 
 chef              Talk to the tamale chef, which looks after all your sessions, on every
@@ -21,6 +22,8 @@ chef off          Stop the chef, wherever it runs (it stays saved).
 ls                List the sessions running in the background.
 attach [<id>]     Go back to a session running in the background.
 kill <id>         End a session running in the background.
+web <id>          Serve a background session's web page and print its address.
+web new           Start a session in the background here and print its page's address.
 update            Install the latest release of tamale, if this one is older.
 
 -b, --backend      api (ANTHROPIC_API_KEY), claude-code (your Claude Code sign-in),
@@ -56,9 +59,14 @@ pub enum Resume {
 /// A subcommand, which works on sessions running in the background.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
-    List,
+    /// `ls`, as JSON with `--json` (for the desktop app).
+    List {
+        json: bool,
+    },
     Attach(Option<u32>),
     Kill(u32),
+    /// `web <id>`, or with `None` `web new`: the address of a session's web page.
+    Web(Option<u32>),
     /// Install the latest release (see `update`).
     Update,
 }
@@ -100,7 +108,8 @@ impl Cli {
         match args.peek().map(String::as_str) {
             Some("ls" | "list") => {
                 args.next();
-                cli.command = Some(Command::List);
+                let json = args.next_if(|a| a == "--json").is_some();
+                cli.command = Some(Command::List { json });
             }
             Some("attach") => {
                 args.next();
@@ -111,6 +120,14 @@ impl Cli {
                 args.next();
                 let id = args.next().context("kill needs a session id")?;
                 cli.command = Some(Command::Kill(session_id(&id)?));
+            }
+            Some("web") => {
+                args.next();
+                let target = args
+                    .next()
+                    .context("web needs a session id (`tamale ls` lists them), or new")?;
+                let id = (target != "new").then(|| session_id(&target)).transpose()?;
+                cli.command = Some(Command::Web(id));
             }
             Some("update" | "upgrade") => {
                 args.next();

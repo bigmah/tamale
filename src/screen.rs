@@ -23,6 +23,9 @@ pub enum ScreenEvent {
     Attached,
     /// Nothing to act on, except for redrawing.
     Changed,
+    /// Someone wants the web page's address (`tamale web`, the desktop app).
+    #[cfg(unix)]
+    Web(crate::background::WebReply),
     Quit,
 }
 
@@ -119,6 +122,7 @@ impl Screen {
                 HostEvent::Input(event) => ScreenEvent::Input(event),
                 HostEvent::Attached => ScreenEvent::Attached,
                 HostEvent::Changed => ScreenEvent::Changed,
+                HostEvent::Web(reply) => ScreenEvent::Web(reply),
                 HostEvent::Quit => ScreenEvent::Quit,
             }),
         }

@@ -491,6 +491,23 @@ pub async fn copy_text(text: &str) -> bool {
         .is_ok()
 }
 
+/// In the desktop app (`shell.rs`), which says so before the page starts.
+pub fn desktop() -> bool {
+    Reflect::get(&window(), &"tamaleDesktop".into()).is_ok_and(|v| v.is_truthy())
+}
+
+/// Takes the desktop app back to its list of sessions.
+pub fn desktop_home() {
+    let ipc = Reflect::get(&window(), &"ipc".into()).ok();
+    let post = ipc
+        .as_ref()
+        .and_then(|ipc| Reflect::get(ipc, &"postMessage".into()).ok())
+        .and_then(|f| f.dyn_into::<js_sys::Function>().ok());
+    if let (Some(ipc), Some(post)) = (ipc, post) {
+        let _ = post.call1(&ipc, &r#"{"do":"home"}"#.into());
+    }
+}
+
 pub fn open_tab(url: &str) -> bool {
     window()
         .open_with_url_and_target_and_features(url, "_blank", "noopener,noreferrer")

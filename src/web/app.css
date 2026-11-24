@@ -117,6 +117,8 @@ svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width:
 }
 .brand { display: flex; align-items: center; gap: 7px; font-weight: 650; font-size: 14px; color: var(--fg-bright); letter-spacing: -0.01em; }
 .brand-mark { font-size: 17px; line-height: 1; }
+button.brand { background: none; border: 0; padding: 4px 8px; margin: -4px -8px; border-radius: 8px; font-family: inherit; cursor: pointer; }
+button.brand:hover { background: var(--bg-2); }
 .wschip {
   display: flex;
   align-items: center;

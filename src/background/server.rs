@@ -23,6 +23,12 @@ const IDLE_EXPIRY: Duration = Duration::from_secs(24 * 60 * 60);
 /// How long the last messages get to reach a client when the server exits.
 const GOODBYE_TIMEOUT: Duration = Duration::from_secs(1);
 
+/// How long a [`ToServer::Web`] waits for the page to be served.
+const WEB_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Where the event loop sends the page's address, or why it couldn't serve it.
+pub type WebReply = tokio::sync::oneshot::Sender<Result<String, String>>;
+
 /// Sends this process's stderr, which panics and fatal errors go to, to the server's log.
 pub fn redirect_stderr() -> Result<()> {
     let dir = super::dir()?;
@@ -41,6 +47,8 @@ pub enum HostEvent {
     Attached,
     /// Something that needs a redraw, like a resize.
     Changed,
+    /// Someone asked for the web page's address ([`ToServer::Web`]).
+    Web(WebReply),
     Quit,
 }
 
@@ -55,6 +63,7 @@ enum Incoming {
     },
     Message(u64, ToServer),
     Disconnected(u64),
+    Web(WebReply),
     Quit,
 }
 
@@ -196,6 +205,7 @@ impl Host {
                 }
                 HostEvent::Changed
             }
+            Incoming::Web(reply) => HostEvent::Web(reply),
             Incoming::Quit => {
                 self.quit = true;
                 HostEvent::Quit
@@ -389,6 +399,21 @@ async fn connection(stream: UnixStream, id: u64, host: mpsc::UnboundedSender<Inc
             // Held open until the server exits, which is how the sender knows it has.
             let _ = read_message::<ToServer>(&mut reader).await;
             drop(writer);
+            return;
+        }
+        Ok(Some(ToServer::Web)) => {
+            let (reply, answer) = tokio::sync::oneshot::channel();
+            let answer = match host.send(Incoming::Web(reply)) {
+                Ok(()) => tokio::time::timeout(WEB_TIMEOUT, answer).await,
+                Err(_) => return,
+            };
+            let message = match answer {
+                Ok(Ok(Ok(url))) => ToClient::Web(url),
+                Ok(Ok(Err(why))) => ToClient::Refused(why),
+                Ok(Err(_)) => ToClient::Refused("The session ended.".into()),
+                Err(_) => ToClient::Refused("The session didn't answer in time.".into()),
+            };
+            let _ = write_message(&mut writer, &message).await;
             return;
         }
         _ => return,

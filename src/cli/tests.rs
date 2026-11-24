@@ -128,7 +128,23 @@ fn backend_flag_selects_where_inference_comes_from() {
 
 #[test]
 fn parses_background_subcommands() {
-    assert_eq!(parse(&["ls"]).unwrap().command, Some(Command::List));
+    assert_eq!(
+        parse(&["ls"]).unwrap().command,
+        Some(Command::List { json: false })
+    );
+    assert_eq!(
+        parse(&["ls", "--json"]).unwrap().command,
+        Some(Command::List { json: true })
+    );
+    assert_eq!(
+        parse(&["web", "7"]).unwrap().command,
+        Some(Command::Web(Some(7)))
+    );
+    assert_eq!(
+        parse(&["web", "new"]).unwrap().command,
+        Some(Command::Web(None))
+    );
+    assert!(parse(&["web"]).is_err());
     assert_eq!(
         parse(&["attach"]).unwrap().command,
         Some(Command::Attach(None))

@@ -381,14 +381,26 @@ fn Topbar() -> Element {
         kitchen.sessions.len().to_string()
     };
     let switch = move |v: View| move |_| app.set_view(v, true);
+    let desktop = host::desktop();
     const MODES: [&str; 3] = ["ask", "accept-edits", "auto"];
     rsx! {
         header { class: "topbar",
-            div { class: "brand",
-                span { class: "brand-mark", "🫔" }
-                span { class: "brand-name",
-                    "tamale"
-                    if chef { " " span { class: "brand-chef", "chef" } }
+            if desktop {
+                // In the desktop app, the way back to its list of sessions.
+                button { class: "brand", id: "to-sessions", title: "All sessions  ⌘O", onclick: move |_| host::desktop_home(),
+                    span { class: "brand-mark", "🫔" }
+                    span { class: "brand-name",
+                        "tamale"
+                        if chef { " " span { class: "brand-chef", "chef" } }
+                    }
+                }
+            } else {
+                div { class: "brand",
+                    span { class: "brand-mark", "🫔" }
+                    span { class: "brand-name",
+                        "tamale"
+                        if chef { " " span { class: "brand-chef", "chef" } }
+                    }
                 }
             }
             div { class: "wschip", id: "project", title: "{[status.cwd.clone()].into_iter().chain(status.dirs.iter().cloned()).collect::<Vec<_>>().join(\"\\n\")}",

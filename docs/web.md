@@ -197,16 +197,31 @@ it don't reload. The built app is checked in under `src/web/dist` (the module gz
 tests. A hub passes `/app_bg.wasm` through like pullspace's module; a hub from before the
 page was WebAssembly doesn't, and needs updating.
 
-**The desktop app** is a window that runs this same page, the same Dioxus app, in the
-system's webview (`web/src/shell.rs`, `--features desktop`): `cd web && cargo run --release
---no-default-features --features desktop -- 'http://127.0.0.1:…/?t=…'` with the address `/web`
-prints, or a hub's address (`https://tamale-hub.com`) for the session list and encrypted
-sessions. Started without one, it asks. Everything works as in a browser tab: the code view,
-artifacts, the hub. Links and tabs the page opens go to your browser, downloads to
-`~/Downloads`. `web/bundle-desktop.sh` makes `TamaleWeb.app`, which may use the microphone to
-talk to tamale with Gemini; run bare, macOS doesn't let it, and the voice card takes typing.
-`--check` opens the code view, prints what the window shows as JSON and quits, for checking
-it from a script.
+**The desktop app** (`web/src/shell.rs`, `--features desktop`) is a window onto your
+sessions, a wrapper around tamale: `cd web && cargo run --release --no-default-features
+--features desktop`, or `web/bundle-desktop.sh` for `TamaleWeb.app`. It opens on a list of
+the sessions running in the background on this machine (`tamale ls --json`), with what each
+is doing; clicking one asks it to serve its page (`tamale web <id>`, below) and opens that,
+the same Dioxus app a browser runs, in the system's webview. **New session** starts one in a
+folder you pick (`tamale web new` there). They're ordinary background sessions: closing the
+window leaves them running, and `tamale attach` picks them up in a terminal. In a session,
+🫔 in the top bar (or ⌘O) goes back to the list. **Another machine** opens an address
+instead, such as your hub's, and so does an address given as an argument.
+
+It runs the `tamale` on your search path, or in `~/.cargo/bin`, `~/.local/bin`,
+`/opt/homebrew/bin` or `/usr/local/bin`, or `TAMALE_BIN`; opened from the Finder, it runs it
+in your login shell's environment, so the session finds `claude` and your keys as it would in
+a terminal. A session from a tamale older than this can't be opened this way; `/web` in it
+still works. Links and tabs the page opens go to your browser, downloads to `~/Downloads`.
+`TamaleWeb.app` may use the microphone to talk to tamale with Gemini; run bare, macOS doesn't
+let it, and the voice card takes typing. `--check` prints what the window shows as JSON and
+quits, for checking it from a script; `--check-open=<id>` opens that session from the list
+first, then goes back to it.
+
+`tamale web <id>` asks a background session, over its socket, to serve its page if it isn't
+already and prints the address; `tamale web new` starts a session in the current directory
+first. Unlike `/web`, the session's terminal goes on showing the conversation, and no browser
+opens.
 
 **The code view** is pullspace's own WebAssembly build, from the `pullspace-embed` crate
 in [pullspace's repository](https://github.com/bigmah/pullspace) (`crates/embed`). The crate

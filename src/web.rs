@@ -385,7 +385,10 @@ fn asset(shared: &Shared, path: &str) -> Asset {
             headers: vec![
                 (header::CONTENT_TYPE, "application/wasm"),
                 (header::CONTENT_ENCODING, "gzip"),
-                (header::CACHE_CONTROL, "private, max-age=31536000, immutable"),
+                (
+                    header::CACHE_CONTROL,
+                    "private, max-age=31536000, immutable",
+                ),
                 (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
             ],
             body: String::new(),

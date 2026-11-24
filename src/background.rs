@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use tamale_browser_protocol::{self as protocol, Frame};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-pub use server::{Host, HostEvent, redirect_stderr};
+pub use server::{Host, HostEvent, WebReply, redirect_stderr};
 
 /// Bump when the messages below (or `Frame`, or crossterm's `Event`) change, so a client
 /// and a server from different builds refuse each other instead of misreading bytes.
@@ -56,6 +56,10 @@ pub enum ToServer {
         success: bool,
         status: String,
     },
+    /// Instead of `Hello`: asks the session to serve its web page, if it isn't already, and
+    /// answer with the page's address ([`ToClient::Web`]), for `tamale web` and the desktop
+    /// app. The session's terminal, if one is attached, goes on as it was.
+    Web,
 }
 
 /// From server to client. `Refused` stays the first variant; see [`ToServer`].
@@ -68,6 +72,8 @@ pub enum ToClient {
     /// Suspends the TUI to run an interactive sign-in, which needs the real terminal.
     Login(LoginCommand),
     Bye(Bye),
+    /// The answer to [`ToServer::Web`]: the page's address, with its token.
+    Web(String),
 }
 
 /// Why the server let a client go.

@@ -37,7 +37,9 @@ window onto it. So work carries on when the terminal goes away, even if you clos
   no terminal is showing. `tamale --continue` goes straight to the latest one, or if there isn't
   one, resumes the latest saved session.
 - `tamale ls` lists open sessions and what they're doing. `tamale attach [<id>]` goes back to one
-  and `tamale kill <id>` ends one (it stays saved, so `--continue` can resume it).
+  and `tamale kill <id>` ends one (it stays saved, so `--continue` can resume it). `tamale ls
+  --json` lists them for programs, and `tamale web <id>` prints the address of one's web page,
+  serving it first if need be ([the desktop app](web.md) uses these).
 - `/sessions`, or the **Sessions** tab in the footer, lists the other open sessions inside the TUI.
   `Enter` joins one, leaving the current session running (a session with nothing in it just closes),
   and `x` stops one: twice if it's mid-turn. It stays saved either way. With a hub key set, it also
