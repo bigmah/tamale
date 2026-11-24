@@ -80,6 +80,8 @@ impl Antigravity {
     fn command(&self) -> Command {
         let mut cmd = Command::new(&self.program);
         crate::secure::withhold_secrets(&mut cmd);
+        // So a video's scene can narrate itself with the key saved in the web UI too.
+        cmd.envs(crate::web::gemini_env());
         cmd
     }
 

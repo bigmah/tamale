@@ -25,12 +25,17 @@ instructions. To revise an earlier artifact, send the whole updated document.</w
 const ARTIFACT_GUIDE: &str = include_str!("artifact.md");
 
 /// The artifact design guide for the system prompt: the user's
-/// `~/.config/tamale/artifacts.md` if it has any text, else the built-in one.
+/// `~/.config/tamale/artifacts.md` if it has any text, else the built-in one. With a Gemini
+/// key, it ends with how to narrate a video (see `gemini::narration_guide`).
 pub fn artifact_guide() -> String {
-    crate::config::user_config_dir()
+    let guide = crate::config::user_config_dir()
         .and_then(|dir| std::fs::read_to_string(dir.join("artifacts.md")).ok())
         .filter(|text| !text.trim().is_empty())
-        .unwrap_or_else(|| ARTIFACT_GUIDE.to_string())
+        .unwrap_or_else(|| ARTIFACT_GUIDE.to_string());
+    match super::gemini::narration_guide() {
+        Some(narration) => format!("{}\n\n{}", guide.trim_end(), narration.trim_end()),
+        None => guide,
+    }
 }
 
 /// Where a session's artifacts are saved: `<sessions>/<id>/artifacts/`.

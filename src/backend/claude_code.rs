@@ -74,6 +74,8 @@ impl ClaudeCode {
         // the API backend is the way to use one.
         cmd.env_remove("ANTHROPIC_API_KEY");
         crate::secure::withhold_secrets(&mut cmd);
+        // So a video's scene can narrate itself with the key saved in the web UI too.
+        cmd.envs(crate::web::gemini_env());
         if let Some(dir) = &self.config_dir {
             cmd.env("CLAUDE_CONFIG_DIR", dir);
         }

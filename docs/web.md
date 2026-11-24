@@ -153,6 +153,14 @@ back to the terminal, and `Ctrl+C` quits. Any number of tabs can be open.
   string is `video`, holding the file's path. The page asks tamale for the file over its
   socket, so it plays through a hub too; it must be an `.mp4`, `.mov`, `.webm` or `.gif` of at
   most 32 MB in the project or the temporary directory.
+  - *Narration.* With a Gemini key (the same one the page's voice uses: one saved in the
+    page, else `GEMINI_API_KEY`), videos have sound. The guide gives the backend a small
+    Python helper to paste into the scene: each step is wrapped in
+    `with narrate(self, "…"):`, which has Gemini speak the line, adds it with Manim's
+    `add_sound` and stretches the step to fit, so the speech lines up with what's on
+    screen. The key stays out of the prompt: tamale hands it (and the chosen voice) to the
+    agent's commands as `TAMALE_GEMINI_KEY` and `TAMALE_GEMINI_VOICE`. Ask for a silent
+    video to skip it; if the speech fails, the video renders silently at the same pace.
 - Commands that open a picker in the terminal (`/effort`, `/resume`, `/backend` with no
   arguments, `/rewind`) explain their argument forms instead. `/login` still runs in the
   terminal.

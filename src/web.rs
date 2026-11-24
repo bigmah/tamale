@@ -38,6 +38,7 @@ pub enum HubState<'a> {
     Connecting(Option<String>),
 }
 pub use artifacts::{ARTIFACT_PROMPT, artifact_dir, artifact_guide};
+pub use gemini::child_env as gemini_env;
 pub use render::{artifact_marker, artifact_title, is_artifact};
 pub use wire::{Approval, Status};
 

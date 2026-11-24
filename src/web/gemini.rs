@@ -69,13 +69,7 @@ pub fn clean_key(pasted: &str) -> String {
 /// The `gemini` message: the key to use and where it's from (`saved`, `env` or null), and
 /// the chosen model and voice.
 pub fn reply(settings: &Settings, env_key: Option<String>) -> Value {
-    let saved = settings.key.clone().filter(|k| !k.trim().is_empty());
-    let env_key = env_key.filter(|k| !k.trim().is_empty());
-    let (key, from) = match (saved, env_key) {
-        (Some(key), _) => (Some(key), Some("saved")),
-        (None, Some(key)) => (Some(key), Some("env")),
-        (None, None) => (None, None),
-    };
+    let (key, from) = pick_key(settings, env_key);
     json!({
         "t": "gemini",
         "key": key,
@@ -84,6 +78,70 @@ pub fn reply(settings: &Settings, env_key: Option<String>) -> Value {
         "model": settings.model,
         "voice": settings.voice,
     })
+}
+
+/// The key to use, the saved one before the environment's, and where it's from.
+fn pick_key(
+    settings: &Settings,
+    env_key: Option<String>,
+) -> (Option<String>, Option<&'static str>) {
+    let saved = settings.key.clone().filter(|k| !k.trim().is_empty());
+    let env_key = env_key.filter(|k| !k.trim().is_empty());
+    match (saved, env_key) {
+        (Some(key), _) => (Some(key), Some("saved")),
+        (None, Some(key)) => (Some(key), Some("env")),
+        (None, None) => (None, None),
+    }
+}
+
+/// What a video's scene runs to narrate itself (see [`narration_guide`]).
+const NARRATION: &str = include_str!("narration.py");
+
+/// The key and the chosen voice outside the page: the key saved in `gemini.json`, else
+/// `GEMINI_API_KEY`.
+fn current() -> (Option<String>, String) {
+    let settings = settings_path().map(|path| load(&path)).unwrap_or_default();
+    let (key, _) = pick_key(&settings, env_key());
+    (key, settings.voice)
+}
+
+/// Environment for the commands the agent runs, so a video's scene can narrate itself with
+/// the key saved in the page too: `TAMALE_GEMINI_KEY` and `TAMALE_GEMINI_VOICE`. Names of
+/// tamale's own, so a backend's CLI doesn't take the key for its own.
+pub fn child_env() -> Vec<(&'static str, String)> {
+    let (key, voice) = current();
+    let mut env = Vec::new();
+    if let Some(key) = key {
+        env.push(("TAMALE_GEMINI_KEY", key));
+        if !voice.trim().is_empty() {
+            env.push(("TAMALE_GEMINI_VOICE", voice));
+        }
+    }
+    env
+}
+
+/// The artifact guide's part on narrating videos, when there's a Gemini key to speak with.
+pub fn narration_guide() -> Option<String> {
+    current().0.map(|_| narration_section())
+}
+
+fn narration_section() -> String {
+    format!(
+        "## Narrated videos\n\n\
+A Gemini key is set up, so every video you make has a spoken narration unless the user asks \
+for a silent one. Paste this code, unchanged, at the top of the scene file, before \
+`from manim import *`:\n\n```python\n{}```\n\n\
+- Write the narration with the story: one or two short sentences for each step, in plain \
+words that read well aloud (say \"x squared\", not \"x^2\"; no markdown, symbols or code).\n\
+- Wrap each step in `with narrate(self, \"The sentence.\") as line:`. The line starts with \
+the step, and the step is stretched to last as long as the line. `line.seconds` is its \
+length, to pace animations by (`run_time=line.seconds * 0.6`). Show what is said as it's \
+said, and let the narration set the video's length.\n\
+- The helper reads the key from the environment itself: never print, write or ask for it.\n\
+- If the render prints `NARRATION FAILED`, the video still renders, silently, at the same \
+pace: show it and say in one sentence that it has no sound, and why.\n",
+        NARRATION
+    )
 }
 
 /// Applies a `gemini_save` request's fields to `settings`: a `key` of "" forgets the saved one.
@@ -210,6 +268,21 @@ mod tests {
         update(&mut settings, &json!({ "key": "" }));
         assert_eq!(reply(&settings, Some("env-key".into()))["from"], "env");
         assert_eq!(settings.voice, "Puck");
+    }
+
+    #[test]
+    fn the_narration_guide_carries_the_whole_helper() {
+        let guide = narration_section();
+        assert!(
+            guide.contains(NARRATION),
+            "the helper is pasted in unchanged"
+        );
+        assert!(guide.contains("with narrate(self, "));
+        assert!(guide.contains("NARRATION FAILED") && NARRATION.contains("NARRATION FAILED"));
+        // It reads the key tamale gives the agent's commands.
+        assert!(
+            NARRATION.contains("TAMALE_GEMINI_KEY") && NARRATION.contains("TAMALE_GEMINI_VOICE")
+        );
     }
 
     #[test]
