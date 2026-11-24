@@ -37,7 +37,10 @@ fn other_context_window(model: &str) -> Option<u64> {
         131_072
     } else if m.starts_with("kimi-k2") {
         262_144
-    } else if m.starts_with("gemini-2.5") || m.starts_with("gemini-3") {
+    } else if m.starts_with("gemini-2.5")
+        || gemini_generation(&m).is_some_and(|g| g >= 3)
+        || m.starts_with("gemini-pro-orchestrator")
+    {
         1_048_576
     } else if m.starts_with("grok-4") {
         256_000
@@ -48,6 +51,13 @@ fn other_context_window(model: &str) -> Option<u64> {
     } else {
         return None;
     })
+}
+
+/// The major version of a Gemini model (`gemini-4-neon` is 4, `gemini-3.8-flash` is 3).
+pub fn gemini_generation(model: &str) -> Option<u32> {
+    let rest = model.strip_prefix("gemini-")?;
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
 }
 
 /// USD price per million input and output tokens, or `None` for unknown models.

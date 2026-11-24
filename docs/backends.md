@@ -129,8 +129,9 @@ turn, with `--input-format stream-json --output-format stream-json`. Install `ag
 - **Models**: `/model` lists `agy models`. tamale passes `model.name` when Antigravity knows
   it: a slug like `gemini-3.8-flash-high`, or one without the effort, `gemini-3.8-flash`.
   Claude models have to be one of Antigravity's slugs (`claude-opus-5-5-high`), so while
-  `model.name` is tamale's default Claude model, Antigravity picks its own default and the
-  footer says `antigravity default`. `--effort`/`/effort` is passed as `--effort`, lowered to
+  `model.name` is tamale's default Claude model, tamale runs `gemini-4-neon` (Antigravity
+  picks its own default if it doesn't offer Neon, and the footer says `antigravity default`).
+  `--effort`/`/effort` is passed as `--effort`, lowered to
   the closest level the model has, and left out for slugs that name their own effort.
   `/thinking` and `agent.max_tokens` don't apply.
 - **Context and usage**: Antigravity reports the usage of each request, so the context meter
@@ -149,7 +150,7 @@ These are built in, keyed by the environment variable shown:
 | --- | --- | --- | --- |
 | `deepseek` | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-chat` |
 | `kimi` | Kimi (Moonshot) | `MOONSHOT_API_KEY` | `kimi-k2.5` |
-| `gemini` | Gemini | `GEMINI_API_KEY` | `gemini-2.5-pro` |
+| `gemini` | Gemini | `GEMINI_API_KEY` | `gemini-4-neon` |
 | `openrouter` | OpenRouter | `OPENROUTER_API_KEY` | `moonshotai/kimi-k2` |
 | `xai` | xAI | `XAI_API_KEY` | `grok-4` |
 | `groq` | Groq | `GROQ_API_KEY` | `openai/gpt-oss-120b` |

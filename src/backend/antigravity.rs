@@ -40,6 +40,8 @@ const TOOL_PREFIX: &str = "mcp_tamale_";
 const STATUS_TIMEOUT: Duration = Duration::from_secs(30);
 /// Effort levels from lowest to highest, as Antigravity names them in model slugs.
 const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
+/// The model used while tamale's model setting is a Claude model Antigravity doesn't serve.
+const DEFAULT_MODEL: &str = "gemini-4-neon";
 
 /// Whether an Antigravity login can be used.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -244,21 +246,28 @@ fn parse_models(text: &str) -> Vec<(String, String)> {
 /// The model to ask Antigravity for: tamale's model setting when Antigravity knows it (a
 /// slug like `gemini-3.8-flash-high`, or one without the effort, `gemini-3.8-flash`).
 /// Claude models have to be one of its slugs (`claude-opus-5-5-high`): otherwise it's
-/// tamale's Anthropic model setting (the default), and Antigravity picks. Any other name
-/// is passed on, so a typo fails loudly instead of quietly running another model.
+/// tamale's Anthropic model setting (the default), and [`DEFAULT_MODEL`] is used when
+/// Antigravity offers it (else Antigravity picks). Any other name is passed on, so a typo
+/// fails loudly instead of quietly running another model.
 pub fn model<'a>(name: &'a str, catalog: Option<&[(String, String)]>) -> Option<&'a str> {
     let name = name.trim();
     if name.is_empty() {
         return None;
     }
     let claude = super::is_claude_model(name);
-    let known = catalog.is_some_and(|models| {
-        let base = format!("{name}-");
-        models
-            .iter()
-            .any(|(slug, _)| slug == name || (!claude && slug.starts_with(&base)))
-    });
-    (known || !claude).then_some(name)
+    let known = |name: &str, family: bool| {
+        catalog.is_some_and(|models| {
+            let base = format!("{name}-");
+            models
+                .iter()
+                .any(|(slug, _)| slug == name || (family && slug.starts_with(&base)))
+        })
+    };
+    if known(name, !claude) || !claude {
+        Some(name)
+    } else {
+        known(DEFAULT_MODEL, true).then_some(DEFAULT_MODEL)
+    }
 }
 
 /// The `--effort` to pass with `model`. A slug that names its effort can't take another;

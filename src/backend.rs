@@ -523,8 +523,8 @@ fn api_model(client: &anthropic::Client, name: &str) -> anthropic::completion::C
 fn compat_config(compat: &Compat, model: &str, mut config: TurnConfig) -> TurnConfig {
     if compat.is_gemini() {
         config.reasoning.dialect = agent::Dialect::Gemini;
-        // `thinkingLevel` is Gemini 3's; earlier models reject it.
-        if !compat.model(model).starts_with("gemini-3") {
+        // `thinkingLevel` is Gemini 3's and later; earlier models reject it.
+        if agent::models::gemini_generation(compat.model(model)).is_none_or(|g| g < 3) {
             config.reasoning.effort = None;
         }
     } else {

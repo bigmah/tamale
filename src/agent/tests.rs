@@ -780,6 +780,16 @@ fn context_windows_match_models_api() {
         assert_eq!(context_window(model), 1_000_000, "{model}");
     }
     for model in [
+        "gemini-4-neon",
+        "gemini-4-neon-high",
+        "gemini-4-carbon-low",
+        "gemini-3.8-flash",
+        "gemini-pro-orchestrator-neon",
+        "google/gemini-4-neon",
+    ] {
+        assert_eq!(context_window(model), 1_048_576, "{model}");
+    }
+    for model in [
         "claude-opus-4-5-20251101",
         "claude-sonnet-4-5-20250929",
         "claude-haiku-4-5-20251001",

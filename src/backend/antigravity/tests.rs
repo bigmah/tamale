@@ -239,11 +239,17 @@ fn parses_the_model_list() {
 fn models_antigravity_knows_are_passed_on() {
     let models = catalog();
     let catalog = Some(models.as_slice());
-    // tamale's Anthropic model setting (the default) lets Antigravity pick its own, even
-    // when Antigravity serves that model too.
+    // tamale's Anthropic model setting (the default) runs Gemini 4 Neon, even when
+    // Antigravity serves that Claude model too; without Neon (or a list), Antigravity picks.
     assert_eq!(model("claude-opus-5-5", None), None);
-    assert_eq!(model("claude-opus-5-5", catalog), None);
-    assert_eq!(model("claude-sonnet-4-5", catalog), None);
+    assert_eq!(model("claude-opus-5-5", catalog), Some("gemini-4-neon"));
+    assert_eq!(model("claude-sonnet-4-5", catalog), Some("gemini-4-neon"));
+    let without_neon: Vec<_> = models
+        .iter()
+        .filter(|(slug, _)| !slug.starts_with("gemini-4-neon"))
+        .cloned()
+        .collect();
+    assert_eq!(model("claude-opus-5-5", Some(&without_neon)), None);
     assert_eq!(model("", catalog), None);
     // One of its Claude slugs, as `/model` lists them.
     assert_eq!(

@@ -28,7 +28,8 @@ codex_path = "codex" # the Codex executable (searched on PATH)
 # model.name unless it's a Claude model, in which case Codex picks its default.
 codex_homes = [] # e.g. ["~/.codex-work"]
 # The Antigravity CLI executable (searched on PATH). The antigravity backend uses model.name
-# when Antigravity knows it (see `agy models`), and otherwise Antigravity's default model.
+# when Antigravity knows it (see `agy models`); while model.name is a Claude model it doesn't
+# serve, gemini-4-neon.
 antigravity_path = "agy"
 
 # OpenAI-compatible providers (Chat Completions: POST {base_url}/chat/completions). Select
@@ -60,7 +61,7 @@ model = "kimi-k2.5"
 label = "Gemini"
 base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
 api_key_env = "GEMINI_API_KEY"
-model = "gemini-2.5-pro"
+model = "gemini-4-neon"
 
 [backend.providers.openrouter]
 label = "OpenRouter"
