@@ -7,10 +7,7 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use crossterm::event::{
-    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
-    EventStream,
-};
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event, EventStream};
 use crossterm::execute;
 use futures::StreamExt;
 use ratatui::backend::Backend;
@@ -307,8 +304,7 @@ pub async fn attach(mut id: u32) -> Result<()> {
     let mut connection = connect(id).await?;
 
     install_panic_hook();
-    let mut terminal = ratatui::init();
-    execute!(std::io::stdout(), EnableBracketedPaste)?;
+    let mut terminal = resume_terminal(false)?;
     terminal.clear()?;
     // Going to another session keeps the terminal, so the screen just changes.
     let ending = loop {
@@ -328,12 +324,7 @@ pub async fn attach(mut id: u32) -> Result<()> {
             other => break other,
         }
     };
-    let _ = execute!(
-        std::io::stdout(),
-        DisableBracketedPaste,
-        DisableMouseCapture
-    );
-    ratatui::restore();
+    suspend_terminal();
 
     match ending? {
         Ending::Bye(Bye::Detached) => {

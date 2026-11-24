@@ -7,7 +7,9 @@ use crossterm::event::{
     EventStream,
 };
 use crossterm::execute;
+use crossterm::terminal::SetTitle;
 use futures::StreamExt;
+use std::io::Write;
 
 use crate::app::App;
 use crate::backend::Backend;
@@ -34,6 +36,24 @@ pub enum Screen {
     Hosted(Host),
 }
 
+/// What the terminal's window/tab title says while tamale has the screen.
+const TITLE: &str = "\u{1FAD4} tamale";
+
+/// Saves the terminal's current title on its title stack (XTWINOPS 22) and shows ours.
+/// Terminals without a title stack ignore the save and just take the new title.
+fn push_title() {
+    let mut out = std::io::stdout();
+    let _ = write!(out, "\x1b[22;0t");
+    let _ = execute!(out, SetTitle(TITLE));
+}
+
+/// Puts back whatever title `push_title` saved.
+fn pop_title() {
+    let mut out = std::io::stdout();
+    let _ = write!(out, "\x1b[23;0t");
+    let _ = out.flush();
+}
+
 /// Restores terminal input modes even if we panic.
 pub fn install_panic_hook() {
     let hook = std::panic::take_hook();
@@ -43,6 +63,7 @@ pub fn install_panic_hook() {
             DisableBracketedPaste,
             DisableMouseCapture
         );
+        pop_title();
         hook(info);
     }));
 }
@@ -53,11 +74,13 @@ pub fn suspend_terminal() {
         DisableBracketedPaste,
         DisableMouseCapture
     );
+    pop_title();
     ratatui::restore();
 }
 
 pub fn resume_terminal(mouse: bool) -> Result<ratatui::DefaultTerminal> {
     let terminal = ratatui::init();
+    push_title();
     execute!(std::io::stdout(), EnableBracketedPaste)?;
     if mouse {
         execute!(std::io::stdout(), EnableMouseCapture)?;
