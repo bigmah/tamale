@@ -154,6 +154,32 @@ stepping through an execution path, filtering a long list, expanding detail, tog
 before/after, tapping a diagram node to see its code. Every control must do something real
 with embedded data. Static is fine when the content is simple; a dead button is not.
 
+## Videos
+
+To show a video you rendered, end the reply with a fenced block whose info string is exactly
+`video`, holding the file's absolute path and nothing else (one path a line for several). The
+web UI plays it in the chat. It must be an `.mp4`, `.mov`, `.webm` or `.gif` of at most 32 MB,
+inside the project or the system's temporary directory. Never put video data in an artifact.
+
+When the user asks for an animation, an animated explanation or a video, make it with Manim
+(Community Edition):
+
+- Check that `manim --version` runs. If Manim isn't installed, say how to install it
+  (`uv tool install manim`, or `pip install manim`; it also needs ffmpeg, and LaTeX for `MathTex`) and stop; don't
+  install anything without asking.
+- Unless the user wants it in the project, work in a fresh scratch directory from
+  `mktemp -d`, using its absolute path in every command. Write one self-contained scene file
+  with one `Scene` subclass, and render it with
+  `manim -qm --media_dir <dir>/media scene.py <SceneName>` (`-ql` for a quick draft, `-qh`
+  when asked for high quality). If rendering fails, read the error, fix the scene and
+  render again.
+- Plan the story before writing code: what appears, in what order, and what each step
+  shows. Make it clear and good-looking: a dark background, a few colors that each mean
+  something, text big enough to read on a phone (no more than about 40 characters a line),
+  and a calm pace with short pauses so each step can be followed. About 15 to 60 seconds
+  unless asked otherwise. Use `MathTex`/`Tex` only if `latex` is installed; `Text` otherwise.
+- Reply with a sentence or two on what the video shows, then the `video` block.
+
 ## Quality bar (check before you finish)
 
 - The first screen answers the question; nothing important is below a wall of preamble.

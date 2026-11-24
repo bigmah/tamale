@@ -225,6 +225,7 @@ pub fn markdown_with(text: &str, mut artifact: Option<&mut dyn FnMut(&str) -> St
                 let url = closed.then(|| register(&body));
                 push_artifact(out, &body, url.as_deref());
             }
+            Some(_) if closed && is_video(&lang) => push_videos(out, &body),
             _ => push_code_block(out, &lang, &body),
         };
     for (event, range) in Parser::new_ext(text, options).into_offset_iter() {
@@ -501,6 +502,26 @@ fn push_artifact(out: &mut String, body: &str, url: Option<&str>) {
     }
 }
 
+/// The info string that marks a fenced block as videos for the page to play: one path a line.
+pub const VIDEO_INFO: &str = "video";
+
+pub fn is_video(lang: &str) -> bool {
+    lang.trim() == VIDEO_INFO
+}
+
+/// A player for each path in a ```` ```video ```` block, which the page fills in with the file
+/// it asks tamale for (see `gemini::video`).
+fn push_videos(out: &mut String, body: &str) {
+    for path in body.lines().map(str::trim).filter(|p| !p.is_empty()) {
+        let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+        out.push_str("<div class=\"video\" data-path=\"");
+        escape_into(out, path);
+        out.push_str("\" data-title=\"");
+        escape_into(out, name);
+        out.push_str("\"></div>");
+    }
+}
+
 fn push_code_block(out: &mut String, lang: &str, body: &str) {
     let syntax = syntax::for_language(lang);
     let label = lang.split([',', ' ', '{']).next().unwrap_or("").trim();
@@ -591,6 +612,26 @@ mod tests {
         assert!(markdown(doc).contains("codeblock"));
         let plain = markdown_with("```html\n<p>x</p>\n```", Some(&mut register));
         assert!(plain.contains("codeblock"), "{plain}");
+    }
+
+    #[test]
+    fn video_blocks_become_players_once_closed() {
+        let mut register = |_: &str| "/artifact/abc".to_string();
+        let html = markdown_with(
+            "Here it is:\n\n```video\n/tmp/x/media/videos/scene/720p30/Orbit \"1\".mp4\n```",
+            Some(&mut register),
+        );
+        assert!(
+            html.contains(
+                "<div class=\"video\" data-path=\"/tmp/x/media/videos/scene/720p30/Orbit &quot;1&quot;.mp4\" \
+                 data-title=\"Orbit &quot;1&quot;.mp4\"></div>"
+            ),
+            "{html}"
+        );
+        // Still streaming, or where the page doesn't embed things, it's code.
+        let streaming = markdown_with("```video\n/tmp/a.mp4", Some(&mut register));
+        assert!(!streaming.contains("class=\"video\""), "{streaming}");
+        assert!(!markdown("```video\n/tmp/a.mp4\n```").contains("class=\"video\""));
     }
 
     #[test]

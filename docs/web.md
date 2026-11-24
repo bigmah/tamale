@@ -118,6 +118,41 @@ back to the terminal, and `Ctrl+C` quits. Any number of tabs can be open.
   `/models` endpoint, so all of OpenRouter's for OpenRouter), with the one in use ticked.
   Type to filter by id or name, `↑`/`↓` and `Enter` (or tap) to switch; an id that isn't
   listed can still be typed and used. `/model <id>` switches directly.
+- **Talking to the session with Gemini.** As in the [iOS app](ios.md), Gemini can drive
+  the session for you by voice. The waveform button in the top bar (or `/voice`) opens a
+  card above the prompt and starts a conversation through Gemini's Live API: ask "is there
+  a compilation error?" and it sends tamale a prompt, says so, and tells you how it went
+  when the turn ends. It can read the conversation, check the status, look at the
+  uncommitted changes, interrupt, and answer tamale's questions. When tamale asks
+  permission, Gemini reads the request out and answers only after you say yes or no; it
+  never picks "always". You can also type to it, mute the microphone, or fold the card
+  (tap its header) to give the chat the room. The approval and question cards stay on
+  screen, so a tap still answers when that's quicker. The waveform on an artifact's bar
+  starts the same conversation about that artifact: Gemini gets the page's text (and its
+  HTML when that isn't long), and can still have tamale revise it.
+  - *The key.* The page uses `GEMINI_API_KEY` from tamale's environment, or a key pasted
+    into the card's settings (the gear), which tamale keeps in
+    `~/.config/tamale/gemini.json`, readable only by you, and which wins over the
+    environment's. Get one at [AI Studio](https://aistudio.google.com/apikey). The settings
+    also pick a model (by default the newest Gemini Live model your key can use) and a
+    voice. The key, your voice and what Gemini reads of the session go only to Google,
+    straight from the browser.
+  - *The microphone.* Browsers only give it to secure pages: through a hub (https) or at
+    this machine's own address (`127.0.0.1`), not at a network address (`/web lan`), where
+    you type to Gemini instead.
+- **Animated videos with Manim.** `/video <what>` ("/video how a hash map handles
+  collisions"), or just asking for an animation in your own words, has tamale write a
+  [Manim](https://www.manim.community/) scene, renders it in a scratch directory from
+  `mktemp -d` (not in your project), fixes it if rendering fails, and ends its reply with the
+  video, which plays in the chat (with a download button). The how-to is part of the artifact
+  guide, so every backend knows it. The film button beside the artifact button (or `/video`
+  alone) asks for a video of whatever you were just discussing; like that button, it hides
+  while you type. Manim must be installed on tamale's machine
+  (`uv tool install manim`, plus ffmpeg, and LaTeX for equations; [TinyTeX](https://yihui.org/tinytex/) needs no admin rights); if it isn't, tamale says so
+  rather than install it. Any reply can show a video this way: a fenced block whose info
+  string is `video`, holding the file's path. The page asks tamale for the file over its
+  socket, so it plays through a hub too; it must be an `.mp4`, `.mov`, `.webm` or `.gif` of at
+  most 32 MB in the project or the temporary directory.
 - Commands that open a picker in the terminal (`/effort`, `/resume`, `/backend` with no
   arguments, `/rewind`) explain their argument forms instead. `/login` still runs in the
   terminal.
@@ -125,7 +160,8 @@ back to the terminal, and `Ctrl+C` quits. Any number of tabs can be open.
 The address works the same way as `/browser`'s: the server listens only on 127.0.0.1
 with a random token, and checks the `Host` and `Origin` headers. The page also sends a
 strict Content Security Policy, and model output is never treated as HTML in the page
-itself. Artifacts are the exception: each one is served from its own unguessable
+itself; the only site besides tamale it may reach is Gemini's API
+(`generativelanguage.googleapis.com`), for the voice conversation. Artifacts are the exception: each one is served from its own unguessable
 `/artifact/<id>` URL with a `sandbox` CSP that leaves out `allow-same-origin`. Its scripts
 run in an opaque origin that can't read the page, the token or the socket, even when the
 artifact is opened in a tab of its own. Scripts and styles may load from https CDNs.
@@ -163,7 +199,9 @@ with a sample conversation and the code view on a made-up repository (or `TAMALE
 to try it in a browser; `TAMALE_FAKE_LAN=1` serves it at this machine's network address
 instead, which is how a phone sees it and where the browser withholds storage and the
 clipboard; with `TAMALE_HUB_URL` and `TAMALE_HUB_KEY` set it also connects to
-that hub and prints a link in. To try a pullspace you haven't pushed, add
+that hub and prints a link in. `TAMALE_FAKE_VIDEO=<path>` adds a reply that shows that video,
+`TAMALE_FAKE_ARTIFACT=1` one with an artifact, and prompts the page sends are printed as
+`SEND=…`. To try a pullspace you haven't pushed, add
 `--config 'patch."https://github.com/bigmah/pullspace".pullspace-embed.path="../pullspace/crates/embed"'`
 to the `cargo` command (it rewrites the crate's entry in `Cargo.lock`; `git checkout Cargo.lock`
 afterwards).

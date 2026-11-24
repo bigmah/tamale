@@ -478,7 +478,8 @@ async function openFrame(sid) {
     if (typeof url !== 'string') return url;
     const frame = el('iframe');
     frame.title = 'Session';
-    frame.allow = 'clipboard-read; clipboard-write';
+    // The microphone is for talking to the session through Gemini (see tamale's app.js).
+    frame.allow = 'clipboard-read; clipboard-write; microphone';
     // Out of sight until its page says it's drawn (see `tamaleShown`), rather than flash
     // white while it loads; a page that never says so (an older tamale, a session that's
     // gone quiet) shows a little after it loads.

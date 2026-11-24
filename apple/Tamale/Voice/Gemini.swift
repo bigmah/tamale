@@ -83,7 +83,9 @@ enum Gemini {
             names += (page.models ?? [])
                 .filter { $0.supportedGenerationMethods?.contains("bidiGenerateContent") == true }
                 .map { $0.name.hasPrefix("models/") ? String($0.name.dropFirst(7)) : $0.name }
-                .filter { name in !["transcribe", "translate", "robotics"].contains { name.contains($0) } }
+                // Gemini's own conversational models: the list also has world models (genie-…)
+                // and ones for transcribing, translating or robots, which can't hold a conversation.
+                .filter { name in name.hasPrefix("gemini") && !["transcribe", "translate", "robotics"].contains { name.contains($0) } }
             token = page.nextPageToken?.isEmpty == false ? page.nextPageToken : nil
         } while token != nil
         return names.sorted { a, b in

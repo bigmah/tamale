@@ -40,6 +40,13 @@ const ICON = {
   shrink: '<svg viewBox="0 0 16 16"><path d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5"/></svg>',
   chat: '<svg viewBox="0 0 16 16"><path d="M2.5 3.75c0-.69.56-1.25 1.25-1.25h8.5c.69 0 1.25.56 1.25 1.25v6c0 .69-.56 1.25-1.25 1.25H7l-3 2.5V11h-.25c-.69 0-1.25-.56-1.25-1.25Z"/></svg>',
   back: '<svg viewBox="0 0 16 16"><path d="M10 3.5 5.5 8l4.5 4.5"/></svg>',
+  wave: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5v3M5 4.5v7M7.75 2.5v11M10.5 5v6M13.25 6.75v2.5"/></svg>',
+  mic: '<svg viewBox="0 0 16 16"><rect x="5.75" y="1.75" width="4.5" height="8" rx="2.25"/><path d="M3.25 7.75a4.75 4.75 0 0 0 9.5 0M8 12.5v2"/></svg>',
+  micOff: '<svg viewBox="0 0 16 16"><path d="M10.25 6.5V4a2.25 2.25 0 0 0-4.4-.67M5.75 6.75v1a2.25 2.25 0 0 0 3.6 1.8M3.25 7.75a4.75 4.75 0 0 0 7.9 3.55M12.75 7.75c0 .5-.08 1-.22 1.45M8 12.5v2M2.5 2.5l11 11"/></svg>',
+  gear: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.25"/><path d="M8 1.75v1.5M8 12.75v1.5M14.25 8h-1.5M3.25 8h-1.5M12.42 3.58l-1.06 1.06M4.64 11.36l-1.06 1.06M12.42 12.42l-1.06-1.06M4.64 4.64 3.58 3.58"/></svg>',
+  hangup: '<svg viewBox="0 0 16 16"><path d="M1.75 9.25c3.5-3 9-3 12.5 0l-1.5 2-2.5-1v-1.75a7 7 0 0 0-4.5 0v1.75l-2.5 1Z"/></svg>',
+  play: '<svg viewBox="0 0 16 16"><path d="M5 3.25v9.5L12.75 8Z"/></svg>',
+  up: '<svg viewBox="0 0 16 16"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5"/></svg>',
 };
 
 // ---------------------------------------------------------------- touch screens
@@ -505,6 +512,29 @@ function send(message, quiet = false) {
   return false;
 }
 
+/** Replies waited for, by the request's `seq`. */
+const awaited = new Map();
+
+/** Sends a request and resolves with its reply; rejects if not connected or not answered in time. */
+function requestReply(t, body = {}, ms = 20000) {
+  const s = ++seq;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      awaited.delete(s);
+      reject(new Error("tamale didn't answer in time."));
+    }, ms);
+    awaited.set(s, (m) => {
+      clearTimeout(timer);
+      resolve(m);
+    });
+    if (!send({ t, seq: s, ...body }, true)) {
+      clearTimeout(timer);
+      awaited.delete(s);
+      reject(new Error("The session isn't connected right now."));
+    }
+  });
+}
+
 /** Sends a request whose reply is only used if no newer one of its kind was made. */
 function request(t, body = {}, kind = t) {
   const s = ++seq;
@@ -516,6 +546,12 @@ function request(t, body = {}, kind = t) {
 function onMessage(m) {
   // The welcome's first message: drawn by the time it's painted.
   shown();
+  // The reply to a request something is waiting on (see `requestReply`).
+  if (m.seq != null && awaited.has(m.seq)) {
+    const done = awaited.get(m.seq);
+    awaited.delete(m.seq);
+    return done(m);
+  }
   switch (m.t) {
     case 'pong':
       return;
@@ -747,6 +783,7 @@ function patchProse(node, html) {
     node.innerHTML = html;
     decorate(node);
     mountArtifacts(node);
+    mountVideos(node);
     return;
   }
   [...node.childNodes].forEach((c) => c.nodeType !== Node.ELEMENT_NODE && c.remove());
@@ -759,6 +796,7 @@ function patchProse(node, html) {
     else node.append(block);
     decorate(block);
     mountArtifacts(block);
+    mountVideos(block);
   });
   for (let i = blocks.length; i < old.length; i++) old[i].remove();
 }
@@ -898,6 +936,15 @@ function mountArtifacts(scope) {
       // On a phone the title is the biggest target there is: tap it for full screen.
       h('button', { class: 'artifact-title', text: box.dataset.title, title: box.dataset.title, onclick: toggleFull }),
       h('span', { class: 'spacer' }),
+      h('button', {
+        class: 'artifact-btn',
+        title: 'Talk about this artifact with Gemini',
+        html: ICON.wave,
+        onclick: () => {
+          closeFullArtifact();
+          startVoice({ artifact: { title: box.dataset.title, url: src } });
+        },
+      }),
       h('button', {
         class: 'artifact-btn',
         title: 'Revise this artifact',
@@ -1105,7 +1152,10 @@ function applyStatus(s) {
   updateSend();
   updateActivity();
   // The agent may have changed files while it ran.
-  if (wasRunning && !s.running) afterToolResult();
+  if (wasRunning && !s.running) {
+    afterToolResult();
+    voiceTurnEnded();
+  }
 }
 
 addEventListener('focus', () => {
@@ -1387,10 +1437,14 @@ function applyApproval(a) {
   if (!a) {
     node.replaceChildren();
     if (had && !document.hasFocus()) document.title = document.title.replace(/^⚠ /, '');
+    if (had) voiceAnswered('approval');
     return;
   }
   state.approvalAt = Date.now();
-  if (!had) showChat();
+  if (!had) {
+    showChat();
+    voiceApproval(a);
+  }
   const choose = (choice, reason) => send({ t: 'approve', choice, reason });
   const reasonRow = h(
     'div',
@@ -1468,8 +1522,10 @@ function applyQuestion(q) {
   if (!q) {
     node.replaceChildren();
     if (had && !document.hasFocus()) document.title = document.title.replace(/^⚠ /, '');
+    if (had) voiceAnswered('question');
     return;
   }
+  voiceQuestions(q);
   state.questionAt = Date.now();
   showChat();
   state.answers = q.questions.map(() => ({ chosen: [], other: '' }));
@@ -1663,11 +1719,20 @@ function updateSend() {
   button.title = empty && running ? 'Interrupt (esc)' : running ? 'Queue for the next step (⏎)' : 'Send (⏎)';
   // A prompt typed often enough to get a button, as in the iOS app; out of the way while typing.
   $('make-artifact').hidden = !empty;
+  $('make-video').hidden = !empty;
   $('composer').classList.toggle('empty', empty);
 }
 
 /** The iOS app's artifact button sends the same words. */
 const ARTIFACT_PROMPT = 'Can you generate an artifact for this?';
+
+/** What the video button and `/video` send: the backend knows how from the artifact guide. */
+const VIDEO_PROMPT = 'Can you make an animated video of this with Manim?';
+const videoAbout = (what) => `Make an animated video with Manim of: ${what}`;
+
+$('make-video').onclick = () => {
+  if (send({ t: 'send', text: VIDEO_PROMPT })) scrollToBottom(true);
+};
 
 $('make-artifact').onclick = () => {
   if (send({ t: 'send', text: ARTIFACT_PROMPT })) scrollToBottom(true);
@@ -1715,6 +1780,8 @@ const COMMANDS = [
   { name: '/resume', args: '<n|id>', desc: 'Continue a saved session' },
   { name: '/copy', args: '[all]', desc: 'Copy the latest reply to the clipboard' },
   { name: '/artifacts', desc: 'Browse artifacts from this and earlier sessions', local: true },
+  { name: '/video', args: '[what]', desc: 'Animate something with Manim and play it here; alone, what you were just discussing', local: true },
+  { name: '/voice', desc: 'Talk to tamale by voice through Gemini (needs a Gemini API key)', local: true },
   { name: '/clear', desc: 'Clear the conversation and start fresh' },
   { name: '/web off', desc: 'Stop serving this page' },
   { name: '/quit', desc: 'Close this session (it stays saved); in the chef, stop it', local: true },
@@ -1757,6 +1824,14 @@ function runLocal(text) {
       return true;
     case '/artifacts':
       openArtifacts();
+      return true;
+    case '/video':
+    case '/manim':
+      if (send({ t: 'send', text: arg ? videoAbout(arg) : VIDEO_PROMPT })) scrollToBottom(true);
+      return true;
+    case '/voice':
+    case '/gemini':
+      startVoice();
       return true;
     case '/model':
     case '/models':
@@ -2532,6 +2607,1098 @@ $('model-close').onclick = closeModels;
 $('models').addEventListener('mousedown', (ev) => {
   if (ev.target === $('models')) closeModels();
 });
+
+// ---------------------------------------------------------------- Gemini
+//
+// Talking to the session through Gemini's Live API, as the iOS app does (apple/Tamale/Voice):
+// the page streams the microphone to Gemini as 16 kHz PCM, plays its 24 kHz answers, and
+// shows what both sides said. Gemini drives the session through functions that act on this
+// page's socket, the way the composer and the cards do: send a prompt, read the conversation
+// and the changes, interrupt, and answer approvals and questions. Turns take minutes, so a prompt returns at once, and the page tells Gemini when the
+// turn ends or tamale asks something. On an artifact's bar, the same conversation starts
+// with the artifact's text in Gemini's instructions.
+//
+// The key and the chosen model and voice are kept by tamale (see src/web/gemini.rs): each
+// session's page is an origin of its own, so the browser couldn't keep them. Without a
+// microphone (a page on a LAN address isn't a secure context) it still works typed.
+
+const GEMINI_HOST = 'generativelanguage.googleapis.com';
+const GEMINI_VOICES = ['Puck', 'Charon', 'Kore', 'Fenrir', 'Aoede', 'Leda', 'Orus', 'Zephyr'];
+const GEMINI_KEY_URL = 'https://aistudio.google.com/apikey';
+
+/** The models each key can hold a live conversation with, the best guess for voice first. */
+const liveModelLists = new Map();
+function liveModels(key) {
+  if (!liveModelLists.has(key)) {
+    const load = fetchLiveModels(key);
+    load.catch(() => liveModelLists.delete(key));
+    liveModelLists.set(key, load);
+  }
+  return liveModelLists.get(key);
+}
+
+async function fetchLiveModels(key) {
+  const version = (name) => parseFloat(/\d+(\.\d+)?/.exec(name)?.[0] ?? '0');
+  // Within a version, the plain conversational model first: thinking ones answer slower.
+  const penalty = (name) => (name.includes('thinking') ? 2 : 0) + (/preview|exp/.test(name) ? 1 : 0);
+  const names = [];
+  let token = '';
+  do {
+    const url = `https://${GEMINI_HOST}/v1beta/models?pageSize=1000${token ? `&pageToken=${encodeURIComponent(token)}` : ''}`;
+    const response = await fetch(url, { headers: { 'x-goog-api-key': key } });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const why = body.error?.message || response.statusText;
+      throw new Error(response.status === 400 || response.status === 403 ? `Gemini refused the key: ${why}` : `Gemini answered ${response.status}: ${why}`);
+    }
+    for (const m of body.models ?? []) {
+      if (!m.supportedGenerationMethods?.includes('bidiGenerateContent')) continue;
+      const name = m.name.replace(/^models\//, '');
+      // Gemini's own conversational models: the list also has world models (genie-…) and
+      // ones for transcribing, translating or robots, which can't hold a conversation.
+      if (name.startsWith('gemini') && !['transcribe', 'translate', 'robotics'].some((w) => name.includes(w))) names.push(name);
+    }
+    token = body.nextPageToken || '';
+  } while (token);
+  return names.sort((a, b) => version(b) - version(a) || penalty(a) - penalty(b) || a.localeCompare(b));
+}
+
+/** 16-bit PCM at `to` Hz from float samples at `from`, averaging each output sample's span. */
+function downsample(input, from, to) {
+  const ratio = from / to;
+  const out = new Int16Array(Math.floor(input.length / ratio));
+  for (let i = 0; i < out.length; i++) {
+    const start = Math.floor(i * ratio);
+    const end = Math.max(start + 1, Math.min(input.length, Math.floor((i + 1) * ratio)));
+    let sum = 0;
+    for (let j = start; j < end; j++) sum += input[j];
+    const v = Math.max(-1, Math.min(1, sum / (end - start)));
+    out[i] = v < 0 ? v * 0x8000 : v * 0x7fff;
+  }
+  return out;
+}
+
+/** One spoken conversation with Gemini: the socket, the audio both ways and the transcript. */
+class GeminiLive {
+  constructor(onChange) {
+    this.onChange = onChange;
+    /** idle, connecting, listening, speaking or ended. */
+    this.phase = 'idle';
+    /** Why it ended, if not by the user. */
+    this.reason = '';
+    /** `{ who: 'you' | 'gemini' | 'action', text, closed }`. */
+    this.lines = [];
+    this.model = '';
+    /** The microphone's loudness, 0…1. */
+    this.level = 0;
+    /** Set when Google says the connection will close soon. */
+    this.notice = '';
+    /** Why there's no microphone, when there isn't one: it's typed, then. */
+    this.micOff = '';
+    this.muted = false;
+    /** Runs a function Gemini called, by name with its arguments, and returns its result. */
+    this.onToolCall = null;
+    this.socket = null;
+    this.ready = false;
+    /** Events waiting for Gemini to finish speaking. */
+    this.pending = [];
+    this.ctx = null;
+    this.stream = null;
+    this.proc = null;
+    this.sources = new Set();
+    this.playAt = 0;
+  }
+
+  get active() {
+    return ['connecting', 'listening', 'speaking'].includes(this.phase);
+  }
+
+  changed() {
+    this.onChange?.();
+  }
+
+  /** `ctx` was made in the click that started this: browsers only play sound after one. */
+  async start({ ctx, key, model, voice, instruction, tools = [] }) {
+    if (this.active) return;
+    Object.assign(this, { phase: 'connecting', reason: '', lines: [], notice: '', micOff: '', muted: false, pending: [], ready: false, ctx });
+    this.changed();
+    try {
+      await this.startMic();
+      // Chosen automatically, a model Google turns away at setup gives way to the next.
+      const models = model ? [model] : (await liveModels(key)).slice(0, 3);
+      if (!models.length) throw new Error("This key can't use any Gemini Live model.");
+      for (const [i, name] of models.entries()) {
+        if (this.phase !== 'connecting') return;
+        this.model = name;
+        this.changed();
+        try {
+          return await this.connect(key, voice, instruction, tools);
+        } catch (e) {
+          if (i === models.length - 1) throw e;
+        }
+      }
+    } catch (e) {
+      this.end(e.message || String(e));
+    }
+  }
+
+  stop() {
+    this.end('');
+  }
+
+  async startMic() {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      this.micOff = isSecureContext
+        ? "This browser doesn't give pages a microphone. Type instead."
+        : "Browsers only give the microphone to secure pages: open this one through the hub, or at this machine's own address (127.0.0.1). Type instead.";
+      return;
+    }
+    try {
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+    } catch (e) {
+      this.micOff = e.name === 'NotAllowedError'
+        ? "The microphone isn't allowed here; allow it in the browser's site settings, or type instead."
+        : `No microphone (${e.message}). Type instead.`;
+      return;
+    }
+    if (this.phase !== 'connecting') return this.stream.getTracks().forEach((t) => t.stop());
+    const source = this.ctx.createMediaStreamSource(this.stream);
+    // A script processor rather than a worklet: a worklet's module would be a file of its own,
+    // which a hub doesn't pass through. 4096 frames is under 100 ms.
+    const proc = this.ctx.createScriptProcessor(4096, 1, 1);
+    const silent = this.ctx.createGain();
+    silent.gain.value = 0;
+    source.connect(proc);
+    proc.connect(silent);
+    silent.connect(this.ctx.destination);
+    proc.onaudioprocess = (ev) => this.onMic(ev.inputBuffer.getChannelData(0));
+    this.proc = proc;
+  }
+
+  onMic(samples) {
+    let sum = 0;
+    for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+    this.level = this.muted ? 0 : Math.min(1, Math.sqrt(sum / samples.length) * 8);
+    if (!this.ready || this.muted) return;
+    const pcm = downsample(samples, this.ctx.sampleRate, 16000);
+    this.sendJSON({ realtimeInput: { audio: { mimeType: 'audio/pcm;rate=16000', data: toBase64(new Uint8Array(pcm.buffer)) } } });
+  }
+
+  setMuted(muted) {
+    this.muted = muted;
+    if (muted) this.sendJSON({ realtimeInput: { audioStreamEnd: true } });
+    this.changed();
+  }
+
+  /** Resolves once Gemini has taken the setup; rejects if it closes before that. */
+  connect(key, voice, instruction, tools) {
+    let settled = null;
+    const setUp = new Promise((resolve, reject) => (settled = { resolve, reject }));
+    this.setUp = settled;
+    const socket = new WebSocket(`wss://${GEMINI_HOST}/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${encodeURIComponent(key)}`);
+    socket.binaryType = 'arraybuffer';
+    this.socket = socket;
+    socket.onopen = () => {
+      const generationConfig = { responseModalities: ['AUDIO'] };
+      if (voice) generationConfig.speechConfig = { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } };
+      const setup = {
+        model: `models/${this.model}`,
+        generationConfig,
+        systemInstruction: { parts: [{ text: instruction }] },
+        inputAudioTranscription: {},
+        outputAudioTranscription: {},
+        // Past the Live API's usual 15 minutes of audio, the oldest turns are dropped.
+        contextWindowCompression: { slidingWindow: {} },
+      };
+      if (tools.length) setup.tools = [{ functionDeclarations: tools }];
+      this.sendJSON({ setup });
+    };
+    socket.onmessage = (ev) => {
+      if (socket !== this.socket) return;
+      try {
+        this.handle(JSON.parse(typeof ev.data === 'string' ? ev.data : new TextDecoder().decode(ev.data)));
+      } catch (e) {
+        console.error(e);
+      }
+    };
+    socket.onclose = (ev) => {
+      if (socket !== this.socket) return;
+      if (!this.ready) {
+        this.socket = null;
+        settled.reject(new Error(ev.reason
+          ? `Gemini refused ${this.model}: ${ev.reason}`
+          : "Couldn't reach Gemini. Check the key, the model and the network."));
+        return;
+      }
+      this.end(ev.reason ? `Gemini ended the conversation: ${ev.reason}` : 'Gemini ended the conversation.');
+    };
+    return setUp;
+  }
+
+  handle(m) {
+    if (m.setupComplete) {
+      this.ready = true;
+      this.setUp?.resolve();
+      this.phase = 'listening';
+      this.changed();
+      this.flush();
+    }
+    if (m.toolCall?.functionCalls) this.runTools(m.toolCall.functionCalls);
+    if (m.goAway) {
+      this.notice = `Gemini will end this conversation soon${m.goAway.timeLeft ? ` (${m.goAway.timeLeft})` : ''}.`;
+      this.changed();
+    }
+    const content = m.serverContent;
+    if (!content) return;
+    if (content.inputTranscription?.text) this.append('you', content.inputTranscription.text);
+    if (content.outputTranscription?.text) {
+      this.close('you');
+      this.append('gemini', content.outputTranscription.text);
+    }
+    if (content.interrupted) {
+      this.interruptPlayback();
+      this.close('gemini');
+    }
+    for (const part of content.modelTurn?.parts ?? []) {
+      const data = part.inlineData;
+      if (data?.data && data.mimeType?.startsWith('audio/')) {
+        this.play(data.data, Number(/rate=(\d+)/.exec(data.mimeType)?.[1]) || 24000);
+      }
+    }
+    if (content.turnComplete) {
+      this.close('you');
+      this.close('gemini');
+      if (!this.sources.size) this.flush();
+    }
+    this.changed();
+  }
+
+  async runTools(calls) {
+    const functionResponses = [];
+    for (const call of calls) {
+      let response;
+      try {
+        response = (await this.onToolCall?.(call.name, call.args ?? {})) ?? { error: 'No such function.' };
+      } catch (e) {
+        response = { error: e.message || String(e) };
+      }
+      functionResponses.push({ id: call.id, name: call.name, response });
+    }
+    this.sendJSON({ toolResponse: { functionResponses } });
+    this.changed();
+  }
+
+  /**
+   * Tells Gemini something happened that it should act on or tell the user about, once it
+   * has finished what it's saying. `shown` goes in the transcript.
+   */
+  inform(text, shown) {
+    if (!this.socket) return;
+    this.note(shown);
+    this.pending.push(text);
+    this.flush();
+  }
+
+  flush() {
+    if (this.phase !== 'listening' || !this.pending.length) return;
+    const text = this.pending.splice(0).join('\n\n');
+    this.sendJSON({ realtimeInput: { text: `[A message from the app, not the user]\n${text}` } });
+  }
+
+  /** Typed instead of spoken. */
+  sendText(text) {
+    text = text.trim();
+    if (!text || !this.ready) return false;
+    this.interruptPlayback();
+    this.append('you', text);
+    this.close('you');
+    this.sendJSON({ realtimeInput: { text } });
+    this.changed();
+    return true;
+  }
+
+  /** A line in the transcript for something the page did. */
+  note(text) {
+    this.lines.push({ who: 'action', text, closed: true });
+    this.changed();
+  }
+
+  append(who, text) {
+    if (!text) return;
+    const last = this.lines[this.lines.length - 1];
+    if (last && last.who === who && !last.closed) last.text += text;
+    else this.lines.push({ who, text: text.trimStart(), closed: false });
+  }
+
+  close(who) {
+    for (let i = this.lines.length - 1; i >= 0; i--) {
+      if (this.lines[i].who === who) {
+        this.lines[i].closed = true;
+        return;
+      }
+    }
+  }
+
+  play(b64, rate) {
+    if (!this.ctx) return;
+    const bytes = fromBase64(b64);
+    const frames = bytes.length >> 1;
+    if (!frames) return;
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const buffer = this.ctx.createBuffer(1, frames, rate);
+    const out = buffer.getChannelData(0);
+    for (let i = 0; i < frames; i++) out[i] = view.getInt16(i * 2, true) / 32768;
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(this.ctx.destination);
+    const at = Math.max(this.ctx.currentTime + 0.02, this.playAt);
+    source.start(at);
+    this.playAt = at + buffer.duration;
+    this.sources.add(source);
+    source.onended = () => {
+      this.sources.delete(source);
+      if (!this.sources.size && this.phase === 'speaking') {
+        this.phase = 'listening';
+        this.changed();
+        this.flush();
+      }
+    };
+    if (this.phase === 'listening') {
+      this.phase = 'speaking';
+      this.changed();
+    }
+  }
+
+  /** Whatever Gemini was saying stops now: the user spoke over it. */
+  interruptPlayback() {
+    for (const source of this.sources) {
+      source.onended = null;
+      try {
+        source.stop();
+      } catch {}
+    }
+    this.sources.clear();
+    this.playAt = 0;
+    if (this.phase === 'speaking') this.phase = 'listening';
+  }
+
+  sendJSON(object) {
+    if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(object));
+  }
+
+  end(reason) {
+    if (this.phase === 'ended') return;
+    const socket = this.socket;
+    this.socket = null;
+    this.ready = false;
+    this.setUp?.reject(new Error('Stopped.'));
+    this.setUp = null;
+    try {
+      socket?.close();
+    } catch {}
+    this.interruptPlayback();
+    this.stream?.getTracks().forEach((t) => t.stop());
+    this.stream = null;
+    if (this.proc) this.proc.onaudioprocess = null;
+    this.proc?.disconnect();
+    this.proc = null;
+    this.ctx?.close().catch(() => {});
+    this.ctx = null;
+    this.level = 0;
+    this.reason = reason;
+    this.phase = 'ended';
+    this.changed();
+  }
+}
+
+// ---- the session, as Gemini is told it and acts on it
+
+/** The voice card's state: the conversation, what it's about, and which view shows. */
+const voice = {
+  live: null,
+  /** `{ title, url }` when it started on an artifact. */
+  artifact: null,
+  settings: null,
+  /** 'talk' or 'settings'. */
+  view: 'talk',
+  /** The transcript folded away, to give the chat the room. */
+  folded: false,
+  /** What Gemini answered itself, so the page doesn't tell it the user did. */
+  answering: { approval: false, question: false },
+  note: '',
+};
+
+const VOICE_TOOLS = [
+  {
+    name: 'send_prompt',
+    description: 'Sends a message to tamale, the coding agent, as if the user typed it. Returns at once; tamale works on it and the app reports when the turn ends. If tamale is busy, the message is queued.',
+    parameters: { type: 'OBJECT', properties: { text: { type: 'STRING', description: 'The prompt, written as an instruction or question to the coding agent.' } }, required: ['text'] },
+  },
+  { name: 'get_status', description: "Whether tamale is working, for how long, its model, project and directory, queued prompts, and anything it's waiting on." },
+  {
+    name: 'read_conversation',
+    description: "The last entries of the session's conversation: the user's prompts, tamale's replies, tool calls with their output, and errors.",
+    parameters: { type: 'OBJECT', properties: { last: { type: 'INTEGER', description: 'How many entries, from the end. Default 8, at most 40.' } } },
+  },
+  { name: 'get_changes', description: "The uncommitted changes in tamale's working directory (git diff): files, lines added and removed, and the changed lines." },
+  { name: 'interrupt', description: 'Stops what tamale is doing now.' },
+  {
+    name: 'answer_permission',
+    description: "Answers a permission request tamale is waiting on, which the app will have told you about. Only with the user's explicit yes or no to that request. Not for asking tamale to do something: that's send_prompt.",
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        allow: { type: 'BOOLEAN', description: 'true if the user said yes.' },
+        reason: { type: 'STRING', description: 'When refusing, what the user said to do instead, if anything.' },
+      },
+      required: ['allow'],
+    },
+  },
+  {
+    name: 'answer_questions',
+    description: "Answers tamale's waiting questions, one answer per question in order.",
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        answers: {
+          type: 'ARRAY',
+          items: {
+            type: 'OBJECT',
+            properties: {
+              chosen: { type: 'ARRAY', items: { type: 'STRING' }, description: 'Labels of the options the user picked.' },
+              other: { type: 'STRING', description: 'Anything the user said instead of, or as well as, an option.' },
+            },
+          },
+        },
+      },
+      required: ['answers'],
+    },
+  },
+];
+
+const cut = (s, n) => (s.length > n ? `${s.slice(0, n)} …(cut)` : s);
+
+/** The text of a reply as Gemini reads it: artifacts and videos as one line each. */
+function replyText(e) {
+  let md = e.md;
+  if (!md) md = h('template', { html: e.html || '' }).content.textContent;
+  return md
+    .replace(/<!-- artifact (\d+) -->/g, (_, n) => `[artifact: ${e.artifacts?.[n]?.title || 'page'}]`)
+    .replace(/```video\n([\s\S]*?)```/g, (_, paths) => `[video: ${paths.trim().split(/[\\/]/).pop()}]`);
+}
+
+function entryText(e, room) {
+  switch (e.kind) {
+    case 'user':
+      return `User: ${cut(e.text || '', room)}`;
+    case 'assistant':
+    case 'note':
+      return `${e.kind === 'note' ? 'Note' : 'tamale'}: ${cut(replyText(e), room)}`;
+    case 'tool': {
+      const what = `${e.name || 'tool'} ${e.summary || e.description || ''}`;
+      if (e.output == null) return `Tool ${what}: running`;
+      return `Tool ${what}${e.error ? ' FAILED' : ''}: ${cut(e.output, Math.min(room, e.error ? 1500 : 500))}`;
+    }
+    case 'info':
+      return `Info: ${cut(e.text || '', room)}`;
+    case 'error':
+      return `Error: ${cut(e.text || '', room)}`;
+    default:
+      return '';
+  }
+}
+
+function conversationText(last) {
+  const entries = state.entries.slice(-last);
+  return entries.length ? entries.map((e) => entryText(e, 1500)).filter(Boolean).join('\n') : '(nothing yet)';
+}
+
+function connectionText() {
+  if (locked) return 'unreachable';
+  return isReady() ? 'connected' : 'reconnecting';
+}
+
+function statusLine() {
+  const s = state.status;
+  if (!s) return `Session ${connectionText()}; no status yet.`;
+  let line = s.running ? 'tamale is working' : 'tamale is idle';
+  const now = Math.floor(Date.now() / 1000);
+  if (s.running && s.since) {
+    line += ` (for ${fmtElapsed(now - s.since)})`;
+    if (s.step) line += `; now: ${s.step}, for ${fmtElapsed(now - (s.step_since || s.since))}${s.steps ? `, ${s.steps} steps so far` : ''}`;
+  }
+  return `${line}. Project ${s.project}, model ${s.model}. Session ${connectionText()}.`;
+}
+
+function describeApproval(a) {
+  let s = `${a.name}: ${a.summary}`;
+  if (a.description && a.description !== a.summary) s += `\n${a.description.slice(0, 1500)}`;
+  return s;
+}
+
+function describeQuestions(q) {
+  return q.questions
+    .map((item, i) => {
+      const options = item.options.map((o) => (o.description ? `${o.label} (${o.description})` : o.label));
+      return `${i + 1}. ${item.question}${item.multi_select ? ' (pick any)' : ''} Options: ${options.join('; ')}`;
+    })
+    .join('\n');
+}
+
+function voiceStatus() {
+  const s = state.status;
+  const out = { connection: connectionText(), summary: statusLine() };
+  if (s) {
+    Object.assign(out, {
+      busy: s.running,
+      compacting: s.compacting,
+      project: s.project,
+      directory: s.cwd,
+      model: s.model,
+      mode: s.mode,
+      queued_prompts: s.queued,
+    });
+    if (s.goal) out.goal = s.goal;
+    if (s.goal_state) out.goal_state = s.goal_state;
+    if (s.window) out.context_used_percent = Math.round((s.context * 100) / s.window);
+  }
+  if (state.approval) out.waiting_for_permission = describeApproval(state.approval);
+  if (state.question) out.waiting_for_answers = describeQuestions(state.question);
+  const running = state.entries.findLast((e) => e.kind === 'tool' && e.output == null);
+  if (running) out.running_now = `${running.name}: ${running.summary || running.description || ''}`;
+  return out;
+}
+
+/** What happened since the last prompt: replies, errors, and how the tools went. */
+function lastTurnText() {
+  const entries = state.entries;
+  let start = entries.findLastIndex((e) => e.kind === 'user');
+  if (start < 0) start = Math.max(0, entries.length - 6);
+  const turn = entries.slice(start);
+  const tools = turn.filter((e) => e.kind === 'tool');
+  const failed = tools.filter((e) => e.error).length;
+  let out = `It ran ${tools.length} tool call${tools.length === 1 ? '' : 's'}${failed ? `, ${failed} failed` : ''}.\n`;
+  for (const e of turn) if (e.kind !== 'tool' || e.error) out += `${entryText(e, 2500)}\n`;
+  return out.slice(-6000);
+}
+
+async function changesText() {
+  const diff = await requestReply('diff', {}, 20000);
+  if (diff.error) return { error: diff.error };
+  const files = diff.files ?? [];
+  const added = files.reduce((n, f) => n + f.added, 0);
+  const removed = files.reduce((n, f) => n + f.removed, 0);
+  let out = `${diff.label}: ${files.length} file${files.length === 1 ? '' : 's'}, +${added} −${removed}\n`;
+  for (const f of files) {
+    out += `\n${f.status} ${f.path} +${f.added} −${f.removed}\n`;
+    if (f.binary || f.omitted) continue;
+    for (const line of (f.hunks ?? []).flat()) if (line.k === '+' || line.k === '-') out += `${line.k}${line.t}\n`;
+    if (out.length > 12000) {
+      out += '…(cut)\n';
+      break;
+    }
+  }
+  return { changes: out.slice(0, 12000) };
+}
+
+/** Runs one of `VOICE_TOOLS` for Gemini. */
+async function voiceTool(name, args) {
+  const live = voice.live;
+  const busy = !!state.status?.running;
+  const notConnected = { error: "The session isn't connected right now." };
+  switch (name) {
+    case 'send_prompt': {
+      const text = String(args.text ?? '').trim();
+      if (!text) return { error: 'Empty prompt.' };
+      if (!send({ t: 'send', text }, true)) return notConnected;
+      live?.note(`Sent to tamale: ${text}`);
+      return {
+        sent: true,
+        queued: busy,
+        next: busy
+          ? 'tamale is busy; this runs after the current turn. Tell the user so in a few words.'
+          : "tamale is working on it. Tell the user in a few words what you asked; you'll be told when it's done.",
+      };
+    }
+    case 'get_status':
+      return voiceStatus();
+    case 'read_conversation': {
+      const last = Math.min(Math.max(Number(args.last) || 8, 1), 40);
+      live?.note('Read the conversation');
+      return { conversation: conversationText(last) };
+    }
+    case 'get_changes':
+      live?.note('Looked at the changes');
+      try {
+        return await changesText();
+      } catch (e) {
+        return { error: e.message };
+      }
+    case 'interrupt':
+      if (!busy) return { error: "tamale isn't doing anything." };
+      if (!send({ t: 'interrupt' }, true)) return notConnected;
+      live?.note('Interrupted tamale');
+      return { interrupted: true, next: 'Confirm it to the user in a few words.' };
+    case 'answer_permission': {
+      const approval = state.approval;
+      if (!approval) return { error: "tamale isn't waiting for permission. To ask tamale to do something, use send_prompt." };
+      const allow = args.allow === true || args.allow === 'true';
+      const reason = allow ? undefined : String(args.reason ?? '').trim() || undefined;
+      // Never "always": a standing rule is the user's to tap, not a voice model's to infer.
+      if (!send({ t: 'approve', choice: allow ? 'yes' : 'no', reason }, true)) return notConnected;
+      voice.answering.approval = true;
+      live?.note(`${allow ? 'Allowed' : 'Refused'}: ${approval.summary}`);
+      return { answered: allow ? 'yes' : 'no', next: 'Confirm it to the user in a few words.' };
+    }
+    case 'answer_questions': {
+      const q = state.question;
+      if (!q) return { error: "tamale isn't asking anything." };
+      const answers = (Array.isArray(args.answers) ? args.answers : []).map((a) => ({
+        chosen: Array.isArray(a?.chosen) ? a.chosen.map(String) : [],
+        other: String(a?.other ?? '').trim() || undefined,
+      }));
+      if (answers.length !== q.questions.length) return { error: `tamale asked ${q.questions.length} questions; give one answer for each.` };
+      if (answers.some((a) => !a.chosen.length && !a.other)) return { error: 'Every question needs an answer.' };
+      if (!send({ t: 'answer', answers }, true)) return notConnected;
+      voice.answering.question = true;
+      live?.note("Answered tamale's questions");
+      return { answered: true };
+    }
+    default:
+      return { error: `No function called ${name}.` };
+  }
+}
+
+function voiceInstruction(page) {
+  const s = state.status;
+  const place = s ? `${s.project} (${s.cwd})` : 'a project';
+  let out = `You're a voice assistant for the user's coding agent, tamale, which is running on their computer in ${place}. The user has tamale's web page open and is talking to you; you control that tamale session through your functions, as if typing into it.
+
+How to work:
+- For anything about the code or the machine (does it build, run the tests, what's in a file, fix something), ask tamale with send_prompt. Write the prompt as a clear instruction, as the user would type it. Say briefly what you asked, then stop talking: tamale takes a while, and the app will tell you when it's done.
+- To answer what tamale did or said, use read_conversation, get_status or get_changes first rather than guessing.
+- When the app tells you a turn finished, tell the user the gist in a sentence or two. Mention errors. Don't read code, paths or long output aloud unless asked.
+- When tamale asks permission, say what it wants to do in plain words and ask yes or no. Call answer_permission only after the user clearly answers that request. Never approve on your own.
+- When tamale asks questions, read them and their options, and answer with answer_questions only with what the user chose.
+- If the user wants tamale to stop, call interrupt.
+Keep it spoken: short sentences, no markdown, no lists of symbols.
+
+Right now: ${statusLine()}`;
+  if (state.approval) out += `\ntamale is waiting for permission: ${describeApproval(state.approval)}`;
+  if (state.question) out += `\ntamale is waiting for answers to: ${describeQuestions(state.question)}`;
+  out += `\n\nThe end of the conversation so far:\n${conversationText(6)}`;
+  if (page) {
+    out += `\n\nThe user started this conversation from a page tamale made, titled "${page.title}", to talk about it. Answer questions about it from the page, the way you would in a spoken conversation; if the page doesn't say, tell them, then answer from what you know if you can. To change the page, ask tamale with send_prompt to revise the "${page.title}" artifact.\n\n=== Page text ===\n${page.text.slice(0, 150000)}`;
+    if (page.html.length <= 120000) out += `\n\n=== Page HTML ===\n${page.html}`;
+  }
+  return out;
+}
+
+/** An artifact's document and its text, as Gemini reads them. */
+async function artifactForVoice(artifact) {
+  const html = await artifactHtml(artifact.url);
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  for (const node of doc.querySelectorAll('script, style, noscript, template')) node.remove();
+  const text = (doc.body?.textContent ?? '').replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim();
+  // Without tamale's own scripts, which it adds to every artifact (see artifacts.rs).
+  const document = html.replace(/\n<script>[\s\S]*$/, '');
+  return { title: artifact.title, text, html: document };
+}
+
+// Events the page tells Gemini about.
+
+function voiceTurnEnded() {
+  if (!voice.live?.active) return;
+  // The reply's last entries can come just after the status that says it's done.
+  setTimeout(() => {
+    if (!voice.live?.active || state.status?.running) return;
+    const last = state.entries.findLast((e) => e.kind === 'assistant');
+    const video = /```video\n/.test(last?.md ?? '') ? '\nIts reply has a video, which is playing in the chat now.' : '';
+    voice.live.inform(`tamale finished its turn. Tell the user how it went.${video}\n${lastTurnText()}`, 'tamale finished');
+  }, 600);
+}
+
+function voiceApproval(a) {
+  voice.answering.approval = false;
+  if (!voice.live?.active) return;
+  voice.live.inform(`tamale is waiting for permission: ${describeApproval(a)}. Ask the user whether to allow it.`, `tamale asks permission: ${a.summary}`);
+}
+
+function voiceQuestions(q) {
+  voice.answering.question = false;
+  if (!voice.live?.active) return;
+  voice.live.inform(`tamale is asking the user: ${describeQuestions(q)}. Read the questions and options to them.`, 'tamale has questions');
+}
+
+/** A card was answered: by the user on screen, unless Gemini just did. */
+function voiceAnswered(kind) {
+  const byGemini = voice.answering[kind];
+  voice.answering[kind] = false;
+  if (byGemini || !voice.live?.active) return;
+  voice.live.inform(
+    kind === 'approval'
+      ? "The permission request is settled: the user answered it on screen (or tamale stopped waiting). Don't ask about it any more."
+      : "tamale's questions are settled: the user answered them on screen (or tamale stopped waiting). Don't ask about them any more.",
+    kind === 'approval' ? 'Permission answered on screen' : 'Questions answered on screen',
+  );
+}
+
+// ---- the card
+
+async function loadGeminiSettings() {
+  const m = await requestReply('gemini');
+  if (m.error) throw new Error(m.error);
+  voice.settings = m;
+  return m;
+}
+
+/**
+ * Opens the card and starts a conversation, about `artifact` if given. Called from a click:
+ * the audio has to start in it.
+ */
+async function startVoice({ artifact = null, ctx = audioContext() } = {}) {
+  voice.live?.stop();
+  voice.artifact = artifact;
+  voice.view = 'talk';
+  voice.folded = false;
+  voice.note = '';
+  const live = new GeminiLive(renderVoice);
+  live.onToolCall = voiceTool;
+  voice.live = live;
+  showVoice();
+  if (!ctx) return live.end("This browser can't play audio from a page.");
+  try {
+    const settings = await loadGeminiSettings();
+    if (!settings.key) {
+      ctx.close();
+      voice.view = 'settings';
+      voice.note = 'Add a Gemini API key to talk to tamale.';
+      return renderVoice();
+    }
+    const page = artifact ? await artifactForVoice(artifact) : null;
+    if (voice.live !== live) return ctx.close();
+    await live.start({
+      ctx,
+      key: settings.key,
+      model: settings.model,
+      voice: settings.voice,
+      instruction: voiceInstruction(page),
+      tools: VOICE_TOOLS,
+    });
+  } catch (e) {
+    ctx.close().catch(() => {});
+    live.end(e.message || String(e));
+  }
+}
+
+/** An audio context, made in a click: only then may a page play sound in every browser. */
+function audioContext() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  const ctx = new AC();
+  ctx.resume?.().catch(() => {});
+  return ctx;
+}
+
+function showVoice() {
+  $('voice').hidden = false;
+  showChat();
+  renderVoice();
+}
+
+function closeVoice() {
+  voice.live?.stop();
+  voice.live = null;
+  const node = $('voice');
+  node.hidden = true;
+  node.replaceChildren();
+  node._talk = null;
+  node._settings = false;
+  $('toggle-voice').classList.remove('on');
+}
+
+$('toggle-voice').onclick = () => (voice.live?.active ? closeVoice() : startVoice());
+
+const PHASE_TEXT = {
+  idle: 'Starting…',
+  connecting: 'Connecting…',
+  listening: 'Listening',
+  speaking: 'Gemini is speaking. Talk to interrupt.',
+  ended: 'Ended',
+};
+
+/** Builds the card once, and after that only changes what changed (keeping the field's focus). */
+function renderVoice() {
+  const node = $('voice');
+  if (node.hidden) return;
+  const live = voice.live;
+  $('toggle-voice').classList.toggle('on', !!live?.active);
+  // The form is built once: the conversation going on behind it mustn't clear what's typed.
+  if (voice.view === 'settings') return node._settings || renderVoiceSettings(node);
+  node._settings = false;
+  if (!node._talk) node.replaceChildren(buildVoiceTalk(node));
+  const parts = node._talk;
+  node.classList.toggle('folded', voice.folded);
+  node.classList.toggle('speaking', live?.phase === 'speaking');
+  node.classList.toggle('active', !!live?.active);
+  parts.title.textContent = voice.artifact ? `Gemini · ${voice.artifact.title}` : 'Gemini';
+  let status = PHASE_TEXT[live?.phase ?? 'idle'];
+  if (live?.phase === 'listening') status = live.micOff ? 'Type to Gemini' : live.muted ? 'Muted' : 'Listening';
+  parts.status.textContent = status;
+  parts.model.textContent = live?.model ?? '';
+  parts.mute.hidden = !live?.active || !!live?.micOff;
+  parts.mute.innerHTML = live?.muted ? ICON.micOff : ICON.mic;
+  parts.mute.classList.toggle('on', !!live?.muted);
+  parts.mute.title = live?.muted ? 'Unmute' : 'Mute';
+  parts.end.innerHTML = live?.active ? ICON.hangup : ICON.reload;
+  parts.end.title = live?.active ? 'End the conversation' : 'Start again';
+  parts.end.classList.toggle('danger', !!live?.active);
+  parts.field.disabled = !live?.ready;
+  parts.field.placeholder = live?.ready ? (live.micOff ? 'Type to Gemini…' : 'Or type to Gemini…') : '';
+  // The transcript: lines are only added or grow, so only the last few need touching.
+  const lines = live?.lines ?? [];
+  const list = parts.lines;
+  const stick = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+  while (list.children.length > lines.length) list.lastChild.remove();
+  lines.forEach((line, i) => {
+    let row = list.children[i];
+    if (!row) {
+      row = line.who === 'action'
+        ? h('div', { class: 'vline action' })
+        : h('div', { class: `vline ${line.who}` }, h('span', { class: 'vwho', text: line.who === 'you' ? 'You' : 'Gemini' }), h('span', { class: 'vtext' }));
+      list.append(row);
+    }
+    const target = line.who === 'action' ? row : row.lastChild;
+    if (target.textContent !== line.text) target.textContent = line.text;
+  });
+  const messages = [];
+  if (!lines.length && live?.phase === 'listening') {
+    messages.push(['hint', voice.artifact ? `Ask anything about “${voice.artifact.title}”.` : 'Ask what tamale is doing, or tell it what to do.']);
+  }
+  if (live?.micOff) messages.push(['warn', live.micOff]);
+  if (live?.notice) messages.push(['warn', live.notice]);
+  if (live?.phase === 'ended' && live.reason) messages.push(['error', live.reason]);
+  parts.notes.replaceChildren(...messages.map(([kind, text]) => h('div', { class: `vnote ${kind}`, text })));
+  if (stick) list.scrollTop = list.scrollHeight;
+}
+
+function buildVoiceTalk(node) {
+  const btn = (cls, title, icon, onclick) => h('button', { class: `vbtn ${cls}`, title, 'aria-label': title, html: icon, onclick });
+  const field = h('input', {
+    class: 'vfield',
+    enterkeyhint: 'send',
+    autocomplete: 'off',
+    onkeydown: (ev) => {
+      if (ev.key === 'Enter' && !ev.isComposing) {
+        ev.preventDefault();
+        sendTyped();
+      }
+      ev.stopPropagation();
+    },
+  });
+  const sendTyped = () => {
+    if (voice.live?.sendText(field.value)) field.value = '';
+  };
+  const parts = {
+    orb: h('span', { class: 'vorb' }),
+    title: h('span', { class: 'vtitle' }),
+    status: h('span', { class: 'vstatus' }),
+    model: h('span', { class: 'vmodel' }),
+    lines: h('div', { class: 'vlines', 'aria-live': 'polite' }),
+    notes: h('div', { class: 'vnotes' }),
+    field,
+    mute: btn('', 'Mute', ICON.mic, () => voice.live?.setMuted(!voice.live.muted)),
+    end: btn('', 'End the conversation', ICON.hangup, () => (voice.live?.active ? voice.live.stop() : startVoice({ artifact: voice.artifact }))),
+  };
+  node._talk = parts;
+  // The orb follows your voice, and glows while Gemini speaks.
+  const pulse = () => {
+    if (node._talk !== parts || node.hidden) return;
+    const live = voice.live;
+    const level = live?.phase === 'speaking' ? 0.5 : live?.level ?? 0;
+    parts.orb.style.setProperty('--level', level.toFixed(2));
+    requestAnimationFrame(pulse);
+  };
+  requestAnimationFrame(pulse);
+  return h('div', { class: 'vcard' },
+    h('div', { class: 'vhead', onclick: (ev) => {
+      if (ev.target.closest('button')) return;
+      voice.folded = !voice.folded;
+      renderVoice();
+    } },
+      parts.orb,
+      h('span', { class: 'vnames' }, parts.title, parts.status),
+      parts.model,
+      h('span', { class: 'spacer' }),
+      btn('', 'Gemini settings', ICON.gear, async () => {
+        await loadGeminiSettings().catch(() => {});
+        voice.view = 'settings';
+        renderVoice();
+      }),
+      btn('', 'Close', ICON.close, closeVoice)),
+    h('div', { class: 'vbody' }, parts.lines, parts.notes),
+    h('div', { class: 'vcontrols' },
+      parts.field,
+      btn('vsend', 'Send to Gemini', ICON.up, sendTyped),
+      parts.mute,
+      parts.end));
+}
+
+async function renderVoiceSettings(node) {
+  node._talk = null;
+  node._settings = true;
+  node.classList.remove('folded', 'speaking');
+  const s = voice.settings;
+  const keyField = h('input', {
+    class: 'vfield',
+    type: 'password',
+    autocomplete: 'off',
+    spellcheck: 'false',
+    placeholder: s?.key ? 'Paste a different key to replace it' : 'Paste a key: AIza…',
+    onkeydown: (ev) => ev.stopPropagation(),
+  });
+  const modelSelect = h('select', { class: 'vselect' }, h('option', { value: '', text: 'The newest Live model (automatic)' }));
+  const voiceSelect = h('select', { class: 'vselect' },
+    h('option', { value: '', text: "Gemini's choice" }),
+    GEMINI_VOICES.map((v) => h('option', { value: v, text: v })));
+  voiceSelect.value = s?.voice ?? '';
+  const note = h('div', { class: 'vnote hint' });
+  const where = !s?.key
+    ? `No key yet. Get one at AI Studio, or set ${s?.env || 'GEMINI_API_KEY'} where tamale runs.`
+    : s.from === 'env'
+      ? `Using ${s.env} from tamale's environment. A key pasted here is used instead.`
+      : 'Saved on this machine, in ~/.config/tamale/gemini.json (only you can read it).';
+  const save = async (extra = {}) => {
+    const body = { model: modelSelect.value, voice: voiceSelect.value, ...extra };
+    const key = keyField.value.trim();
+    if (key && !('key' in extra)) body.key = key;
+    note.textContent = 'Saving…';
+    try {
+      const m = await requestReply('gemini_save', body);
+      if (m.error) throw new Error(m.error);
+      voice.settings = m;
+      return true;
+    } catch (e) {
+      note.textContent = e.message;
+      return false;
+    }
+  };
+  const back = () => {
+    voice.view = 'talk';
+    voice.note = '';
+    node.replaceChildren();
+    renderVoice();
+  };
+  node.replaceChildren(
+    h('div', { class: 'vcard settings' },
+      h('div', { class: 'vhead' },
+        h('span', { class: 'vnames' }, h('span', { class: 'vtitle', text: 'Gemini settings' })),
+        h('span', { class: 'spacer' }),
+        h('button', { class: 'vbtn', title: 'Close', 'aria-label': 'Close', html: ICON.close, onclick: closeVoice })),
+      voice.note ? h('div', { class: 'vnote warn', text: voice.note }) : null,
+      h('label', { class: 'vlabel' }, h('span', { text: 'API key' }), keyField),
+      h('div', { class: 'vnote hint' },
+        h('span', { text: `${where} ` }),
+        h('a', { href: GEMINI_KEY_URL, target: '_blank', rel: 'noopener noreferrer', text: 'Get a key' })),
+      h('label', { class: 'vlabel' }, h('span', { text: 'Model' }), modelSelect),
+      h('label', { class: 'vlabel' }, h('span', { text: 'Voice' }), voiceSelect),
+      note,
+      h('div', { class: 'ap-actions vactions' },
+        s?.from === 'saved'
+          ? h('button', { class: 'btn danger', onclick: async () => {
+              if (await save({ key: '' })) renderVoiceSettings(node);
+            } }, h('span', { text: 'Forget the saved key' }))
+          : null,
+        h('span', { class: 'spacer' }),
+        voice.live?.active ? h('button', { class: 'btn', onclick: back }, h('span', { text: 'Back' })) : null,
+        h('button', { class: 'btn primary', onclick: async () => {
+          const ctx = audioContext();
+          if (!(await save()) || !voice.settings?.key) {
+            if (voice.settings && !voice.settings.key) note.textContent = 'Paste a key first.';
+            ctx?.close();
+            return;
+          }
+          // The choices take effect in a new conversation.
+          node._settings = false;
+          startVoice({ artifact: voice.artifact, ctx });
+        } }, h('span', { text: voice.live?.active ? 'Save and restart' : 'Save and start' })))),
+  );
+  // The models this key can use, once Google says.
+  if (s?.key) {
+    try {
+      const models = await liveModels(s.key);
+      for (const m of models) modelSelect.append(h('option', { value: m, text: m }));
+      if (s.model && !models.includes(s.model)) modelSelect.append(h('option', { value: s.model, text: `${s.model} (not listed)` }));
+      modelSelect.value = s.model ?? '';
+    } catch (e) {
+      note.textContent = e.message;
+    }
+  }
+}
+
+// ---- videos a reply shows (```video blocks; see `render::push_videos`)
+
+/** Each video's blob URL, once asked for, by path. */
+const videos = new Map();
+
+function videoData(path) {
+  let got = videos.get(path);
+  if (!got) {
+    got = requestReply('video', { path }, 180000).then(
+      (m) => {
+        if (m.error) throw new Error(m.error);
+        return { url: URL.createObjectURL(new Blob([fromBase64(m.data)], { type: m.mime })), mime: m.mime };
+      },
+    );
+    got.catch(() => videos.delete(path));
+    videos.set(path, got);
+  }
+  return got;
+}
+
+/** Turns `.video[data-path]` placeholders into players, loading each as it comes into view. */
+function mountVideos(scope) {
+  const found = scope.matches?.('.video[data-path]') ? [scope] : scope.querySelectorAll('.video[data-path]');
+  for (const box of found) {
+    if (box._mounted) continue;
+    box._mounted = true;
+    const { path, title } = box.dataset;
+    const stage = h('div', { class: 'video-stage' });
+    const download = h('a', { class: 'artifact-btn', title: 'Download', 'aria-label': 'Download', html: ICON.download, hidden: true });
+    box.append(
+      h('div', { class: 'artifact-bar' },
+        h('span', { class: 'artifact-icon video-icon', html: ICON.play }),
+        h('span', { class: 'artifact-title', text: title, title: path }),
+        h('span', { class: 'spacer' }),
+        download),
+      stage,
+    );
+    const load = async () => {
+      stage.replaceChildren(h('div', { class: 'video-wait', text: 'Loading the video…' }));
+      try {
+        const { url, mime } = await videoData(path);
+        stage.replaceChildren(mime.startsWith('image/')
+          ? h('img', { src: url, alt: title })
+          : h('video', { src: url, controls: true, playsinline: true, loop: true, preload: 'metadata' }));
+        download.href = url;
+        download.download = title;
+        download.hidden = false;
+      } catch (e) {
+        stage.replaceChildren(h('div', { class: 'video-wait error' },
+          h('span', { text: e.message }),
+          h('button', { class: 'btn', onclick: load }, h('span', { text: 'Try again' }))));
+      }
+    };
+    const seen = new IntersectionObserver((items) => {
+      if (!items.some((i) => i.isIntersecting)) return;
+      seen.disconnect();
+      load();
+    }, { rootMargin: '600px 0px' });
+    seen.observe(box);
+  }
+}
 
 // ---------------------------------------------------------------- help
 

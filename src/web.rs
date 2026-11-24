@@ -18,6 +18,7 @@ mod diff;
 pub mod e2e;
 #[cfg(test)]
 mod fixtures;
+mod gemini;
 mod mirror;
 mod pullspace;
 mod relay;
@@ -301,7 +302,11 @@ impl IntoResponse for Asset {
     }
 }
 
-const PAGE_CSP: &str = "default-src 'self'; connect-src 'self'; img-src 'self' data:; \
+/// Gemini's Live API is the one site the page talks to besides tamale (see `gemini`), and
+/// videos play from the `blob:` URLs the page makes of what it's sent.
+const PAGE_CSP: &str = "default-src 'self'; connect-src 'self' \
+     https://generativelanguage.googleapis.com wss://generativelanguage.googleapis.com; \
+     img-src 'self' data: blob:; media-src blob:; \
      style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; \
      form-action 'none'; frame-ancestors 'none'";
 
@@ -887,6 +892,42 @@ fn handle(shared: &Arc<Shared>, id: u64, request: Value) {
             };
             let reply = artifact_reply(&artifact, page.as_deref(), hash.as_deref());
             shared.send_to(id, reply.to_string());
+        }
+        // The voice assistant's key and choices (see `gemini`).
+        "gemini" => reply(Box::new(|_| {
+            let settings = gemini::settings_path()
+                .map(|path| gemini::load(&path))
+                .unwrap_or_default();
+            gemini::reply(&settings, gemini::env_key())
+        })),
+        "gemini_save" => {
+            let request = request.clone();
+            reply(Box::new(move |_| {
+                let Some(path) = gemini::settings_path() else {
+                    return json!({ "t": "gemini", "error": "There's no home directory to save in." });
+                };
+                let mut settings = gemini::load(&path);
+                gemini::update(&mut settings, &request);
+                match gemini::save(&path, &settings) {
+                    Ok(()) => gemini::reply(&settings, gemini::env_key()),
+                    Err(e) => {
+                        json!({ "t": "gemini", "error": format!("Couldn't save {}: {e}", path.display()) })
+                    }
+                }
+            }));
+        }
+        // A video a reply shows (a ```video block): from the workspace, or the temporary
+        // directory a scratch render went to.
+        "video" => {
+            let path = str_field("path");
+            reply(Box::new(move |roots| {
+                let mut allowed = roots.to_vec();
+                // `mktemp -d` uses $TMPDIR (on macOS, not /tmp); agents also use /tmp itself.
+                allowed.push(std::env::temp_dir());
+                #[cfg(unix)]
+                allowed.push(PathBuf::from("/tmp"));
+                gemini::video(&allowed, &path)
+            }));
         }
         "artifacts" => {
             let shared = shared.clone();

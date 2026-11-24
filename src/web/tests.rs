@@ -1459,6 +1459,23 @@ async fn fake_review_page() {
             ),
         ]);
     }
+    // A reply that shows a video (TAMALE_FAKE_VIDEO: its path), as one rendered with Manim would.
+    if let Ok(video) = std::env::var("TAMALE_FAKE_VIDEO") {
+        entries.extend([
+            Entry::User("Animate how the cap works.".into()),
+            Entry::Assistant(format!("Here's the animation.\n\n```video\n{video}\n```")),
+        ]);
+    }
+    // A reply with an artifact (TAMALE_FAKE_ARTIFACT), to open or talk about.
+    if std::env::var_os("TAMALE_FAKE_ARTIFACT").is_some() {
+        entries.push(Entry::Assistant(
+            "The cap, on a page:\n\n```html artifact\n<!doctype html><html lang=\"en\"><head>\
+             <meta charset=\"utf-8\"><title>Inline cap</title></head><body><h1>512 KB</h1>\
+             <p>Files up to 512 KB are sent whole; bigger ones in 64 KB pieces, at most 37 \
+             of them.</p></body></html>\n```"
+                .into(),
+        ));
+    }
     let mut v = view(&entries);
     v.status = Status {
         project: repo
@@ -1539,8 +1556,12 @@ async fn fake_review_page() {
     }
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(seconds);
     while let Ok(Some(event)) = tokio::time::timeout_at(deadline, server.events.recv()).await {
-        if let WebEvent::Connected(id) = event {
-            server.welcome(id);
+        match event {
+            WebEvent::Connected(id) => server.welcome(id),
+            // What the page sent, for checking it from a script.
+            WebEvent::Send(text) => println!("SEND={text:?}"),
+            WebEvent::Interrupt => println!("INTERRUPT"),
+            _ => {}
         }
     }
 }

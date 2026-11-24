@@ -44,6 +44,10 @@
       <span class="ctx" id="ctx"><span class="ctx-bar"><span class="ctx-fill" id="ctx-fill"></span></span><span id="ctx-label"></span></span>
       <span class="cost" id="cost"></span>
     </div>
+    <!-- Talk to the session through Gemini (see the Gemini section of app.js). -->
+    <button class="iconbtn voicebtn" id="toggle-voice" title="Talk to tamale with Gemini  /voice" aria-label="Talk to tamale with Gemini">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6.5v3M5 4.5v7M7.75 2.5v11M10.5 5v6M13.25 6.75v2.5"/></svg>
+    </button>
     <button class="iconbtn" id="toggle-artifacts" title="Artifacts from this and earlier sessions  /artifacts">
       <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M2 5.5h12M5 8.5h6M5 10.75h3.5"/></svg>
     </button>
@@ -86,11 +90,15 @@
         </button>
         <div class="toast" id="toast" hidden></div>
         <div class="queued" id="queued"></div>
+        <div class="voice" id="voice" hidden></div>
         <div class="approval" id="approval" hidden></div>
         <div class="question" id="question" hidden></div>
         <div class="composer" id="composer">
           <div class="slash" id="slash" hidden></div>
           <textarea id="input" rows="1" spellcheck="true" placeholder="Ask tamale anything…   / for commands" enterkeyhint="enter" autofocus></textarea>
+          <button class="make-artifact make-video" id="make-video" title="Make an animated video of this (Manim)  /video" aria-label="Make an animated video">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.75" y="3.25" width="12.5" height="9.5" rx="1.75"/><path d="M6.5 6v4l3.5-2z"/></svg>
+          </button>
           <button class="make-artifact" id="make-artifact" title="Generate an artifact" aria-label="Generate an artifact">
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M7 2.5 8.2 5.8 11.5 7 8.2 8.2 7 11.5 5.8 8.2 2.5 7 5.8 5.8z"/><path d="M12 10.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z"/></svg>
           </button>

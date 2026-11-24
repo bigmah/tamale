@@ -70,7 +70,8 @@ sends tamale a prompt, tells you it has, and when tamale's turn ends it tells yo
 can read the conversation, check the status, look at the uncommitted changes, interrupt, and
 answer tamale's questions. When tamale asks permission, Gemini reads the request out and answers
 only after you say yes or no. It never picks "always"; that's on the card, for you to tap. The
-conversation keeps going with the screen locked.
+conversation keeps going with the screen locked. The web UI has the same conversation (see
+[Web UI](web.md#web-ui)); its key is kept by tamale rather than on the phone.
 
 ## What it keeps, and where
 
