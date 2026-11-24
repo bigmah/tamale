@@ -27,7 +27,7 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 # The page.
 web-sys = { version = "0.3", optional = true, features = [
-    "AudioBuffer", "AudioBufferSourceNode", "AudioContext", "AudioDestinationNode", "AudioNode", "AudioParam",
+    "AudioBuffer", "AudioBufferSourceNode", "AudioContext", "AudioContextState", "AudioDestinationNode", "AudioNode", "AudioParam",
     "AudioProcessingEvent", "AudioScheduledSourceNode", "BaseAudioContext", "BinaryType", "Blob", "BlobPropertyBag",
     "Clipboard", "CloseEvent", "CssStyleDeclaration", "Document", "DomRect", "DomTokenList", "Element", "Event",
     "EventTarget", "GainNode", "Headers", "History", "HtmlElement", "HtmlIFrameElement", "HtmlInputElement",

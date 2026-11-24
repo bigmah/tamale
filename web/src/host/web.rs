@@ -1063,7 +1063,12 @@ mod audio {
         /// An audio context, made in a click: only then may a page play sound in every browser.
         pub fn new() -> Option<Rc<Audio>> {
             let ctx = AudioContext::new().ok()?;
-            let _ = ctx.resume();
+            // It may be closed before this settles (no key, say), which rejects it.
+            if let Ok(resuming) = ctx.resume() {
+                wasm_bindgen_futures::spawn_local(async move {
+                    let _ = wasm_bindgen_futures::JsFuture::from(resuming).await;
+                });
+            }
             Some(Rc::new(Audio {
                 ctx,
                 stream: RefCell::new(None),
@@ -1217,7 +1222,14 @@ mod audio {
                 let _ = proc.disconnect();
             }
             self.on_mic.borrow_mut().take();
-            let _ = self.ctx.close();
+            // Once: closing a closed context rejects, and nothing would catch it.
+            if self.ctx.state() != web_sys::AudioContextState::Closed
+                && let Ok(closing) = self.ctx.close()
+            {
+                wasm_bindgen_futures::spawn_local(async move {
+                    let _ = wasm_bindgen_futures::JsFuture::from(closing).await;
+                });
+            }
         }
     }
 }
