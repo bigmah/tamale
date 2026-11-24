@@ -171,6 +171,11 @@ impl Replier {
 
 pub struct Server {
     pub url: String,
+    /// The same page at a loopback address, for a browser on this machine: `url` itself
+    /// when serving only to this machine. Browsers treat loopback as a secure context and
+    /// a LAN address over plain http as not, and pullspace runs far slower outside one
+    /// (Safari takes seconds to open a file), so this machine's browser opens this one.
+    pub local_url: String,
     /// Whether it listens on the local network instead of only this machine.
     pub lan: bool,
     pub events: mpsc::UnboundedReceiver<WebEvent>,
@@ -202,8 +207,9 @@ struct Client {
 
 struct Shared {
     token: String,
-    /// The `Host` the page must be loaded from, e.g. `127.0.0.1:52011`.
-    host: String,
+    /// The `Host`s the page may be loaded from, e.g. `127.0.0.1:52011`: the address it
+    /// listens on, and on the local network its loopback address too.
+    hosts: Vec<String>,
     events: mpsc::UnboundedSender<WebEvent>,
     clients: Mutex<HashMap<u64, Client>>,
     next_id: AtomicU64,
@@ -218,7 +224,13 @@ impl Shared {
     /// Whether a request was addressed to this server by its IP, which rejects
     /// DNS-rebinding pages that resolve their own name to 127.0.0.1.
     fn own_host(&self, headers: &HeaderMap) -> bool {
-        headers.get(header::HOST).and_then(|h| h.to_str().ok()) == Some(self.host.as_str())
+        self.host(headers).is_some()
+    }
+
+    /// Which of this server's hosts a request was addressed to, if any.
+    fn host(&self, headers: &HeaderMap) -> Option<&str> {
+        let host = headers.get(header::HOST).and_then(|h| h.to_str().ok())?;
+        self.hosts.iter().map(String::as_str).find(|h| *h == host)
     }
 
     /// Whether a request is from this server's page: addressed to it and with the token.
@@ -403,16 +415,37 @@ impl Server {
         let listener = tokio::net::TcpListener::bind((ip, 0))
             .await
             .with_context(|| format!("couldn't listen on {ip}"))?;
-        let host = format!("{ip}:{}", listener.local_addr()?.port());
+        let port = listener.local_addr()?.port();
+        let host = format!("{ip}:{port}");
+        // On the network, this machine's browser gets a loopback address as well (see
+        // `local_url`): the same port if it's free, so the two differ only in the IP.
+        let loopback = if lan {
+            let ip = IpAddr::from([127, 0, 0, 1]);
+            match tokio::net::TcpListener::bind((ip, port)).await {
+                Ok(listener) => Some(listener),
+                Err(_) => tokio::net::TcpListener::bind((ip, 0)).await.ok(),
+            }
+        } else {
+            None
+        };
+        let loopback_host = loopback
+            .as_ref()
+            .and_then(|listener| listener.local_addr().ok())
+            .map(|addr| format!("127.0.0.1:{}", addr.port()));
         let mut bytes = [0u8; 16];
         getrandom::fill(&mut bytes).context("couldn't generate an access token")?;
         let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
         let url = format!("http://{host}/?t={token}");
+        let local_url = match &loopback_host {
+            Some(local) => format!("http://{local}/?t={token}"),
+            None => url.clone(),
+        };
+        let hosts = std::iter::once(host).chain(loopback_host).collect();
         let (tx, events) = mpsc::unbounded_channel();
         let mirror = Mirror::default();
         let shared = Arc::new(Shared {
             token,
-            host,
+            hosts,
             events: tx,
             clients: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(0),
@@ -431,10 +464,21 @@ impl Server {
             .route("/pullspace/{file}", get(pullspace_file))
             .with_state(shared.clone());
         let task = tokio::spawn(async move {
-            let _ = axum::serve(listener, router).await;
+            match loopback {
+                Some(loopback) => {
+                    let _ = tokio::join!(
+                        axum::serve(listener, router.clone()),
+                        axum::serve(loopback, router),
+                    );
+                }
+                None => {
+                    let _ = axum::serve(listener, router).await;
+                }
+            }
         });
         Ok(Self {
             url,
+            local_url,
             lan,
             events,
             shared,
@@ -482,10 +526,16 @@ impl Server {
         self.relay.as_ref().map(|r| r.open_url.as_str())
     }
 
-    /// The link for `o` and `c` on the terminal's screen: the hub's while connected to one,
+    /// The link for `c` on the terminal's screen: the hub's while connected to one,
     /// since it works from any device and the local one doesn't.
     pub fn share_url(&self) -> &str {
         self.hub_url().unwrap_or(&self.url)
+    }
+
+    /// The link for `o`, which opens a browser on this machine: as [`Self::share_url`],
+    /// but at the loopback address rather than the network's (see `local_url`).
+    pub fn open_url(&self) -> &str {
+        self.hub_url().unwrap_or(&self.local_url)
     }
 
     /// How the connection to the hub is going, for the terminal's screen.
@@ -672,7 +722,8 @@ async fn socket(
 ) -> Response {
     // Browsers send the page's origin, so other sites can't connect even with the token.
     let origin = headers.get(header::ORIGIN).and_then(|h| h.to_str().ok());
-    if !shared.authorized(&uri, &headers) || origin != Some(&format!("http://{}", shared.host)) {
+    let own_origin = shared.host(&headers).map(|host| format!("http://{host}"));
+    if !shared.authorized(&uri, &headers) || origin.is_none() || origin != own_origin.as_deref() {
         return StatusCode::FORBIDDEN.into_response();
     }
     upgrade

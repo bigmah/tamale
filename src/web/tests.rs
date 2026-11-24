@@ -415,6 +415,33 @@ async fn artifacts_are_served_sandboxed_to_this_host_only() {
 }
 
 #[tokio::test]
+async fn on_the_network_this_machine_gets_a_loopback_address_too() {
+    // Off any network there's no LAN server to test.
+    let Ok(server) = Server::start(true).await else {
+        return;
+    };
+    assert_ne!(server.local_url, server.url);
+    assert!(server.local_url.starts_with("http://127.0.0.1:"));
+    assert_eq!(server.open_url(), server.local_url);
+    assert_eq!(server.share_url(), server.url);
+    let client = reqwest::Client::new();
+    for url in [&server.url, &server.local_url] {
+        assert_eq!(client.get(url).send().await.unwrap().status(), 200, "{url}");
+        let base = url.split("/?").next().unwrap();
+        let script = client.get(format!("{base}/app.js")).send().await.unwrap();
+        assert_eq!(script.status(), 200, "{url}");
+    }
+    // Only this server's own addresses.
+    let rebound = client
+        .get(&server.local_url)
+        .header(header::HOST, "evil.example")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rebound.status(), 403);
+}
+
+#[tokio::test]
 async fn relayed_tabs_get_the_same_session_and_pages_as_local_ones() {
     // The review panel's files are among the pages a hub tunnels.
     for path in pullspace_embed::paths() {

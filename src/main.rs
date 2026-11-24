@@ -381,7 +381,7 @@ async fn web_request(app: &mut App, web: &mut Option<web::Server>, request: WebR
                         Err(message) => app.on_web(Err(message)),
                     }
                 }
-                browser::open(&server.url);
+                browser::open(&server.local_url);
                 app.set_web_session(true);
             }
         }
@@ -486,7 +486,7 @@ async fn web_session_key(app: &mut App, web: &mut Option<web::Server>, event: &E
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.quit_or_detach();
         }
-        KeyCode::Char('o') => browser::open(server.share_url()),
+        KeyCode::Char('o') => browser::open(server.open_url()),
         KeyCode::Char('c') => {
             let url = server.share_url().to_string();
             tokio::spawn(async move { clipboard::write(&url).await });
