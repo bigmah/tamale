@@ -57,8 +57,25 @@ impl App {
         tabs
     }
 
+    /// The footer row `tab` is on, left to right.
+    fn footer_row(&self, tab: FooterTab) -> Vec<FooterTab> {
+        if tab.is_lower() {
+            vec![FooterTab::Backend, FooterTab::Model]
+        } else {
+            self.footer_tabs()
+        }
+    }
+
     fn open_tab(&mut self, tab: FooterTab) {
         match tab {
+            FooterTab::Backend => {
+                self.tab_focus = None;
+                self.command("/backend");
+            }
+            FooterTab::Model => {
+                self.tab_focus = None;
+                self.command("/model");
+            }
             FooterTab::Sessions => {
                 self.tab_focus = None;
                 self.command("/sessions");
@@ -204,7 +221,7 @@ impl App {
         if let Some(tab) = self.tab_focus {
             // ←/→ only highlight a tab and only Enter opens it, so nothing opens by surprise,
             // not even when ↓ is held down to get through the prompt history.
-            let tabs = self.footer_tabs();
+            let tabs = self.footer_row(tab);
             let at = tabs.iter().position(|&t| t == tab).unwrap_or(0);
             match key.code {
                 KeyCode::Left => self.tab_focus = Some(tabs[at.saturating_sub(1)]),
@@ -216,7 +233,10 @@ impl App {
                 {
                     self.stop_chef()
                 }
+                // ↑ from the backend and model goes back up to the tabs, then the prompt.
+                KeyCode::Up if tab.is_lower() => self.tab_focus = Some(FooterTab::Sessions),
                 KeyCode::Up | KeyCode::Esc => self.tab_focus = None,
+                KeyCode::Down if !tab.is_lower() => self.tab_focus = Some(FooterTab::Backend),
                 KeyCode::Down => {}
                 // Anything else goes back to the prompt and acts there.
                 _ => {

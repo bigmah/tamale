@@ -210,6 +210,10 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
                 "Focus the tabs: ←/→ pick Sessions (like /sessions), Remote (like /remote), Web (like /web), Diff or Chef, Enter opens it (x on Chef stops the chef when it's on); ↑ or Esc back",
             ),
             (
+                "↓ (below the tabs)",
+                "Focus the backend and model: ←/→ pick one, Enter opens its picker (like /backend, /model); ↑ back",
+            ),
+            (
                 "Ctrl+O / click Web",
                 "Open the web UI on your Wi-Fi, like /web",
             ),

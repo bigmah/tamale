@@ -2,8 +2,9 @@
 
 The backend decides where inference comes from; everything else is the same. Tools,
 permission prompts, checkpoints and `/undo`, sessions, compaction and usage totals work
-identically, and the footer shows the backend next to the working directory
-(`cwd: ~/dev/app · via Claude Code · Max`).
+identically, and the footer's bottom row shows the backend and model
+(`backend Claude Code · Max ▾  model claude-opus-4-8 ▾`); `↓` twice from the prompt, or a
+click, picks another.
 
 | Backend | Selected with | Authenticates with |
 | --- | --- | --- |

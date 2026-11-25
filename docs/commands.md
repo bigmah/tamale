@@ -31,7 +31,7 @@
   and appears in the chat at that point; `/undo` puts it back in the input box with the
   turn's prompt. Messages still queued when the turn ends are sent as the next prompt.
   Slash commands still run immediately.
-- `↓` past the end of the prompt focuses the footer's tabs: **Sessions**, **Remote**, **Web** and **Diff**. `←/→` picks one, `Enter` opens it, and `↑` or `Esc` goes back. Clicking one works too
+- `↓` past the end of the prompt focuses the footer's tabs: **Sessions**, **Remote**, **Web** and **Diff**. `←/→` picks one, `Enter` opens it, and `↑` or `Esc` goes back. `↓` again moves to the row below, with the **backend** and **model**: `Enter` opens that one's picker. Clicking any of them works too
 - `Esc` interrupt the agent; queued messages that weren't delivered return to the input box
 - `Shift+Tab` cycle the permission mode (see [Permissions](permissions.md))
 - `PgUp/PgDn`, `Shift+↑/↓`, mouse wheel scroll (a scrollbar and "↓ N more lines" badge show while scrolled up)

@@ -115,6 +115,17 @@ pub enum FooterTab {
     Diff,
     /// The tamale chef, which looks after every session (see `crate::chef`).
     Chef,
+    /// The backend, on the row below the tabs: Enter picks another.
+    Backend,
+    /// The model, beside the backend: Enter picks another.
+    Model,
+}
+
+impl FooterTab {
+    /// Whether this is on the footer's lower row, with the backend and model.
+    fn is_lower(self) -> bool {
+        matches!(self, Self::Backend | Self::Model)
+    }
 }
 
 /// What `/web` and `/remote` asked of the event loop.

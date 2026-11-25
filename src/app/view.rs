@@ -654,7 +654,9 @@ impl App {
             "↑/↓ j/k scroll · pgup/pgdn page · esc close"
         } else if let Some(tab) = self.tab_focus {
             match tab {
-                FooterTab::Sessions => "enter open · ←/→ choose · ↑ back",
+                FooterTab::Backend => "enter choose backend · ←/→ choose · ↑ back",
+                FooterTab::Model => "enter choose model · ←/→ choose · ↑ back",
+                FooterTab::Sessions => "enter open · ←/→ · ↓ backend/model · ↑ back",
                 FooterTab::Remote if self.hub_viewers.is_some() => {
                     "enter show QR code · ←/→ choose · ↑ back"
                 }
@@ -695,22 +697,77 @@ impl App {
             60..80 => Color::Yellow,
             _ => Color::Red,
         };
-        let cached = if self.input_tokens > 0 {
-            format!(
-                " ({}% cached)",
-                self.cached_tokens * 100 / self.input_tokens
-            )
-        } else {
-            String::new()
+
+        // The backend and model come first, as things to pick: ↓ from the tabs or a click.
+        let focus = self.tab_focus;
+        let chip = |tab, prefix: &str, label: String, color: Color| -> Vec<Span<'static>> {
+            if focus == Some(tab) {
+                let style = Style::new().fg(Color::Black).bg(Color::Cyan);
+                vec![
+                    Span::styled(format!(" {prefix} "), style),
+                    Span::styled(format!("{label} ▾ "), style.bold()),
+                ]
+            } else {
+                vec![
+                    Span::from(format!(" {prefix} ")).fg(Color::DarkGray),
+                    Span::from(label).fg(color).bold(),
+                    Span::from(" ▾ ").fg(Color::DarkGray),
+                ]
+            }
         };
+        let backend_color = if self.backend.signed_in() {
+            Color::Blue
+        } else {
+            Color::Red
+        };
+        let chips = [
+            (
+                FooterTab::Backend,
+                chip(
+                    FooterTab::Backend,
+                    "backend",
+                    self.backend_label(),
+                    backend_color,
+                ),
+            ),
+            (
+                FooterTab::Model,
+                chip(
+                    FooterTab::Model,
+                    "model",
+                    self.backend.model_label(&self.settings.model.name),
+                    Color::Magenta,
+                ),
+            ),
+        ];
+        let mut x = stats_row.x;
+        let mut picks = Vec::new();
+        let mut picked = Vec::new();
+        for (tab, spans) in chips {
+            let width: u16 = spans.iter().map(|s| s.content.width() as u16).sum();
+            picked.push((tab, Rect::new(x, stats_row.y, width, 1)));
+            x += width;
+            picks.extend(spans);
+        }
+
+        // Then what the session is using, and settings only when they're not the default.
         let mut stats = vec![
-            Span::from(format!(" {} ", mode.as_str()))
-                .fg(mode_color)
-                .bold(),
             Span::from(format!(
-                "· {} ",
-                self.backend.model_label(&self.settings.model.name)
+                "│ ctx {}/{} {pct}% ",
+                fmt_tokens(self.context_tokens),
+                fmt_tokens(window)
             ))
+            .fg(ctx_color),
+            Span::from(format!(
+                "· ${:.2}{} ",
+                self.cost,
+                if self.cost_partial { "+" } else { "" }
+            ))
+            .fg(Color::Green),
+            Span::from(match self.settings.model.effort {
+                Some(e) => format!("· effort {} ", e.as_str()),
+                None => String::new(),
+            })
             .fg(Color::Magenta),
             Span::from(if self.settings.ui.verbose {
                 "· verbose "
@@ -718,49 +775,35 @@ impl App {
                 ""
             })
             .fg(Color::Magenta),
-            Span::from(format!(
-                "· thinking {} ",
-                self.settings.model.thinking.as_str()
-            ))
-            .fg(Color::Magenta),
-            Span::from(match self.settings.model.effort {
-                Some(e) => format!("· {} ", e.as_str()),
-                None => String::new(),
+            Span::from(if mode == permissions::Mode::Auto {
+                String::new()
+            } else {
+                format!("· {} ", mode.as_str())
             })
-            .fg(Color::Magenta),
-            Span::from(format!(
-                "· ctx {}/{} {pct}% ",
-                fmt_tokens(self.context_tokens),
-                fmt_tokens(window)
-            ))
-            .fg(ctx_color),
-            Span::from(format!(
-                "· ↑{}{cached} ↓{} ",
-                fmt_tokens(self.input_tokens),
-                fmt_tokens(self.output_tokens)
-            ))
-            .fg(Color::DarkGray),
-            Span::from(format!(
-                "· ${:.2}{} ",
-                self.cost,
-                if self.cost_partial { "+" } else { "" }
-            ))
-            .fg(Color::Green),
+            .fg(mode_color)
+            .bold(),
         ];
         // The hint says what the keys do right now, so whole stats give way to it, the
-        // ones that matter least first: usage, verbose, thinking, effort, cost, ctx, model.
+        // ones that matter least first: verbose, effort, cost, ctx, mode.
         let hint_width = (hint.width() as u16 + 1).min(stats_row.width);
         let [stats_area, hint_area] =
             Layout::horizontal([Constraint::Min(0), Constraint::Length(hint_width)])
                 .areas(stats_row);
-        for drop in [6, 2, 3, 4, 7, 5, 1] {
+        for (tab, tab_area) in picked {
+            self.tab_areas
+                .push((tab, tab_area.intersection(stats_area)));
+        }
+        let picks_width: usize = picks.iter().map(|s| s.content.width()).sum();
+        for drop in [3, 2, 1, 0, 4] {
             let width: usize = stats.iter().map(|s| s.content.width()).sum();
-            if width < stats_area.width as usize {
+            if picks_width + width < stats_area.width as usize {
                 break;
             }
             stats[drop] = Span::from("");
         }
-        frame.render_widget(Line::from(stats), stats_area);
+        picks.push(Span::from(" "));
+        picks.extend(stats);
+        frame.render_widget(Line::from(picks), stats_area);
         frame.render_widget(
             Line::from(Span::from(format!("{hint} ")).fg(Color::DarkGray)).right_aligned(),
             hint_area,
@@ -841,34 +884,25 @@ impl App {
         let tabs_width: usize = spans.iter().map(|s| s.content.width()).sum();
         frame.render_widget(Line::from(spans), area);
 
-        // Where inference comes from outlasts the cwd, and a long cwd loses its start;
-        // the tabs win when there isn't room for either.
-        let backend = self.backend_label();
+        // The cwd fills what the tabs leave, losing its start when long; the backend is
+        // on the row below, with the model.
         let dirs = match self.workspace.additional_dirs.len() {
             0 => String::new(),
             n => format!(" +{n} dirs"),
         };
         let room = (area.width as usize).saturating_sub(tabs_width + 2);
-        let fixed = VIA.width() + backend.width() + 1;
-        let mut place = Vec::new();
-        if room > fixed + dirs.width() + MIN_CWD {
-            let cwd = truncate_start(
-                &self.workspace.cwd.display().to_string(),
-                room - fixed - dirs.width(),
-            );
-            place.push(Span::from(cwd).fg(Color::Cyan));
-            place.push(Span::from(dirs).fg(Color::DarkGray));
-            place.push(Span::from(VIA).fg(Color::DarkGray));
-        } else if room < fixed {
+        if room <= dirs.width() + MIN_CWD {
             return;
         }
-        let signed_in = self.backend.signed_in();
-        place.push(
-            Span::from(backend)
-                .fg(if signed_in { Color::Blue } else { Color::Red })
-                .bold(),
+        let cwd = truncate_start(
+            &self.workspace.cwd.display().to_string(),
+            room - dirs.width() - 1,
         );
-        place.push(Span::from(" "));
+        let place = vec![
+            Span::from(cwd).fg(Color::Cyan),
+            Span::from(dirs).fg(Color::DarkGray),
+            Span::from(" "),
+        ];
         frame.render_widget(Line::from(place).right_aligned(), area);
     }
 
@@ -885,7 +919,6 @@ impl App {
 }
 
 const SEPARATOR: &str = "│";
-const VIA: &str = " · via ";
 /// Below this a cwd says too little to be worth showing.
 const MIN_CWD: usize = 10;
 

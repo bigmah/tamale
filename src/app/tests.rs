@@ -243,6 +243,78 @@ async fn sessions_are_saved_and_resumed() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[tokio::test]
+async fn backend_and_model_are_picked_from_the_footer() {
+    use super::FooterTab;
+    use crossterm::event::{MouseButton, MouseEvent};
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("claude-sonnet-4-6"),
+        Workspace::current().unwrap(),
+    );
+    app.models = Some(vec![]);
+    let lines = screen_lines(&mut app, 120, 30);
+    let row = &lines[29];
+    assert!(
+        row.starts_with(" backend Anthropic API ▾  model claude-sonnet-4-6 ▾  │ ctx "),
+        "{row}"
+    );
+    assert!(row.contains("· $0.00 "), "{row}");
+    for gone in ["thinking", "auto", "↑0", "↓0"] {
+        assert!(!row.contains(gone), "{gone} in {row}");
+    }
+
+    // ↓ twice from the prompt reaches the backend, → the model; Enter opens its picker.
+    app.on_event(key(KeyCode::Down));
+    app.on_event(key(KeyCode::Down));
+    assert_eq!(app.tab_focus, Some(FooterTab::Backend));
+    app.on_event(key(KeyCode::Left));
+    assert_eq!(
+        app.tab_focus,
+        Some(FooterTab::Backend),
+        "nothing further left"
+    );
+    app.on_event(key(KeyCode::Right));
+    assert_eq!(app.tab_focus, Some(FooterTab::Model));
+    app.on_event(key(KeyCode::Right));
+    assert_eq!(
+        app.tab_focus,
+        Some(FooterTab::Model),
+        "nothing further right"
+    );
+    app.on_event(key(KeyCode::Enter));
+    assert!(app.picker.is_some());
+    assert_eq!(app.tab_focus, None, "back in the prompt once picked");
+    app.on_event(key(KeyCode::Esc));
+    assert!(app.picker.is_none());
+
+    app.on_event(key(KeyCode::Down));
+    app.on_event(key(KeyCode::Down));
+    app.on_event(key(KeyCode::Enter));
+    assert!(app.backend_picker.is_some());
+    assert_eq!(app.tab_focus, None);
+    app.on_event(key(KeyCode::Esc));
+    assert!(app.backend_picker.is_none());
+
+    // Each can be clicked, too.
+    let click = |column| {
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row: 29,
+            modifiers: KeyModifiers::NONE,
+        })
+    };
+    screen_lines(&mut app, 120, 30);
+    app.on_event(click(30));
+    assert!(app.picker.is_some());
+    app.on_event(key(KeyCode::Esc));
+    screen_lines(&mut app, 120, 30);
+    app.on_event(click(12));
+    assert!(app.backend_picker.is_some());
+}
+
 #[test]
 fn footer_tabs_open_by_click_or_by_down_arrows_enter() {
     use super::{FooterTab, WebRequest};
@@ -292,15 +364,18 @@ fn footer_tabs_open_by_click_or_by_down_arrows_enter() {
     assert_eq!(app.cursor, 1);
     app.on_event(key(KeyCode::Down));
     assert_eq!(app.tab_focus, Some(FooterTab::Sessions));
-    // Holding ↓ through the history doesn't open anything.
+    // Holding ↓ through the history goes on to the backend, but doesn't open anything.
     app.on_event(key(KeyCode::Down));
+    assert_eq!(app.tab_focus, Some(FooterTab::Backend));
+    app.on_event(key(KeyCode::Down));
+    assert_eq!(app.tab_focus, Some(FooterTab::Backend));
+    assert!(app.sessions_picker.is_none() && app.backend_picker.is_none());
+    // ↑ goes back up to the tabs.
+    app.on_event(key(KeyCode::Up));
     assert_eq!(app.tab_focus, Some(FooterTab::Sessions));
-    assert!(app.sessions_picker.is_none());
     // → only highlights Remote; Enter opens it.
     app.on_event(key(KeyCode::Right));
     assert_eq!(app.tab_focus, Some(FooterTab::Remote));
-    assert!(app.take_web_request().is_none());
-    app.on_event(key(KeyCode::Down));
     assert!(app.take_web_request().is_none());
     app.on_event(key(KeyCode::Enter));
     assert!(matches!(
@@ -660,9 +735,12 @@ fn configured_settings_reach_status_and_runtime_commands() {
     terminal.draw(|frame| app.draw(frame)).unwrap();
     let buffer = terminal.backend().buffer();
     let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
-    for expected in ["configured-model", "500k", "thinking off", "low", "verbose"] {
+    for expected in ["configured-model", "500k", "effort low", "verbose"] {
         assert!(text.contains(expected), "missing {expected} in {text}");
     }
+    // Thinking and the default permission mode aren't worth a place in the footer.
+    assert!(!text.contains("thinking"), "{text}");
+    assert!(!text.contains(" auto "), "{text}");
     assert!(!app.settings.ui.mouse);
     app.command("/verbose off");
     app.command("/thinking on");
@@ -1012,7 +1090,8 @@ async fn approval_prompt_answers_and_mode_cycles() {
     );
     app.approval = None;
 
-    assert!(screen(&mut app, &mut terminal).contains(" auto "));
+    // The default mode goes unsaid; the others are shown.
+    assert!(!screen(&mut app, &mut terminal).contains(" auto "));
     app.on_event(Event::Key(KeyEvent::new(
         KeyCode::BackTab,
         KeyModifiers::SHIFT,
@@ -1040,7 +1119,7 @@ async fn approval_prompt_answers_and_mode_cycles() {
 }
 
 #[test]
-fn status_shows_where_inference_comes_from_even_with_a_long_cwd() {
+fn status_shows_the_backend_below_the_tabs_even_with_a_long_cwd() {
     let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
     let mut workspace = Workspace::current().unwrap();
     workspace.cwd = std::path::PathBuf::from(format!("/{}", "deep/".repeat(40)));
@@ -1057,8 +1136,14 @@ fn status_shows_where_inference_comes_from_even_with_a_long_cwd() {
         row.starts_with(" ≡ Sessions  ⇄ Remote off │ ◉ Web "),
         "the tabs stay: {row}"
     );
-    assert!(row.contains("…"), "{row}");
-    assert!(row.ends_with(" · via Anthropic API "), "{row}");
+    assert!(row.contains("…") && row.ends_with("deep/ "), "{row}");
+    let below: String = (0..80)
+        .map(|x| buffer[(x, 11)].symbol().to_string())
+        .collect();
+    assert!(
+        below.starts_with(" backend Anthropic API ▾  model test-model ▾"),
+        "{below}"
+    );
 
     // Too narrow for all of it: the most used tabs and the keys' hint are what's left.
     let backend = ratatui::backend::TestBackend::new(34, 12);
@@ -1081,16 +1166,21 @@ fn status_shows_where_inference_comes_from_even_with_a_long_cwd() {
         row(11)
     );
 
-    // Stats give way whole, not cut off by the hint, and the cost outlasts the usage.
-    let backend = ratatui::backend::TestBackend::new(100, 12);
-    let mut terminal = ratatui::Terminal::new(backend).unwrap();
-    terminal.draw(|f| app.draw(f)).unwrap();
-    let buffer = terminal.backend().buffer();
-    let row = (0..100)
-        .map(|x| buffer[(x, 11)].symbol().to_string())
-        .collect::<String>();
-    assert!(row.contains("· $0.00 "), "{row}");
-    assert!(!row.contains("↑0"), "{row}");
+    // Stats give way whole, not cut off by the hint, and the context outlasts the cost.
+    let mut row = |width| {
+        let backend = ratatui::backend::TestBackend::new(width, 12);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..width)
+            .map(|x| buffer[(x, 11)].symbol().to_string())
+            .collect::<String>()
+    };
+    let narrower = row(95);
+    assert!(narrower.contains("│ ctx 0/200k 0% "), "{narrower}");
+    assert!(!narrower.contains("$"), "{narrower}");
+    let wide = row(110);
+    assert!(wide.contains("│ ctx 0/200k 0% · $0.00 "), "{wide}");
 }
 
 fn login(email: &str, dir: Option<&str>) -> Backend {
