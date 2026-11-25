@@ -1,16 +1,70 @@
-//! The code view: pullspace (tamale's `src/web/pullspace.rs`) in a frame, on the working tree
-//! against HEAD. The frame asks for snapshots and blobs over `postMessage`; the app forwards
-//! them over the socket (sealed, on an encrypted session) and posts the replies back, tells it
-//! when files may have changed, and asks it to show the files the chat links to.
+//! The code view: pullspace, rendered in this page, on the working tree against HEAD.
+//!
+//! pullspace asks for both sides' file lists and for blobs; [`Code`] answers by asking
+//! tamale over the socket (sealed, on an encrypted session; tamale's side is
+//! `src/web/pullspace.rs`). The app tells it, through the [`Link`], when files may have
+//! changed and which file the chat linked to; it tells the app what the reader asked about.
 
+use base64::Engine;
 use dioxus::core::spawn_forever;
 use dioxus::prelude::*;
+use futures_channel::oneshot;
+use pullspace::protocol::{BlobsReply, Open, Quote, Snapshot, Want};
+use pullspace::{Host, Link, Reply};
 use serde_json::{Value, json};
 
 use crate::app::{App, View};
 use crate::host;
 
 const REVIEW_TIMEOUT: u64 = 60_000;
+
+/// What pullspace asks this page.
+struct Code {
+    app: App,
+}
+
+impl Host for Code {
+    fn snapshot(&self) -> Reply<Snapshot> {
+        let app = self.app;
+        Box::pin(async move {
+            let reply = app.review_ask("ps_snapshot", json!({})).await;
+            // It has the workspace (or why not), so it has something to draw.
+            spawn_forever(async move {
+                host::sleep(60).await;
+                app.review_shown();
+            });
+            serde_json::from_value(reply?).map_err(|e| format!("tamale's answer: {e}"))
+        })
+    }
+
+    fn blobs(&self, wants: Vec<Want>) -> Reply<Vec<(String, Vec<u8>)>> {
+        let app = self.app;
+        Box::pin(async move {
+            let wants: Vec<Want> = wants.into_iter().take(1024).collect();
+            let reply = app
+                .review_ask("ps_blobs", json!({ "wants": wants }))
+                .await?;
+            let reply: BlobsReply =
+                serde_json::from_value(reply).map_err(|e| format!("tamale's answer: {e}"))?;
+            let engine = base64::engine::general_purpose::STANDARD;
+            Ok(reply
+                .blobs
+                .into_iter()
+                .filter_map(|(sha, b64)| Some((sha, engine.decode(b64?).ok()?)))
+                .collect())
+        })
+    }
+
+    fn quote(&self, quote: Quote) {
+        self.app.review_quote(quote);
+    }
+
+    fn missing(&self, open: Open) {
+        let path: String = open.path.chars().take(200).collect();
+        self.app
+            .toast(format!("`{path}` isn't a file in this repository."), 5000);
+    }
+}
 
 impl App {
     pub fn set_view(mut self, view: View, focus: bool) {
@@ -30,7 +84,7 @@ impl App {
                 self.load_review();
             } else if self.mem.read().review_stale {
                 self.mem.write().review_stale = false;
-                self.review_post(json!({ "event": "changed" }));
+                self.review_link().changed();
             }
         }
         self.view.set(view);
@@ -44,7 +98,7 @@ impl App {
         spawn_forever(async move {
             host::next_frame().await;
             if view == View::Code {
-                host::focus_frame("review-frame");
+                host::focus_code();
             } else {
                 self.focus_prompt();
             }
@@ -75,10 +129,22 @@ impl App {
         }
     }
 
+    /// The link to pullspace, made the first time it's asked for. Events sent on it before
+    /// pullspace is drawn wait for it.
+    pub fn review_link(mut self) -> Link {
+        if let Some(link) = self.mem.read().review_link.clone() {
+            return link;
+        }
+        let link = Link::new(Code { app: self });
+        self.mem.write().review_link = Some(link.clone());
+        link
+    }
+
     fn load_review(mut self) {
         self.mem.write().review_stale = false;
+        self.review_link();
         self.review.write().loaded = true;
-        // Shown once it has something to show; a module that never arrives gets to say so.
+        // Shown once it has something to show; a module that never answers gets to say so.
         spawn_forever(async move {
             host::sleep(10_000).await;
             if self.review.peek().shown {
@@ -90,43 +156,9 @@ impl App {
         });
     }
 
-    pub fn review_loaded(mut self) {
-        if let Some(events) = self.host_events.read().clone() {
-            host::hook_review_keys(events);
-        }
-    }
-
     fn review_shown(mut self) {
         if !self.review.peek().shown {
             self.review.write().shown = true;
-        }
-    }
-
-    fn review_post(mut self, mut message: Value) {
-        message["ps"] = json!(1);
-        host::post_review(&message);
-    }
-
-    /// Posts an event to the frame, once it's listening.
-    fn review_send(mut self, message: Value) {
-        if self.mem.read().review_ready {
-            self.review_post(message);
-        } else {
-            self.mem.write().review_queue.push(message);
-        }
-    }
-
-    fn review_ready(mut self) {
-        if self.mem.read().review_ready {
-            return;
-        }
-        let queued = {
-            let mut mem = self.mem.write();
-            mem.review_ready = true;
-            std::mem::take(&mut mem.review_queue)
-        };
-        for message in queued {
-            self.review_post(message);
         }
     }
 
@@ -136,7 +168,7 @@ impl App {
             return;
         }
         if *self.view.peek() != View::Chat {
-            self.review_send(json!({ "event": "changed" }));
+            self.review_link().changed();
         } else {
             self.mem.write().review_stale = true;
         }
@@ -151,133 +183,49 @@ impl App {
             let last = self.mem.read().review_last.unwrap_or(View::Code);
             self.set_view(last, false);
         }
-        let mut body = json!({ "path": path, "diff": diff });
-        if let Some(line) = line {
-            body["line"] = json!(line);
-        }
-        self.review_send(json!({ "event": "open", "body": body }));
+        self.review_link().open(Open {
+            path: path.to_string(),
+            line: line.map(|l| l as usize),
+            diff,
+        });
     }
 
-    pub fn review_ask(mut self, id: Value, t: &'static str, body: Value) {
-        // Asked before the connection is up (a reload that comes back side by side), or while
-        // it's down: it goes once there is one, rather than failing a read that only has to wait.
+    /// One of pullspace's questions, asked of tamale. Asked before the connection is up (a
+    /// reload that comes back side by side), or while it's down, it goes once there is one,
+    /// rather than failing a read that only has to wait.
+    async fn review_ask(mut self, t: &'static str, body: Value) -> Result<Value, String> {
         if !self.is_ready() {
-            self.mem.write().review_held.push((id, t, body));
-            return;
+            let (tx, rx) = oneshot::channel();
+            self.mem.write().review_held.push(tx);
+            let _ = rx.await;
         }
-        let seq = {
-            let mut c = self.conn.write();
-            c.seq += 1;
-            c.seq
-        };
-        self.mem.write().review_pending.insert(seq, id.clone());
-        let mut message = json!({ "t": t, "seq": seq });
-        if let (Some(m), Value::Object(body)) = (message.as_object_mut(), body) {
-            m.extend(body);
-        }
-        if !self.send(message, true) {
-            self.mem.write().review_pending.remove(&seq);
-            self.review_shown();
-            return self.review_post(json!({ "id": id, "error": "Not connected to tamale." }));
-        }
-        spawn_forever(async move {
-            host::sleep(REVIEW_TIMEOUT).await;
-            if self.mem.write().review_pending.remove(&seq).is_some() {
-                self.review_shown();
-                self.review_post(json!({ "id": id, "error": "tamale took too long to answer." }));
-            }
-        });
-    }
-
-    pub fn review_reply(mut self, m: &Value) {
-        let Some(seq) = m.get("seq").and_then(Value::as_u64) else {
-            return;
-        };
-        let Some(id) = self.mem.write().review_pending.remove(&seq) else {
-            return;
-        };
+        let m = self
+            .request_reply(t, body, REVIEW_TIMEOUT)
+            .await
+            .map_err(|e| match e.as_str() {
+                "tamale didn't answer in time." => "tamale took too long to answer.".to_string(),
+                _ => e,
+            })?;
         match m.get("error") {
-            Some(error) if !error.is_null() => {
-                self.review_post(json!({ "id": id, "error": error }))
-            }
-            _ => self.review_post(
-                json!({ "id": id, "body": m.get("body").cloned().unwrap_or(Value::Null) }),
-            ),
-        }
-        if m.get("t").and_then(Value::as_str) != Some("ps_snapshot") {
-            return;
-        }
-        // It has the workspace (or why not), so it has something to draw. A bundle from before
-        // `ready` is listening by now too.
-        spawn_forever(async move {
-            host::sleep(60).await;
-            self.review_shown();
-        });
-        self.review_ready();
-    }
-
-    /// A message from the frame.
-    pub fn from_review(mut self, m: Value) {
-        if m.get("ps").and_then(Value::as_i64) != Some(1) {
-            return;
-        }
-        let t = m.get("t").and_then(Value::as_str).unwrap_or("");
-        match t {
-            "ready" => return self.review_ready(),
-            "quote" => return self.review_quote(m.get("body").cloned().unwrap_or(Value::Null)),
-            "missing" => {
-                let path: String = m["body"]["path"]
-                    .as_str()
-                    .unwrap_or("")
-                    .chars()
-                    .take(200)
-                    .collect();
-                return self.toast(format!("`{path}` isn't a file in this repository."), 5000);
-            }
-            _ => {}
-        }
-        let Some(id) = m.get("id").filter(|id| id.is_number()).cloned() else {
-            return;
-        };
-        match t {
-            "snapshot" => self.review_ask(id, "ps_snapshot", json!({})),
-            "blobs" => {
-                let wants: Vec<Value> = m["body"]["wants"]
-                    .as_array()
-                    .map(|w| {
-                        w.iter()
-                            .take(1024)
-                            .filter(|w| w["sha"].is_string() && w["path"].is_string())
-                            .map(|w| json!({ "sha": w["sha"], "path": w["path"] }))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                self.review_ask(id, "ps_blobs", json!({ "wants": wants }));
-            }
-            _ => self.review_post(
-                json!({ "id": id, "error": format!("tamale doesn't answer \"{t}\"") }),
-            ),
+            Some(error) if !error.is_null() => Err(error
+                .as_str()
+                .map_or_else(|| error.to_string(), str::to_string)),
+            _ => Ok(m.get("body").cloned().unwrap_or(Value::Null)),
         }
     }
 
     /// What the reader asked about in the code (a line, a selection, or the file), quoted
     /// into the prompt.
-    fn review_quote(mut self, body: Value) {
-        let path = body["path"].as_str().unwrap_or("").to_string();
+    fn review_quote(mut self, quote: Quote) {
+        let path = quote.path;
         if path.is_empty() {
             return;
         }
-        let line = body["line"].as_f64().map(|l| l as u64);
-        if !body["line"].is_null() && line.is_none() {
-            return;
-        }
-        let end = body["end"]
-            .as_f64()
-            .map(|e| e as u64)
-            .filter(|e| line.is_some_and(|l| *e > l));
-        let text: String = body["text"]
-            .as_str()
-            .unwrap_or("")
+        let line = quote.line;
+        let end = quote.end.filter(|e| line.is_some_and(|l| *e > l));
+        let text: String = quote
+            .text
+            .unwrap_or_default()
             .replace('\r', "")
             .trim_end_matches('\n')
             .chars()

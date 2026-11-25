@@ -1296,9 +1296,10 @@ body.chef .msg.user { border-color: rgba(242, 169, 59, 0.18); }
 .dragmask { position: fixed; inset: 0; z-index: 100; cursor: col-resize; }
 
 .review { position: relative; display: flex; flex: 1; min-width: 0; background: var(--bg); }
-.review-frame { position: relative; flex: 1; display: block; width: 100%; min-height: 0; border: 0; background: var(--bg); opacity: 0; transition: opacity 160ms var(--ease); }
-.review.shown .review-frame { opacity: 1; }
-/* Until pullspace has something to show (its module is about 2 MB the first time). */
+/* pullspace, drawn in this page: it fills the box it's given (see pullspace_embed::css). */
+.review-pane { position: relative; flex: 1; display: flex; width: 100%; min-width: 0; min-height: 0; background: var(--bg); opacity: 0; transition: opacity 160ms var(--ease); }
+.review.shown .review-pane { opacity: 1; }
+/* Until pullspace has something to show: tamale's first answer about the working tree. */
 .review-wait {
   position: absolute;
   inset: 0;

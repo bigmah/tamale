@@ -1,4 +1,5 @@
-//! `/web`: a chat-first browser UI for the session, with pullspace beside it for the code.
+//! `/web`: a chat-first browser UI for the session, with pullspace beside it for the code
+//! (drawn by the same WebAssembly module as the rest of the page: see `web/src/review.rs`).
 //!
 //! Unlike `/browser`, which mirrors the terminal's cells, this sends the conversation
 //! itself as JSON over a WebSocket: entries (assistant markdown already rendered to
@@ -66,6 +67,10 @@ use mirror::Mirror;
 
 const PAGE: &str = include_str!("web/index.html");
 const STYLE: &str = include_str!("web/app.css");
+/// The page's stylesheet as served: every rule kept out of pullspace's box, since pullspace
+/// is drawn in this page with a stylesheet of its own (see `pullspace_embed::css`).
+static SERVED_STYLE: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| pullspace_embed::css::outside(STYLE));
 /// The page's app: tamale's web UI in Dioxus (`web/`), built to WebAssembly by `web/build.sh`.
 const SCRIPT: &str = include_str!("web/dist/app.js");
 const MODULE: &[u8] = include_bytes!("web/dist/app_bg.wasm.gz");
@@ -306,12 +311,19 @@ impl IntoResponse for Asset {
 
 /// Gemini's Live API is the one site the page talks to besides tamale (see `gemini`), and
 /// videos play from the `blob:` URLs the page makes of what it's sent. The page is a
-/// WebAssembly module (tamale's `web/`), which `wasm-unsafe-eval` lets the browser compile; it
-/// runs no script text, and sets styles through the CSSOM rather than inline.
+/// WebAssembly module (tamale's `web/`), which `wasm-unsafe-eval` lets the browser compile.
+///
+/// pullspace, the code view, is drawn in the page by the same module, and needs two things
+/// tamale's own code doesn't: `unsafe-eval`, since it runs small scripts through Dioxus'
+/// `document::eval` (a `Function` made of text), and inline styles, for its stylesheet and
+/// the sizes of its panes. Inline script stays shut, so a summary's link bridge in one of its
+/// `srcdoc` frames (which inherit this policy) doesn't run. Before, pullspace had a frame of
+/// this origin to itself, under its own looser policy (`pullspace_embed::CSP`).
 const PAGE_CSP: &str = "default-src 'self'; connect-src 'self' \
      https://generativelanguage.googleapis.com wss://generativelanguage.googleapis.com; \
-     img-src 'self' data: blob:; media-src blob:; style-src 'self'; \
-     script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'; \
+     img-src 'self' data: blob:; media-src blob:; font-src 'self' data:; \
+     style-src 'self' 'unsafe-inline'; \
+     script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'; \
      form-action 'none'; frame-ancestors 'none'";
 
 /// Scripts run, but in an opaque origin that can't read this server's pages or open its
@@ -339,32 +351,6 @@ fn asset(shared: &Shared, path: &str) -> Asset {
             bytes: None,
         }
     };
-    // The review panel: pullspace's bundle, from the pullspace-embed crate.
-    if let Some(file) = pullspace_embed::file(path) {
-        let mut headers = vec![
-            (header::CONTENT_TYPE, file.content_type),
-            (
-                header::CACHE_CONTROL,
-                if file.immutable {
-                    "private, max-age=31536000, immutable"
-                } else {
-                    "no-store"
-                },
-            ),
-            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
-            (header::REFERRER_POLICY, "no-referrer"),
-            (header::CONTENT_SECURITY_POLICY, pullspace_embed::CSP),
-        ];
-        if let Some(encoding) = file.encoding {
-            headers.push((header::CONTENT_ENCODING, encoding));
-        }
-        return Asset {
-            status: StatusCode::OK,
-            headers,
-            body: String::new(),
-            bytes: Some(file.body),
-        };
-    }
     match path {
         "/" => ok(
             "text/html; charset=utf-8",
@@ -376,7 +362,7 @@ fn asset(shared: &Shared, path: &str) -> Asset {
                 (header::CONTENT_SECURITY_POLICY, PAGE_CSP),
             ],
         ),
-        "/app.css" => ok("text/css; charset=utf-8", STYLE, &[]),
+        "/app.css" => ok("text/css; charset=utf-8", &SERVED_STYLE, &[]),
         "/app.js" => ok("text/javascript; charset=utf-8", SCRIPT, &[]),
         // The app's module, gzipped. Its URL carries a version (see `web/build.sh`), so it
         // can be cached for good.
@@ -485,8 +471,6 @@ impl Server {
             .route("/app_bg.wasm", get(module))
             .route("/artifact-frame", get(artifact_frame))
             .route("/artifact/{id}", get(artifact))
-            .route("/pullspace/", get(pullspace_file))
-            .route("/pullspace/{file}", get(pullspace_file))
             .with_state(shared.clone());
         let task = tokio::spawn(async move {
             match loopback {
@@ -728,23 +712,6 @@ async fn artifact(
         return StatusCode::FORBIDDEN.into_response();
     }
     asset(&shared, &format!("/artifact/{id}")).into_response()
-}
-
-/// The review panel's frame: pullspace (see [`pullspace`]), served only to this
-/// server's page, here and through a hub alike.
-async fn pullspace_file(
-    State(shared): State<Arc<Shared>>,
-    file: Option<Path<String>>,
-    headers: HeaderMap,
-) -> Response {
-    if !shared.own_host(&headers) {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    let path = format!("/pullspace/{}", file.map(|f| f.0).unwrap_or_default());
-    if !tamale_hub_protocol::tunnelled_path(&path) {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    asset(&shared, &path).into_response()
 }
 
 async fn socket(

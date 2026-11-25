@@ -152,7 +152,8 @@ pub fn tunnelled_path(path: &str) -> bool {
             // tamale's page before it was WebAssembly; kept for older tamales.
             | "/noise.js"
             | "/artifact-frame"
-            // The review panel: pullspace, in a frame (see tamale's `src/web/pullspace.rs`).
+            // The review panel when it was pullspace in a frame; tamale draws it in the page
+            // now. Kept for older tamales.
             | "/pullspace/"
             | "/pullspace/pullspace.js"
             | "/pullspace/pullspace_bg.wasm"

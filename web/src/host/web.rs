@@ -39,19 +39,6 @@ fn set(target: &JsValue, key: &str, value: impl Into<JsValue>) {
     let _ = Reflect::set(target, &JsValue::from_str(key), &value.into());
 }
 
-/// A plain object from `json`, to post to a frame.
-fn to_js(json: &Value) -> JsValue {
-    js_sys::JSON::parse(&json.to_string()).unwrap_or(JsValue::NULL)
-}
-
-fn from_js(value: &JsValue) -> Value {
-    js_sys::JSON::stringify(value)
-        .ok()
-        .and_then(|s| s.as_string())
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(Value::Null)
-}
-
 const KEY_STORED: &str = "tamale.e2e.key";
 
 /// Where this page is, from its address: `?t=` is the token; through a hub, `?e2e=1` says the
@@ -384,13 +371,24 @@ pub fn scroll_selector_into_view(selector: &str) {
     }
 }
 
-/// Focuses the frame with `id`, so keys go to what's in it.
-pub fn focus_frame(id: &str) {
-    if let Some(frame) = by_id(id).and_then(|e| e.dyn_into::<HtmlIFrameElement>().ok()) {
-        let _ = frame.focus();
-        if let Some(w) = frame.content_window() {
-            let _ = w.focus();
-        }
+/// The code view's element: everything pullspace draws is inside it.
+const CODE: &str = "review";
+
+thread_local! {
+    /// Whether the pointer last went down in the code view.
+    static POINTER_IN_CODE: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Focuses pullspace, so keys go to it.
+pub fn focus_code() {
+    if let Some(code) = document()
+        .query_selector(&format!("#{CODE} .pullspace"))
+        .ok()
+        .flatten()
+        .and_then(|e| e.dyn_into::<HtmlElement>().ok())
+    {
+        let _ = code.focus();
+        POINTER_IN_CODE.set(true);
     }
 }
 
@@ -688,6 +686,17 @@ fn key_of(ev: &KeyboardEvent, prompt: &str) -> Key {
         .map(|t| t.tag_name().to_ascii_lowercase())
         .unwrap_or_default();
     let in_prompt = target.as_ref().is_some_and(|t| t.id() == prompt);
+    let code = by_id(CODE);
+    let in_code = match (&target, &code) {
+        (Some(t), Some(code)) if code.contains(Some(t)) => true,
+        // Focus on nothing in particular: where the pointer last went down says.
+        (Some(t), Some(code)) => {
+            (t.tag_name().eq_ignore_ascii_case("body") || t.tag_name().eq_ignore_ascii_case("html"))
+                && POINTER_IN_CODE.get()
+                && code.client_width() > 0
+        }
+        _ => false,
+    };
     let prompt_empty = by_id(prompt)
         .and_then(|e| e.dyn_into::<HtmlTextAreaElement>().ok())
         .is_none_or(|t| t.value().is_empty());
@@ -703,6 +712,7 @@ fn key_of(ev: &KeyboardEvent, prompt: &str) -> Key {
         in_prompt,
         prompt_empty,
         default_prevented: ev.default_prevented(),
+        in_code,
     }
 }
 
@@ -786,6 +796,19 @@ pub fn install(keys: KeyHandler, events: UnboundedSender<HostEvent>, prompt: &'s
             false,
         );
     }
+    // Where the pointer last went down, for keys pressed with the focus on nothing: in the
+    // code view they're pullspace's.
+    listen(
+        &document(),
+        "pointerdown",
+        Closure::new(move |ev: JsValue| {
+            let ev: web_sys::Event = ev.unchecked_into();
+            let target = ev.target().and_then(|t| t.dyn_into::<web_sys::Node>().ok());
+            let inside = by_id(CODE).is_some_and(|code| code.contains(target.as_ref()));
+            POINTER_IN_CODE.set(inside);
+        }),
+        true,
+    );
     // File paths in replies (rendered by tamale, so not the app's own elements) open in the
     // code view.
     {
@@ -927,18 +950,6 @@ fn frame_message(ev: &MessageEvent) -> Option<HostEvent> {
             return None;
         }
     }
-    // The code view, which is of this page's origin.
-    if let Some(review) = by_id("review-frame").and_then(|e| e.dyn_into::<HtmlIFrameElement>().ok())
-        && review
-            .content_window()
-            .is_some_and(|cw| Object::is(&source, &cw))
-    {
-        let origin = w.location().origin().ok()?;
-        if ev.origin() != origin {
-            return None;
-        }
-        return Some(HostEvent::Review(from_js(&data)));
-    }
     // An artifact's frame, sized to fit, or asking for its document.
     let frames = document().query_selector_all("iframe[data-frame]").ok()?;
     for i in 0..frames.length() {
@@ -980,46 +991,6 @@ fn frame_message(ev: &MessageEvent) -> Option<HostEvent> {
         }
     }
     None
-}
-
-// ---------------------------------------------------------------- the code view
-
-/// Posts `message` to the code view's frame, which only listens to this page's origin.
-pub fn post_review(message: &Value) {
-    let Some(frame) = by_id("review-frame").and_then(|e| e.dyn_into::<HtmlIFrameElement>().ok())
-    else {
-        return;
-    };
-    let (Some(w), Ok(origin)) = (frame.content_window(), window().location().origin()) else {
-        return;
-    };
-    let _ = w.post_message(&to_js(message), &origin);
-}
-
-/// Keys go to the frame while it has the focus; ⌘B is still the page's.
-pub fn hook_review_keys(events: UnboundedSender<HostEvent>) {
-    let Some(frame) = by_id("review-frame").and_then(|e| e.dyn_into::<HtmlIFrameElement>().ok())
-    else {
-        return;
-    };
-    let Some(w) = frame.content_window() else {
-        return;
-    };
-    let f = Closure::<dyn FnMut(JsValue)>::new(move |ev: JsValue| {
-        let ev: KeyboardEvent = ev.unchecked_into();
-        if (ev.meta_key() || ev.ctrl_key())
-            && !ev.shift_key()
-            && !ev.alt_key()
-            && ev.key().eq_ignore_ascii_case("b")
-        {
-            ev.prevent_default();
-            let _ = events.unbounded_send(HostEvent::ToggleCode);
-        }
-    });
-    // A frame of another origin (it never is) would refuse; nothing to do then.
-    let _ =
-        w.add_event_listener_with_callback_and_bool("keydown", f.as_ref().unchecked_ref(), true);
-    f.forget();
 }
 
 // ---------------------------------------------------------------- fetch

@@ -79,9 +79,9 @@ back to the terminal, and `Ctrl+C` quits. Any number of tabs can be open.
   - While you're on the code alone and the agent asks for an approval or an answer, the
     chat comes back.
 
-  It works through a hub too: pullspace's files come through the tunnel like the page's
-  (the module gzipped, about 2 MB, cached by the browser), and the repository's files over
-  the session's socket, end-to-end encrypted like everything else on it.
+  It works through a hub too: pullspace is part of the page's module, which comes through
+  the tunnel (gzipped, cached by the browser), and the repository's files come over the
+  session's socket, end-to-end encrypted like everything else on it.
 - **Artifacts.** During a web session replies are brief: a few sentences, or a list of at
   most 10 items. A longer answer (more than 10 items, or tables, diagrams or long code) comes
   as a sentence or three of summary followed by an HTML artifact that carries all of it: a
@@ -187,15 +187,16 @@ its own outside tamale's workspace) and compiled to WebAssembly: `src/web/index.
 session as signals (`web/src/app.rs`) that the components (`web/src/ui/`) draw, keeps the
 connection (`web/src/conn.rs`), seals it end to end on a session reached through a hub
 (`web/src/e2e.rs`, the `snow` crate, checked byte for byte against tamale's vectors), and
-reaches the browser through web-sys (`web/src/host/web.rs`) rather than script, so the CSP
-only adds `wasm-unsafe-eval`. Replies keep coming as HTML rendered by tamale; the page splits
+reaches the browser through web-sys (`web/src/host/web.rs`) rather than script. The CSP adds
+`wasm-unsafe-eval`, and for pullspace (below) `unsafe-eval` and inline styles; inline script
+stays shut. Replies keep coming as HTML rendered by tamale; the page splits
 them into their top-level blocks, so streaming redraws only the last one and artifacts above
 it don't reload. The built app is checked in under `src/web/dist` (the module gzipped, about
-640 KB), so building tamale needs no wasm toolchain. After changing `web/`, run
+2.4 MB with pullspace in it), so building tamale needs no wasm toolchain. After changing `web/`, run
 `web/build.sh` (it needs the `dx` CLI, `cargo install dioxus-cli --version 0.7.10`, and the
 `wasm32-unknown-unknown` target), then rebuild tamale. `cd web && cargo test` runs its own
-tests. A hub passes `/app_bg.wasm` through like pullspace's module; a hub from before the
-page was WebAssembly doesn't, and needs updating.
+tests. A hub passes `/app_bg.wasm` through; a hub from before the page was WebAssembly
+doesn't, and needs updating.
 
 **The desktop app** (`web/src/shell.rs`, `--features desktop`) is a window onto your
 sessions, a wrapper around tamale: `cd web && cargo run --release --no-default-features
@@ -223,33 +224,28 @@ already and prints the address; `tamale web new` starts a session in the current
 first. Unlike `/web`, the session's terminal goes on showing the conversation, and no browser
 opens.
 
-**The code view** is pullspace's own WebAssembly build, from the `pullspace-embed` crate
-in [pullspace's repository](https://github.com/bigmah/pullspace) (`crates/embed`). The crate
-carries the built bundle, checked in there, and the types of the messages between the frame
-and its page, so building tamale needs no wasm toolchain. tamale serves the bundle at
-`/pullspace/` (to this server's page only, with the crate's CSP, which keeps it from reaching
-anything but this server; a hub tunnels these paths too, with the module's bytes sent as
-base64 in the `got` frame). It runs in a same-origin frame as `/pullspace/?embed` and asks the
-page for `snapshot` (each side's files as git blob hashes) and `blobs` (their bytes) over
-`postMessage`; the page forwards them as `ps_snapshot` and `ps_blobs` (`src/web/pullspace.rs`),
-which run git as `/diff` does and hash working-tree files themselves. The frame says `ready`
-once it is listening; from then the page posts it `changed` (read the files again) and
-`open` (show this file, at this line), and it posts back `quote` (Ask) and `missing` (an
-`open` that named no file). The page has no chrome around the frame: pullspace's own bar is
-the pane's header, and it lays itself out for whatever width it is given. The count on the
-switch is `diff_stat` (`src/web/diff.rs`). pullspace keeps the files it reads in the browser's
-own filesystem, which a browser offers only to a secure context; a page opened at this
-machine's network address (`/web lan`) is not one, and there it holds them in memory instead.
-To change it, change pullspace, run its `crates/embed/build.sh` (it needs the `dx`
-CLI) and commit the bundle there, then point tamale's `pullspace-embed` dependency at that
-commit. `cargo test --bin tamale fake_review_page -- --ignored --nocapture` serves a page
-with a sample conversation and the code view on a made-up repository (or `TAMALE_FAKE_ROOT`)
+**The code view** is pullspace, a Dioxus app too, drawn in the page by the same module:
+`web/` depends on the `pullspace` crate and renders `pullspace::Embedded` with a
+`pullspace::Link` to a `pullspace::Host` (`web/src/review.rs`). pullspace asks it for
+`snapshot` (each side's files as git blob hashes) and `blobs` (their bytes), which go over
+the socket as `ps_snapshot` and `ps_blobs` (`src/web/pullspace.rs`, which runs git as `/diff`
+does and hashes working-tree files itself); the page tells it `changed` (read the files
+again) and `open` (show this file, at this line) through the link, and it tells the page
+`quote` (Ask) and `missing` (an `open` that named no file). The page has no chrome around
+it: pullspace's own bar is the pane's header, and it lays itself out for the width of its
+box. The two stylesheets stop at that box, `.pullspace`: pullspace scopes its own to it, and
+the server serves `app.css` with every rule kept out of it (`pullspace_embed::css`, from the
+`pullspace-embed` crate in pullspace's repository, which also has the message types). Keys
+pressed in the code are pullspace's, as they were in a page of its own, except `⌘B`. The
+count on the switch is `diff_stat` (`src/web/diff.rs`). pullspace keeps the files it reads
+in the browser's own filesystem, which a browser offers only to a secure context; a page
+opened at this machine's network address (`/web lan`) is not one, and there it holds them in
+memory instead. To change it, change pullspace and run `web/build.sh`: `web/` and tamale take
+it by path from `../pullspace` beside this repository.
+`cargo test --bin tamale fake_review_page -- --ignored --nocapture` serves a page with a sample conversation and the code view on a made-up repository (or `TAMALE_FAKE_ROOT`)
 to try it in a browser; `TAMALE_FAKE_LAN=1` serves it at this machine's network address
 instead, which is how a phone sees it and where the browser withholds storage and the
 clipboard; with `TAMALE_HUB_URL` and `TAMALE_HUB_KEY` set it also connects to
 that hub and prints a link in. `TAMALE_FAKE_VIDEO=<path>` adds a reply that shows that video,
 `TAMALE_FAKE_ARTIFACT=1` one with an artifact, and prompts the page sends are printed as
-`SEND=…`. To try a pullspace you haven't pushed, add
-`--config 'patch."https://github.com/bigmah/pullspace".pullspace-embed.path="../pullspace/crates/embed"'`
-to the `cargo` command (it rewrites the crate's entry in `Cargo.lock`; `git checkout Cargo.lock`
-afterwards).
+`SEND=…`.

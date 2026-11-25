@@ -253,8 +253,8 @@ impl App {
         self.set_conn("live", title);
         self.ask_changes();
         let held = std::mem::take(&mut self.mem.write().review_held);
-        for (id, t, body) in held {
-            self.review_ask(id, t, body);
+        for waiting in held {
+            let _ = waiting.send(());
         }
         let due: Vec<String> = self.mem.read().artifacts_due.keys().cloned().collect();
         for id in due {

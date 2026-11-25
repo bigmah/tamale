@@ -443,10 +443,6 @@ async fn on_the_network_this_machine_gets_a_loopback_address_too() {
 
 #[tokio::test]
 async fn relayed_tabs_get_the_same_session_and_pages_as_local_ones() {
-    // The review panel's files are among the pages a hub tunnels.
-    for path in pullspace_embed::paths() {
-        assert!(tamale_hub_protocol::tunnelled_path(&path), "{path}");
-    }
     use tamale_hub_protocol::{ToAgent, ToHub};
     // A stand-in hub: welcomes the agent, opens one channel, asks for the page.
     let (frames_tx, mut frames) = mpsc::unbounded_channel::<ToHub>();
@@ -480,7 +476,7 @@ async fn relayed_tabs_get_the_same_session_and_pages_as_local_ones() {
                     .unwrap();
                     ws.send(send(&ToAgent::Get {
                         r: 3,
-                        path: "/pullspace/pullspace_bg.wasm".into(),
+                        path: "/app_bg.wasm".into(),
                     }))
                     .await
                     .unwrap();
@@ -538,19 +534,14 @@ async fn relayed_tabs_get_the_same_session_and_pages_as_local_ones() {
                 body,
                 base64,
             } => {
-                // The review panel's module: bytes, so base64, and gzipped.
+                // The page's module: bytes, so base64, and gzipped.
                 use base64::Engine;
                 assert_eq!(status, 200);
                 assert!(base64);
                 let bytes = base64::engine::general_purpose::STANDARD
                     .decode(body)
                     .unwrap();
-                assert_eq!(
-                    bytes,
-                    pullspace_embed::file("/pullspace/pullspace_bg.wasm")
-                        .unwrap()
-                        .body
-                );
+                assert_eq!(bytes, super::MODULE);
                 assert!(
                     headers
                         .iter()
@@ -1798,4 +1789,43 @@ fn tool_output_is_clipped_at_a_character_boundary() {
     };
     assert!(cut);
     assert_eq!(output.unwrap().len(), MAX_TOOL_OUTPUT);
+}
+
+/// pullspace is drawn in the page with a stylesheet of its own, so every rule of the page's
+/// stops at its box: `svg`, `button` and the class names both use (`.app`, `.main`…).
+#[test]
+fn the_pages_stylesheet_stops_at_pullspaces_box() {
+    let served: &str = &SERVED_STYLE;
+    let plain = pullspace_embed::css::strip_comments(STYLE);
+    let count = |s: &str, c: char| s.chars().filter(|x| *x == c).count();
+    assert_eq!(count(served, '{'), count(&plain, '{'));
+    assert_eq!(count(served, '}'), count(&plain, '}'));
+    for rule in ["svg", "button", ".app", ".main", ".topbar"] {
+        assert!(
+            served.contains(&format!("\n{rule}:where(:not(.pullspace *)){{")),
+            "{rule}"
+        );
+    }
+    // Every selector of every style rule carries the guard; at-rules and keyframes don't.
+    let mut depth_in_keyframes = None;
+    let mut depth = 0;
+    for line in served.lines() {
+        let line = line.trim();
+        if line.starts_with("@keyframes") {
+            depth_in_keyframes = Some(depth);
+        }
+        if depth_in_keyframes.is_none() && !line.starts_with('@') && line.contains('{') {
+            let selectors = &line[..line.find('{').unwrap()];
+            assert!(
+                selectors
+                    .trim_start_matches('}')
+                    .contains(":where(:not(.pullspace *))"),
+                "{line}"
+            );
+        }
+        depth += count(line, '{') as i32 - count(line, '}') as i32;
+        if depth_in_keyframes.is_some_and(|d| depth <= d) {
+            depth_in_keyframes = None;
+        }
+    }
 }

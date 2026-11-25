@@ -85,8 +85,6 @@ fn start(mut app: App) {
                 }
                 HostEvent::ArtifactHeight { frame, height } => app.set_height(frame, height),
                 HostEvent::FrameReady { target } => app.frame_ready(target),
-                HostEvent::Review(m) => app.from_review(m),
-                HostEvent::ToggleCode => app.toggle_review(),
                 HostEvent::HubClose => app.end_session(),
                 HostEvent::OpenPath { path, diff } => {
                     if !app.is_chef() {
@@ -119,6 +117,10 @@ fn on_key(app: App, key: &Key) -> bool {
     if mod_ && key.key.eq_ignore_ascii_case("b") {
         app.toggle_review();
         return true;
+    }
+    // Pressed in the code view: pullspace's, as if it were a page of its own.
+    if key.in_code {
+        return false;
     }
     let overlay = app.ending.peek().open
         || *app.help.peek()
@@ -229,7 +231,11 @@ fn Page() -> Element {
     let review = app.review.read().clone();
     let toast = app.toast.read().clone();
     let lock = app.lock.read().clone();
-    let pullspace = format!("{}/pullspace/?embed", app.place.read().frames);
+    // Made by `load_review` before `loaded` is set, so it's there whenever it's drawn.
+    let link = review
+        .loaded
+        .then(|| app.mem.read().review_link.clone())
+        .flatten();
     rsx! {
         div { class: "app",
             Topbar {}
@@ -261,13 +267,9 @@ fn Page() -> Element {
                         span { class: "review-wait-bar" }
                         span { id: "review-wait-note", "{review.note}" }
                     }
-                    if review.loaded {
-                        iframe {
-                            class: "review-frame",
-                            id: "review-frame",
-                            src: "{pullspace}",
-                            title: "Code, in pullspace",
-                            onload: move |_| app.review_loaded(),
+                    if let Some(link) = link {
+                        div { class: "review-pane",
+                            pullspace::Embedded { link }
                         }
                     }
                 }

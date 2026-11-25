@@ -6,7 +6,6 @@
 use std::rc::Rc;
 
 use dioxus::prelude::*;
-use serde_json::Value;
 
 mod web;
 
@@ -18,8 +17,8 @@ pub struct Place {
     /// What links to the session's server start with: empty, as the page is served from
     /// there.
     pub base: String,
-    /// Where the code view (`/pullspace/`) and the empty artifact frame (`/artifact-frame`) are
-    /// served from: the page's own origin, which both need to talk to it.
+    /// Where the empty artifact frame (`/artifact-frame`) is served from: the page's own
+    /// origin, which it needs to talk to it.
     pub frames: String,
     /// Artifacts are posted into `/artifact-frame` rather than loaded by URL: on an encrypted
     /// session, where they can't come through a hub by URL.
@@ -42,7 +41,7 @@ pub enum SocketEvent {
     Closed { code: u16, reason: String },
 }
 
-/// A key pressed anywhere in the page (or in the code view's frame, for ⌘B).
+/// A key pressed anywhere in the page.
 #[derive(Clone, Debug, Default)]
 pub struct Key {
     pub key: String,
@@ -60,6 +59,9 @@ pub struct Key {
     pub in_prompt: bool,
     pub prompt_empty: bool,
     pub default_prevented: bool,
+    /// Whether it was pressed in the code view (pullspace): focus in it, or on nothing after
+    /// the pointer last went down there. Those keys are pullspace's, ⌘B aside.
+    pub in_code: bool,
 }
 
 /// What the document tells the app, besides its own elements' events.
@@ -79,10 +81,6 @@ pub enum HostEvent {
     ArtifactHeight { frame: String, height: f64 },
     /// A frame or tab opened on `/artifact-frame` is ready for its document.
     FrameReady { target: FrameTarget },
-    /// A message from the code view's frame.
-    Review(Value),
-    /// ⌘B in the code view's frame.
-    ToggleCode,
     /// The hub's page asks to close this session (it asked the user first).
     HubClose,
     /// A file path in a reply was clicked: open it in the code view.

@@ -106,10 +106,10 @@ pub struct Changes {
     pub removed: u64,
 }
 
-/// The code view's frame, as the page shows it.
+/// The code view, as the page shows it.
 #[derive(Clone, PartialEq, Default, Debug)]
 pub struct ReviewView {
-    /// Whether the frame has been made: it's loaded the first time the code is shown.
+    /// Whether pullspace has been drawn: it's made the first time the code is shown.
     pub loaded: bool,
     /// Whether it has something to show.
     pub shown: bool,
@@ -217,12 +217,10 @@ pub struct Mem {
     pub run_since: Option<u64>,
     /// The view the code was last shown in, for ⌘B and /review to come back to.
     pub review_last: Option<View>,
-    pub review_ready: bool,
-    pub review_queue: Vec<Value>,
-    /// Socket seq → the frame's request id.
-    pub review_pending: HashMap<u64, Value>,
-    /// What the frame asked for while there was no connection to ask over.
-    pub review_held: Vec<(Value, &'static str, Value)>,
+    /// pullspace, once the code has been shown (see `review`).
+    pub review_link: Option<pullspace::Link>,
+    /// pullspace's questions waiting for a connection to ask them over.
+    pub review_held: Vec<oneshot::Sender<()>>,
     /// Files may have changed while the code was out of sight.
     pub review_stale: bool,
     pub refresh: u64,
@@ -474,7 +472,6 @@ impl App {
                     });
                 }
             }
-            "ps_snapshot" | "ps_blobs" => self.review_reply(&m),
             "artifacts" => {
                 if seq.is_some() && seq == latest("artifacts") {
                     let sessions: Vec<SavedSession> = wire::read(m.get("sessions"));

@@ -11,7 +11,7 @@ publish = false
 
 [features]
 default = ["web"]
-web = ["dioxus/web", "dep:web-sys", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys", "dep:gloo-timers", "getrandom/wasm_js"]
+web = ["dioxus/web", "dep:pullspace", "dep:web-sys", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys", "dep:gloo-timers", "getrandom/wasm_js"]
 desktop = ["dioxus/desktop"]
 
 [dependencies]
@@ -24,6 +24,10 @@ getrandom = "0.3"
 web-time = "1"
 futures-channel = "0.3"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+
+# The code view: pullspace, rendered in this page (see src/review.rs). Its own page's web
+# renderer (the `standalone` feature) is left out; this crate brings dioxus/web.
+pullspace = { path = "../../pullspace", default-features = false, optional = true }
 
 # The page.
 web-sys = { version = "0.3", optional = true, features = [

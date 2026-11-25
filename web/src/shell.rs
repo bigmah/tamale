@@ -151,17 +151,16 @@ fn menu() -> Menu {
 /// What `--check` reports: what the page shows, once it has had time to.
 const CHECK: &str = r#"(() => {
   const q = (s) => document.querySelector(s);
-  const review = document.getElementById('review-frame');
   return JSON.stringify({
     url: location.origin,
     conn: q('#conn')?.className ?? null,
     thread: (q('#thread')?.innerText ?? '').slice(0, 120),
     artifact: q('.artifact iframe')?.style.height ?? null,
     review: q('#review')?.className ?? null,
-    pullspace: (review?.contentDocument?.body?.innerText ?? '').slice(0, 80),
+    pullspace: (q('#review .pullspace')?.innerText ?? '').slice(0, 80),
     voice: !!navigator.mediaDevices?.getUserMedia,
     // Where the main parts are drawn, and in what colours: a page that renders lays them out.
-    layout: Object.fromEntries(['.topbar', '.chat', '#review', '.composer', '.artifact', '#review-frame'].map((s) => {
+    layout: Object.fromEntries(['.topbar', '.chat', '#review', '.composer', '.artifact', '#review .pullspace'].map((s) => {
       const e = q(s);
       if (!e) return [s, null];
       const r = e.getBoundingClientRect();

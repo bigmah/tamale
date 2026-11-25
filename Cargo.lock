@@ -2409,7 +2409,6 @@ dependencies = [
 [[package]]
 name = "pullspace-embed"
 version = "0.1.0"
-source = "git+https://github.com/bigmah/pullspace?rev=f16a1dc2b8bac89df986f3bc31097b3e5fe8dece#f16a1dc2b8bac89df986f3bc31097b3e5fe8dece"
 dependencies = [
  "serde",
 ]
