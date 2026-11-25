@@ -240,8 +240,11 @@ pressed in the code are pullspace's, as they were in a page of its own, except `
 count on the switch is `diff_stat` (`src/web/diff.rs`). pullspace keeps the files it reads
 in the browser's own filesystem, which a browser offers only to a secure context; a page
 opened at this machine's network address (`/web lan`) is not one, and there it holds them in
-memory instead. To change it, change pullspace and run `web/build.sh`: `web/` and tamale take
-it by path from `../pullspace` beside this repository.
+memory instead. To change it, change pullspace and push it, point the `pullspace` dependency
+in `web/Cargo.toml` and `pullspace-embed` in `Cargo.toml` at that commit, and run
+`web/build.sh`. To try a pullspace you haven't pushed, add `--config
+'patch."https://github.com/bigmah/pullspace".pullspace.path="../pullspace"'` (in `web/`) or
+`…pullspace-embed.path="../pullspace/crates/embed"'` to the `cargo`/`dx` command.
 `cargo test --bin tamale fake_review_page -- --ignored --nocapture` serves a page with a sample conversation and the code view on a made-up repository (or `TAMALE_FAKE_ROOT`)
 to try it in a browser; `TAMALE_FAKE_LAN=1` serves it at this machine's network address
 instead, which is how a phone sees it and where the browser withholds storage and the

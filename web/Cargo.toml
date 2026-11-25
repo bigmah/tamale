@@ -27,7 +27,7 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 # The code view: pullspace, rendered in this page (see src/review.rs). Its own page's web
 # renderer (the `standalone` feature) is left out; this crate brings dioxus/web.
-pullspace = { path = "../../pullspace", default-features = false, optional = true }
+pullspace = { git = "https://github.com/bigmah/pullspace", rev = "25ecd3b60dda6f6add7a441ec83e65ab90750419", default-features = false, optional = true }
 
 # The page.
 web-sys = { version = "0.3", optional = true, features = [

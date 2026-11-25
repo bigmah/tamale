@@ -29,7 +29,7 @@ sha1_smol = "1.0.1"
 # The review panel's host protocol (src/web/pullspace.rs) and the stylesheet rewrite that
 # keeps the page's rules out of pullspace's box. pullspace itself is drawn by web/, which
 # depends on the `pullspace` crate; the built bundle (the `assets` feature) isn't needed.
-pullspace-embed = { path = "../pullspace/crates/embed", default-features = false }
+pullspace-embed = { git = "https://github.com/bigmah/pullspace", rev = "25ecd3b60dda6f6add7a441ec83e65ab90750419", default-features = false }
 tamale-browser-protocol = { path = "browser/protocol" }
 tamale-hub-protocol = { path = "hub/protocol" }
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "regex-fancy"] }

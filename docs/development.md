@@ -101,7 +101,7 @@ In a browser:
 - `src/web.rs`, `src/web/` – `/web`: the server and its requests, the page's HTML and CSS,
   and in `dist/` the built app
 - `web/` – the `/web` app (Rust and Dioxus, compiled to WebAssembly by `web/build.sh`, with
-  pullspace, the code view, drawn by it from `../pullspace` beside this repository; with
+  pullspace, the code view, drawn by it from the `pullspace` crate; with
   `--features desktop`, the desktop app that lists your sessions and opens them, bundled by
   `web/bundle-desktop.sh`)
 - `src/web/{mirror,render,artifacts}.rs` – what each tab was last sent, markdown and code as
