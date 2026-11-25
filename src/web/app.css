@@ -189,6 +189,7 @@ body.chef .viewsw { display: none; }
 .pill.mode.ask { color: var(--added); }
 .pill.mode.accept-edits { color: var(--modified); }
 .pill.mode.auto { color: var(--deleted); }
+.pill.mode.read-only { color: var(--accent); }
 .pill.model { color: var(--violet); }
 .ctx { display: flex; align-items: center; gap: 6px; color: var(--fg-faint); font-variant-numeric: tabular-nums; padding: 0 4px; }
 .ctx-bar { width: 44px; height: 4px; border-radius: 4px; background: var(--bg-3); overflow: hidden; }

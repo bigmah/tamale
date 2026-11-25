@@ -4,11 +4,13 @@ The permission mode decides which tool calls wait for your approval:
 
 | Mode | Asks before |
 | --- | --- |
+| `read-only` | nothing: `write_file`, `edit_file`, `bash` and `message_session` are refused |
 | `ask` | `write_file`, `edit_file` and `bash` |
 | `accept-edits` | `bash` |
 | `auto` (default) | nothing |
 
-Reading, searching and web tools never ask. `Shift+Tab` cycles the modes, the status bar
+Reading, searching and web tools never ask. In `read-only` mode the agent can look around
+and explain or plan a change, but allow rules can't let it edit files or run commands. `Shift+Tab` cycles the modes, the status bar
 shows the current one, and `/permissions [mode]` shows the rules or sets the mode.
 
 The approval popup offers **yes**, **yes, and don't ask again this session** for a

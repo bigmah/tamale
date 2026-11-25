@@ -384,7 +384,7 @@ fn Topbar() -> Element {
     };
     let switch = move |v: View| move |_| app.set_view(v, true);
     let desktop = host::desktop();
-    const MODES: [&str; 3] = ["ask", "accept-edits", "auto"];
+    const MODES: [&str; 4] = ["ask", "accept-edits", "auto", "read-only"];
     rsx! {
         header { class: "topbar",
             if desktop {

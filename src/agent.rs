@@ -181,6 +181,13 @@ impl TurnCtx {
 use another approach or ask the user."
                 ));
             }
+            Decision::ReadOnly => {
+                return Err(format!(
+                    "Blocked: the session is in read-only permission mode, so `{name}` can't run. \
+You may read, search and browse, but not edit files, run commands or message sessions. \
+Don't retry; describe the change you would make instead, or ask the user to switch modes."
+                ));
+            }
             Decision::Ask { always } => always,
         };
         let (reply, answer) = oneshot::channel();

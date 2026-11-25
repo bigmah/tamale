@@ -201,7 +201,32 @@ fn rules_and_modes_parse() {
     );
     assert_eq!(Mode::parse("Accept-Edits"), Some(Mode::AcceptEdits));
     assert_eq!(Mode::parse("yolo"), None);
-    assert_eq!(Mode::Ask.next().next().next(), Mode::Ask);
+    assert_eq!(Mode::Ask.next().next().next().next(), Mode::Ask);
+    assert_eq!(Mode::parse("read-only"), Some(Mode::ReadOnly));
+    assert_eq!(Mode::ReadOnly.as_str(), "read-only");
+    assert!(Mode::Ask.looser_than(Mode::ReadOnly));
+}
+
+#[test]
+fn read_only_mode_refuses_changes_even_when_allowed() {
+    let policy = policy(Mode::ReadOnly, &["bash", "write_file", "edit_file"], &[]);
+    for (tool, args) in [
+        ("read_file", json!({ "path": "a.rs" })),
+        ("grep", json!({ "pattern": "x" })),
+        ("web_fetch", json!({ "url": "https://example.com" })),
+        ("agent", json!({ "prompt": "look" })),
+        (crate::chef::READ, json!({})),
+    ] {
+        assert_eq!(policy.check(tool, &args), Decision::Allow, "{tool}");
+    }
+    for (tool, args) in [
+        ("bash", bash("git status")),
+        ("write_file", json!({ "path": "a.rs", "content": "" })),
+        ("edit_file", json!({ "path": "a.rs" })),
+        (crate::chef::MESSAGE, json!({})),
+    ] {
+        assert_eq!(policy.check(tool, &args), Decision::ReadOnly, "{tool}");
+    }
 }
 
 #[test]

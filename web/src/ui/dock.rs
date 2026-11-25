@@ -50,7 +50,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "/permissions",
         args: "[mode]",
-        desc: "Show the rules, or set ask, accept-edits, auto",
+        desc: "Show the rules, or set read-only, ask, accept-edits, auto",
         local: false,
     },
     Command {

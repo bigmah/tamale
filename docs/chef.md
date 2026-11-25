@@ -53,7 +53,7 @@ The chef has four tools, and none of the usual ones: it doesn't edit files or ru
 | `list_sessions` | Every session on the hub: where it runs, its title, model, and whether it's working, waiting for approval, idle or offline. Also notes sessions on this machine that the hub can't reach. | No |
 | `read_session` | A session's recent transcript and status, without disturbing it. | No |
 | `ask_sessions` | A **side question** to one or more sessions, or `all` of them, asked at once. | No |
-| `message_session` | A real prompt into a session, which acts on it. By default it waits for the reply. | In `ask` and `accept-edits` modes |
+| `message_session` | A real prompt into a session, which acts on it. By default it waits for the reply. | In `ask` and `accept-edits` modes (refused in `read-only`) |
 
 A side question is answered by the session's own agent, from its whole conversation, on a copy
 of its history. It can read and search files to answer, but edits and shell commands are refused,

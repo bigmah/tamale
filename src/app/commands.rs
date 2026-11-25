@@ -368,7 +368,7 @@ impl App {
         match permissions::Mode::parse(arg) {
             Some(mode) => self.apply_permission_mode(mode),
             None => self.entries.push(Entry::Error(format!(
-                "Unknown permission mode: {arg} (use ask, accept-edits, auto)"
+                "Unknown permission mode: {arg} (use read-only, ask, accept-edits, auto)"
             ))),
         }
     }

@@ -87,7 +87,7 @@
   In the page, `/voice` talks to the session through Gemini and `/video [what]` has tamale
   animate something with Manim (narrated with Gemini's voice when there's a Gemini key)
 - `/remote [off]` makes the session reachable through a tamale-hub (see [Remote access](remote-access.md))
-- `/permissions [mode]` shows the mode and rules, or sets `ask`, `accept-edits` or `auto`
+- `/permissions [mode]` shows the mode and rules, or sets `read-only`, `ask`, `accept-edits` or `auto`
 - `/clear` resets the conversation, `/quit` (or `/exit`) quits. In the web UI, `/quit` and the
   ⏻ button in the top bar close the session, after asking
 

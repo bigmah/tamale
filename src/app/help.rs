@@ -69,7 +69,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ),
     (
         "/permissions [mode]",
-        "Show the permission mode and rules, or set ask, accept-edits or auto",
+        "Show the permission mode and rules, or set read-only, ask, accept-edits or auto",
     ),
     (
         "/backend [kind]",
@@ -175,7 +175,7 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
             ),
             (
                 "Shift+Tab",
-                "Cycle permission mode: ask → accept-edits → auto",
+                "Cycle permission mode: ask → accept-edits → auto → read-only",
             ),
             (
                 "Ctrl+C",

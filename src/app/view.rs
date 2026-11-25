@@ -568,6 +568,7 @@ impl App {
         };
         let mode = self.permissions.lock().unwrap().mode;
         let mode_color = match mode {
+            permissions::Mode::ReadOnly => Color::Cyan,
             permissions::Mode::Ask => Color::Green,
             permissions::Mode::AcceptEdits => Color::Yellow,
             permissions::Mode::Auto => Color::Red,

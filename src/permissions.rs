@@ -45,6 +45,9 @@ const PATH_TOOLS: &[&str] = &[
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
+    /// Only look: reading, searching and web tools run; edits, shell commands and
+    /// messages to other sessions are refused, whatever the allow rules say.
+    ReadOnly,
     /// Ask before edits and shell commands.
     Ask,
     /// Apply edits without asking; ask before shell commands.
@@ -56,6 +59,7 @@ pub enum Mode {
 impl Mode {
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
+            "read-only" | "read_only" | "readonly" | "read" => Some(Self::ReadOnly),
             "ask" => Some(Self::Ask),
             "accept-edits" | "accept_edits" | "edits" => Some(Self::AcceptEdits),
             "auto" => Some(Self::Auto),
@@ -65,6 +69,7 @@ impl Mode {
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::ReadOnly => "read-only",
             Self::Ask => "ask",
             Self::AcceptEdits => "accept-edits",
             Self::Auto => "auto",
@@ -74,9 +79,10 @@ impl Mode {
     /// Whether this asks about less than `other`.
     pub fn looser_than(self, other: Self) -> bool {
         let leeway = |mode| match mode {
-            Self::Ask => 0,
-            Self::AcceptEdits => 1,
-            Self::Auto => 2,
+            Self::ReadOnly => 0,
+            Self::Ask => 1,
+            Self::AcceptEdits => 2,
+            Self::Auto => 3,
         };
         leeway(self) > leeway(other)
     }
@@ -86,12 +92,14 @@ impl Mode {
         match self {
             Self::Ask => Self::AcceptEdits,
             Self::AcceptEdits => Self::Auto,
-            Self::Auto => Self::Ask,
+            Self::Auto => Self::ReadOnly,
+            Self::ReadOnly => Self::Ask,
         }
     }
 
     pub fn describe(self) -> &'static str {
         match self {
+            Self::ReadOnly => "only read and search; refuse edits and shell commands",
             Self::Ask => "ask before edits and shell commands",
             Self::AcceptEdits => "apply edits without asking; ask before shell commands",
             Self::Auto => "run every tool without asking (deny rules still apply)",
@@ -162,7 +170,7 @@ fn deserialize_mode<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Mode, 
     let value = String::deserialize(deserializer)?;
     Mode::parse(&value).ok_or_else(|| {
         serde::de::Error::custom(format!(
-            "unknown permission mode {value:?} (use ask, accept-edits, auto)"
+            "unknown permission mode {value:?} (use read-only, ask, accept-edits, auto)"
         ))
     })
 }
@@ -172,6 +180,8 @@ pub enum Decision {
     Allow,
     /// Blocked by the named deny rule.
     Deny(String),
+    /// Refused because the mode is read-only.
+    ReadOnly,
     /// Needs approval. `always` holds the session rules offered by "always allow"; it is
     /// empty when the call can't be covered by a rule (e.g. command substitution).
     Ask {
@@ -241,13 +251,17 @@ impl Policy {
         {
             return Decision::Deny(rule.text.clone());
         }
+        // Read-only beats allow rules: only tools that change nothing run.
+        if self.mode == Mode::ReadOnly && !READ_ONLY_TOOLS.contains(&tool) {
+            return Decision::ReadOnly;
+        }
         if self.allowed_by_rules(tool, &subject) {
             return Decision::Allow;
         }
         // A chef's message makes another session act, which is asked about like a command.
         let acts = tool == "bash" || tool == crate::chef::MESSAGE;
         let needs_approval = match self.mode {
-            Mode::Auto => false,
+            Mode::Auto | Mode::ReadOnly => false,
             Mode::AcceptEdits => acts,
             Mode::Ask => acts || EDIT_TOOLS.contains(&tool),
         } && !READ_ONLY_TOOLS.contains(&tool);
