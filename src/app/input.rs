@@ -3,7 +3,7 @@ use crossterm::event::{
 };
 use ratatui::layout::Position;
 
-use super::{App, AppEvent, EFFORT_CHOICES, FooterTab, WHEEL_LINES};
+use super::{App, AppEvent, EFFORT_CHOICES, FooterTab, WHEEL_LINES, vim};
 
 /// Pastes with at least this many lines show collapsed in the prompt.
 const PASTE_COLLAPSE_LINES: usize = 10;
@@ -120,7 +120,6 @@ impl App {
             key = KeyEvent::new_with_kind(KeyCode::Backspace, KeyModifiers::NONE, key.kind);
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let alt = key.modifiers.contains(KeyModifiers::ALT);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
         if (ctrl && matches!(key.code, KeyCode::Char('v' | 'V')))
@@ -228,6 +227,17 @@ impl App {
             return;
         }
 
+        if let Some(key) = self.on_vim_key(key) {
+            let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+            let alt = key.modifiers.contains(KeyModifiers::ALT);
+            let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+            self.on_prompt_key(key, ctrl, alt, shift);
+        }
+        self.clamp_vim_cursor();
+    }
+
+    /// The prompt's own keys, when vim mode hasn't used the key.
+    fn on_prompt_key(&mut self, key: KeyEvent, ctrl: bool, alt: bool, shift: bool) {
         match key.code {
             KeyCode::Char('c') if ctrl => {
                 if self.is_running() {
@@ -262,6 +272,28 @@ impl App {
         }
     }
 
+    /// Gives the key to vim mode, if it's on: the key the prompt should still handle, if
+    /// any (Enter, for `:w`).
+    pub(super) fn on_vim_key(&mut self, key: KeyEvent) -> Option<KeyEvent> {
+        let Some(vim) = &mut self.vim else {
+            return Some(key);
+        };
+        let outcome = vim.on_key(key, &mut self.input, &mut self.cursor);
+        self.prune_pastes();
+        match outcome {
+            vim::Outcome::Pass => Some(key),
+            vim::Outcome::Handled => None,
+            vim::Outcome::Send => Some(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        }
+    }
+
+    /// Keeps the cursor on a character in vim's Normal and Visual modes.
+    pub(super) fn clamp_vim_cursor(&mut self) {
+        if let Some(vim) = &self.vim {
+            vim.clamp(&self.input, &mut self.cursor);
+        }
+    }
+
     /// The keys that edit the prompt, whichever session it's for.
     pub(super) fn on_edit_key(&mut self, key: KeyEvent, ctrl: bool, alt: bool, shift: bool) {
         match key.code {
@@ -275,6 +307,7 @@ impl App {
                 self.cursor = start;
             }
             KeyCode::Char('w') if ctrl => self.delete_word(),
+            KeyCode::Char('t') if ctrl => self.prompt_expanded = !self.prompt_expanded,
             KeyCode::Backspace if alt || ctrl => self.delete_word(),
             KeyCode::Char(c) if !ctrl => self.insert_str(&c.to_string()),
             // Ctrl+H, which many terminals send for it, is Backspace by now (see `on_key`).

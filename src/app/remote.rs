@@ -181,6 +181,13 @@ impl App {
             on_prompt_key(prompt, &view.connection, key, ctrl, live);
             return;
         }
+        let Some(key) = self.on_vim_key(key) else {
+            self.clamp_vim_cursor();
+            return;
+        };
+        let Some(view) = &mut self.remote_view else {
+            return;
+        };
         match key.code {
             KeyCode::Esc if view.status.running && live => {
                 view.connection.send(json!({ "t": "interrupt" }));
@@ -199,6 +206,7 @@ impl App {
             }
             _ => self.on_edit_key(key, ctrl, alt, shift),
         }
+        self.clamp_vim_cursor();
     }
 
     fn send_to_remote(&mut self) {
@@ -232,12 +240,16 @@ impl App {
     pub(super) fn draw_remote_view(&mut self, frame: &mut Frame) {
         let area = frame.area();
         let local_waiting = self.waiting_for_user();
+        let gutter = self.input_gutter();
         let (rows, cursor) = wrap_input(
             &self.input,
             self.cursor,
-            area.width.saturating_sub(4).max(1) as usize,
+            area.width.saturating_sub(2 + gutter).max(1) as usize,
         );
-        let input_height = (rows.len() as u16).clamp(1, 10) + 2;
+        let input_height = self.input_height(rows.len(), area.height);
+        let skip = (cursor.0 + 1).saturating_sub(input_height.saturating_sub(2) as usize);
+        let lines = self.input_lines(rows, skip, Color::Blue);
+        let vim_title = self.vim_title();
         let verbose = self.settings.ui.verbose;
         let Some(view) = &mut self.remote_view else {
             return;
@@ -261,26 +273,18 @@ impl App {
             .collect();
         frame.render_widget(Paragraph::new(waiting), queued_area);
 
-        let visible = input_height.saturating_sub(2) as usize;
-        let skip = (cursor.0 + 1).saturating_sub(visible);
-        let lines: Vec<Line> = rows
-            .into_iter()
-            .enumerate()
-            .skip(skip)
-            .map(|(i, row)| {
-                let prefix = if i == 0 { "› " } else { "  " };
-                Line::from(vec![Span::from(prefix).fg(Color::Blue), Span::from(row)])
-            })
-            .collect();
         let live = matches!(view.link, Link::Live);
-        let block = Block::bordered()
+        let mut block = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(Style::new().fg(if live { Color::Blue } else { Color::DarkGray }))
             .title(format!(" ⇄ {} ", session_name(&view.session)).fg(Color::Blue));
+        if let Some(title) = vim_title {
+            block = block.title_bottom(title);
+        }
         frame.render_widget(Paragraph::new(lines).block(block), input_area);
         if view.prompt.is_none() {
             frame.set_cursor_position(Position::new(
-                input_area.x + 3 + cursor.1 as u16,
+                input_area.x + 1 + gutter + cursor.1 as u16,
                 input_area.y + 1 + (cursor.0 - skip) as u16,
             ));
         }

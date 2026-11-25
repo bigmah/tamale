@@ -24,6 +24,7 @@ mod sessions;
 mod tests;
 mod transcript;
 mod view;
+mod vim;
 mod web;
 
 use rig_core::completion::Message;
@@ -261,6 +262,10 @@ pub struct App {
     session_writer: Option<session::Writer>,
     input: String,
     cursor: usize,
+    /// Vim-style editing of the prompt, while it's on (`/vim`).
+    vim: Option<vim::Vim>,
+    /// Whether the prompt box is drawn taller (Ctrl+T), for writing longer prompts.
+    prompt_expanded: bool,
     /// Big pastes shown collapsed in the prompt: each placeholder and the text it stands for.
     pastes: Vec<(String, String)>,
     /// Pastes collapsed so far, so placeholders stay unique.
@@ -354,6 +359,7 @@ impl App {
             Backend::Api(_) | Backend::Compat(_) | Backend::Unset => Vec::new(),
             login => vec![login.clone()],
         };
+        let vim = settings.ui.vim.then(vim::Vim::default);
         Self {
             backend,
             thread: None,
@@ -400,6 +406,8 @@ impl App {
             session_writer: None,
             input: String::new(),
             cursor: 0,
+            vim,
+            prompt_expanded: false,
             pastes: Vec::new(),
             paste_count: 0,
             queued: agent::Steering::default(),

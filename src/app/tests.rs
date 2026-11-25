@@ -3308,3 +3308,169 @@ async fn without_a_list_the_web_model_picker_gets_the_built_in_one_and_why() {
         "{reply}"
     );
 }
+
+#[tokio::test]
+async fn vim_mode_edits_the_prompt_and_sends_from_normal_mode() {
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    assert!(app.vim.is_none(), "off by default");
+    app.command("/vim");
+    assert!(app.vim.is_some() && app.settings.ui.vim);
+
+    for c in "hello world".chars() {
+        app.on_event(key(KeyCode::Char(c)));
+    }
+    assert_eq!(app.input, "hello world");
+    // Esc goes to Normal mode rather than doing anything else; typing no longer types.
+    app.on_event(key(KeyCode::Esc));
+    for c in "bdw".chars() {
+        app.on_event(key(KeyCode::Char(c)));
+    }
+    assert_eq!(app.input, "hello ");
+    assert_eq!(app.cursor, 5, "on the last character, not past it");
+    app.on_event(key(KeyCode::Char('u')));
+    assert_eq!(app.input, "hello world");
+
+    // A visual selection is drawn highlighted, and the mode is shown.
+    app.on_event(key(KeyCode::Char('0')));
+    app.on_event(key(KeyCode::Char('v')));
+    app.on_event(key(KeyCode::Char('e')));
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 20)).unwrap();
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    let buffer = terminal.backend().buffer();
+    let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+    assert!(text.contains("VISUAL"), "{text}");
+    let reversed = buffer
+        .content
+        .iter()
+        .filter(|cell| cell.modifier.contains(ratatui::style::Modifier::REVERSED))
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert_eq!(reversed, "hello");
+    app.on_event(key(KeyCode::Esc));
+
+    // `j` on the last line doesn't go on to the footer's tabs.
+    app.on_event(key(KeyCode::Char('j')));
+    assert!(app.tab_focus.is_none());
+
+    // Enter sends from Normal mode, and the next prompt starts in Insert mode.
+    app.input = "/verbose on".into();
+    app.on_event(key(KeyCode::Enter));
+    assert!(app.input.is_empty());
+    assert!(app.settings.ui.verbose);
+    assert_eq!(app.vim.as_ref().unwrap().mode, vim::Mode::Insert);
+
+    app.command("/vim off");
+    assert!(app.vim.is_none());
+    app.on_event(key(KeyCode::Esc));
+    app.on_event(key(KeyCode::Char('x')));
+    assert_eq!(app.input, "x");
+}
+
+#[test]
+fn ctrl_t_makes_the_prompt_box_taller() {
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    assert_eq!(app.input_height(1, 40), 3);
+    assert_eq!(
+        app.input_height(30, 40),
+        12,
+        "grows to 10 lines, then scrolls"
+    );
+    app.on_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('t'),
+        KeyModifiers::CONTROL,
+    )));
+    assert!(app.prompt_expanded);
+    assert!(app.input.is_empty(), "Ctrl+T doesn't type");
+    assert_eq!(app.input_height(1, 40), 22, "half the screen");
+    assert_eq!(app.input_height(30, 40), 32, "growing with the prompt");
+    assert_eq!(app.input_height(50, 40), 34, "but leaving the chat room");
+    assert_eq!(
+        app.input_height(1, 6),
+        3,
+        "a tiny terminal still gets a line"
+    );
+    app.on_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('t'),
+        KeyModifiers::CONTROL,
+    )));
+    assert!(!app.prompt_expanded);
+
+    // Vim mode gets a somewhat bigger box.
+    app.command("/vim on");
+    assert_eq!(app.input_height(1, 40), 6);
+    assert_eq!(app.input_height(30, 40), 17);
+    assert_eq!(
+        app.input_height(1, 10),
+        4,
+        "but not more than a small terminal has room for"
+    );
+
+    // `/prompt` sizes the box for the current mode.
+    app.command("/prompt 8");
+    assert_eq!(app.input_height(1, 40), 10);
+    assert_eq!(app.input_height(30, 40), 17, "still growing to 15 lines");
+    app.command("/prompt +");
+    assert_eq!(app.settings.ui.vim_prompt_lines, 10);
+    app.command("/prompt 20");
+    assert_eq!(
+        app.input_height(1, 40),
+        22,
+        "a least height over 15 lifts the most too"
+    );
+    app.command("/prompt reset");
+    assert_eq!(app.settings.ui.vim_prompt_lines, 4);
+    app.command("/prompt nope");
+    assert!(matches!(app.entries.last(), Some(Entry::Error(_))));
+    app.command("/vim off");
+    assert_eq!(
+        app.input_height(1, 40),
+        3,
+        "the plain prompt keeps its own size"
+    );
+    app.command("/prompt 3");
+    assert_eq!(app.input_height(1, 40), 5);
+    assert_eq!(app.settings.ui.vim_prompt_lines, 4);
+}
+
+#[test]
+fn vim_mode_numbers_the_prompt_lines() {
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(
+        client,
+        test_settings("test-model"),
+        Workspace::current().unwrap(),
+    );
+    app.command("/vim on");
+    for c in "fix the bug".chars() {
+        app.on_event(key(KeyCode::Char(c)));
+    }
+    app.on_event(key(KeyCode::Enter));
+    for c in "- in view.rs".chars() {
+        app.on_event(key(KeyCode::Char(c)));
+    }
+    assert_eq!(
+        app.input, "fix the bug\n- in view.rs",
+        "Enter starts a new line"
+    );
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 16)).unwrap();
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    let buffer = terminal.backend().buffer();
+    let rows: Vec<String> = (0..16)
+        .map(|y| (0..60).map(|x| buffer[(x, y)].symbol()).collect())
+        .collect();
+    let screen = rows.join("\n");
+    assert!(screen.contains("│ 1 fix the bug"), "{screen}");
+    assert!(screen.contains("│ 2 - in view.rs"), "{screen}");
+    assert!(screen.contains("INSERT"), "{screen}");
+    assert!(screen.contains("Esc, Enter to send"), "{screen}");
+}

@@ -123,6 +123,12 @@ pub struct AgentSettings {
 pub struct UiSettings {
     pub verbose: bool,
     pub mouse: bool,
+    /// Vim-style modal editing in the prompt (`/vim` toggles it).
+    pub vim: bool,
+    /// The prompt box's height in lines while it's short of text (`/prompt` changes it).
+    pub prompt_lines: u16,
+    /// The same, in vim mode: a little taller by default, for room to move around in.
+    pub vim_prompt_lines: u16,
 }
 
 impl Default for Settings {

@@ -30,6 +30,9 @@ request_timeout_secs = 300
 [ui]
 verbose = false
 mouse = true
+vim = false # vim-style prompt editing; /vim toggles it
+prompt_lines = 1 # least height of the prompt box (/prompt changes it)
+vim_prompt_lines = 4 # the same in vim mode
 
 [permissions]
 mode = "accept-edits"

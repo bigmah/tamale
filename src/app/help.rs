@@ -44,6 +44,14 @@ const COMMANDS: &[(&str, &str)] = &[
         "Toggle mouse wheel scrolling (on by default; hold Shift/Option to select text)",
     ),
     (
+        "/prompt [lines|+|-|reset]",
+        "Set the prompt box's least height in lines (separately for vim mode, where it's 4 by default); Ctrl+T toggles half the screen",
+    ),
+    (
+        "/vim [on|off]",
+        "Toggle vim-style editing in the prompt (off by default; vim = true under [ui] keeps it on)",
+    ),
+    (
         "/copy [all]",
         "Copy the latest reply, or all user/assistant messages, to the clipboard",
     ),
@@ -128,6 +136,10 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
             ("←/→, Home/End", "Move cursor"),
             ("Ctrl+A / Ctrl+E", "Start / end of line"),
             ("Ctrl+U", "Delete to start of line"),
+            (
+                "Ctrl+T",
+                "Make the prompt box taller (half the screen), or back",
+            ),
             ("Ctrl+W, Alt+Backspace", "Delete previous word"),
             ("Backspace / Delete", "Delete character"),
             (
@@ -137,6 +149,50 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
             (
                 "Terminal paste (Cmd+V)",
                 "Pastes text; big pastes show collapsed",
+            ),
+        ],
+    ),
+    (
+        "Vim mode (/vim)",
+        &[
+            (
+                "Enter (Insert)",
+                "New line, indented like this one (a /command still runs)",
+            ),
+            ("Tab (Insert)", "Indent by four spaces"),
+            ("Esc", "Normal mode (Esc again interrupts the agent)"),
+            ("Enter (Normal), :w", "Send the prompt"),
+            ("i a I A o O", "Back to Insert mode"),
+            ("h j k l, w b e, W B E", "Move"),
+            ("{ }, ip ap", "Paragraphs: move, or as text objects"),
+            (">> <<, > < + motion", "Indent / outdent lines"),
+            (
+                "gqq, gq + motion, gqip",
+                "Rewrap to 80 columns (lists and code blocks kept)",
+            ),
+            (".", "Make the last change again"),
+            (
+                ":N, :s/a/b/g, :%s/a/b/gi, :q",
+                "Go to line N, substitute (regex) on this or every line, clear",
+            ),
+            (
+                "0 ^ $, gg G, f t F T ; , %",
+                "Move along the line and the prompt",
+            ),
+            (
+                "d c y + motion, dd cc yy",
+                "Delete, change, yank (with counts: 2dw, 3dd)",
+            ),
+            (
+                "iw aw i\" a\" i( a( i[ i{ …",
+                "Text objects for d, c, y and Visual mode",
+            ),
+            ("x X D C s S Y r J ~", "Quick edits"),
+            ("p P", "Put what was deleted or yanked"),
+            ("u / Ctrl+R", "Undo / redo"),
+            (
+                "v / V",
+                "Select characters / lines, then d, c, y, p, ~, u, U",
             ),
         ],
     ),

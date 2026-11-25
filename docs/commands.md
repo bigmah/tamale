@@ -1,6 +1,28 @@
 # Keys and commands
 
 - `Enter` send · `Alt/Shift+Enter` or `Ctrl+J` newline
+- `Ctrl+T` makes the prompt box taller (half the screen, growing with what you type) for
+  writing longer prompts; `Ctrl+T` again shrinks it back to fit (up to 10 lines)
+- `/prompt [lines|+|-|reset]` sets how tall the prompt box is at least, in lines (it still
+  grows with longer prompts). Vim mode has its own size, 4 lines by default; `prompt_lines`
+  and `vim_prompt_lines` under `[ui]` keep them
+- `/vim [on|off]` toggles vim-style editing in the prompt (`vim = true` under `[ui]` keeps it
+  on). The prompt edits like a small file, with line numbers down the side:
+  - **Insert mode** (where it starts): `Enter` starts a new line, indented like the one
+    before; `Tab` indents by four spaces. A one-line `/command` still runs with `Enter`.
+  - **Sending**: `Esc` then `Enter` (Normal mode), or `:w`. `Esc` in Normal mode interrupts
+    the agent. The next prompt starts in Insert mode.
+  - **Normal mode**: `h j k l`, `w b e W B E`, `0 ^ $`, `gg G`, `{ }`, `f t F T ; ,`, `%`;
+    the `d`, `c`, `y`, `>`, `<` and `gq` operators with motions, counts (`d2w`, `3dd`) and
+    text objects (`iw aw ip ap i" a" i( a( i[ i{`…); `x X D C s S Y r J ~ p P`; `.` to
+    make the last change again; `u` and `Ctrl+R` to undo and redo; `v` and `V` to select.
+    `j`/`k` stay in the prompt (`↑/↓` still recall earlier prompts).
+  - **Formatting**: `>>`/`<<` indent and outdent lines; `gqq`, `gqip` or `gq` on a
+    selection rewraps to 80 columns, keeping list items (`- `, `1. `) and their hanging
+    indent, and leaving headings, tables and code blocks alone.
+  - **Ex commands**: `:N` goes to line N, `:s/pattern/replacement/[gi]` substitutes on the
+    cursor's line and `:%s/…` on every line (regular expressions; `\1` and `&` in the
+    replacement), `:q` clears the prompt (`u` brings it back).
 - `↑/↓` move between lines of the input; on the first/last line they recall earlier
   prompts (past the newest, your unsent draft comes back). Prompts are remembered per
   working directory across sessions in `sessions/.prompts.jsonl`.

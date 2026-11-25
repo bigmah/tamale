@@ -121,6 +121,9 @@ request_timeout_secs = 300 # timeout opening a stream or waiting for its next ev
 [ui]
 verbose = false
 mouse = true
+vim = false # vim-style editing in the prompt: Esc for Normal mode (/vim toggles it)
+prompt_lines = 1 # the prompt box's least height in lines; it grows with longer prompts
+vim_prompt_lines = 4 # the same in vim mode (/prompt changes the current one)
 
 [permissions]
 # ask: prompt before edits and shell commands. accept-edits: prompt before shell

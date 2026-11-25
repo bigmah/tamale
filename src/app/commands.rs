@@ -327,6 +327,76 @@ impl App {
         )));
     }
 
+    pub(super) fn set_vim(&mut self, arg: Option<&str>) {
+        let on = match arg.map(str::to_ascii_lowercase).as_deref() {
+            None => self.vim.is_none(),
+            Some("on" | "true" | "yes" | "1") => true,
+            Some("off" | "false" | "no" | "0") => false,
+            Some(_) => {
+                self.entries.push(Entry::Error(format!(
+                    "Unknown vim mode: {} (use on, off)",
+                    arg.unwrap_or_default()
+                )));
+                return;
+            }
+        };
+        self.settings.ui.vim = on;
+        if !on {
+            self.vim = None;
+        } else if let Some(vim) = &mut self.vim {
+            vim.reset();
+        } else {
+            self.vim = Some(super::vim::Vim::default());
+        }
+        self.entries.push(Entry::Info(if on {
+            "Vim mode on: Esc for Normal mode, i/a/o to type again (set vim = true under [ui] to keep it).".into()
+        } else {
+            "Vim mode off.".into()
+        }));
+    }
+
+    /// `/prompt [lines|+|-|reset]`: how tall the prompt box is, in the current mode.
+    pub(super) fn set_prompt_lines(&mut self, arg: Option<&str>) {
+        let vim = self.vim.is_some();
+        let default = if vim {
+            crate::config::Settings::default().ui.vim_prompt_lines
+        } else {
+            crate::config::Settings::default().ui.prompt_lines
+        };
+        let current = self.prompt_min_lines();
+        let lines = match arg.map(str::to_ascii_lowercase).as_deref() {
+            None => current,
+            Some("+") => current.saturating_add(2),
+            Some("-") => current.saturating_sub(2),
+            Some("reset" | "default" | "auto") => default,
+            Some(n) => match n.parse::<u16>() {
+                Ok(n) => n,
+                Err(_) => {
+                    self.entries.push(Entry::Error(format!(
+                        "Unknown prompt size: {n} (use a number of lines, +, - or reset)"
+                    )));
+                    return;
+                }
+            },
+        }
+        .clamp(1, 100);
+        if vim {
+            self.settings.ui.vim_prompt_lines = lines;
+        } else {
+            self.settings.ui.prompt_lines = lines;
+        }
+        let mode = if vim { " in vim mode" } else { "" };
+        let key = if vim {
+            "vim_prompt_lines"
+        } else {
+            "prompt_lines"
+        };
+        self.entries.push(Entry::Info(format!(
+            "The prompt box is at least {lines} line{s} tall{mode}: /prompt <lines>, + or - to change it, /prompt reset for {default}; Ctrl+T for half the screen. Set {key} = {lines} under [ui] to keep it.",
+            s = if lines == 1 { "" } else { "s" },
+        )));
+    }
+
     pub(super) fn set_mouse(&mut self, arg: Option<&str>) {
         let mouse = match arg.map(str::to_ascii_lowercase).as_deref() {
             None => !self.settings.ui.mouse,
@@ -435,6 +505,8 @@ impl App {
             "/thinking" => self.set_thinking(cmd.split_whitespace().nth(1)),
             "/verbose" => self.set_verbose(cmd.split_whitespace().nth(1)),
             "/mouse" => self.set_mouse(cmd.split_whitespace().nth(1)),
+            "/vim" => self.set_vim(cmd.split_whitespace().nth(1)),
+            "/prompt" => self.set_prompt_lines(cmd.split_whitespace().nth(1)),
             "/copy" => match cmd.split_whitespace().nth(1) {
                 None => self.copy_clipboard(false),
                 Some("all") => self.copy_clipboard(true),

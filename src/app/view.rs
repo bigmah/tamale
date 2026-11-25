@@ -29,9 +29,9 @@ impl App {
             return;
         }
         let area = frame.area();
-        let input_width = area.width.saturating_sub(4).max(1) as usize;
+        let input_width = area.width.saturating_sub(2 + self.input_gutter()).max(1) as usize;
         let (rows, cursor) = wrap_input(&self.input, self.cursor, input_width);
-        let input_height = (rows.len() as u16).clamp(1, 10) + 2;
+        let input_height = self.input_height(rows.len(), area.height);
         let queued = self.queued_messages();
         let queued_height = queued.len().min(MAX_QUEUED_LINES) as u16;
         let goal_height = self.goal.is_some() as u16;
@@ -478,7 +478,118 @@ impl App {
         }
     }
 
-    fn draw_input(&self, frame: &mut Frame, area: Rect, rows: Vec<String>, cursor: (usize, usize)) {
+    /// The prompt box's height (borders included) for `rows` wrapped lines of input on a
+    /// `screen` rows tall terminal: at least `prompt_min_lines`, growing with the prompt
+    /// (to 10 lines, 15 in vim mode, or further if the least is more), or half the screen
+    /// when expanded.
+    pub(super) fn input_height(&self, rows: usize, screen: u16) -> u16 {
+        let rows = rows.min(u16::MAX as usize) as u16;
+        let least = self.prompt_min_lines();
+        let grows_to = if self.vim.is_some() { 15 } else { 10 }.max(least);
+        let lines = if self.prompt_expanded {
+            rows.max(screen / 2).max(least)
+        } else {
+            rows.clamp(least, grows_to)
+        };
+        // Leave the chat and the footer some room.
+        let most = screen.saturating_sub(8).max(1);
+        lines.min(most).max(1) + 2
+    }
+
+    /// The prompt box's least height in lines, for the current mode.
+    pub(super) fn prompt_min_lines(&self) -> u16 {
+        let ui = &self.settings.ui;
+        if self.vim.is_some() {
+            ui.vim_prompt_lines
+        } else {
+            ui.prompt_lines
+        }
+        .max(1)
+    }
+
+    /// The prompt's wrapped `rows` from `skip` on, with vim's Visual selection shown.
+    pub(super) fn input_lines(
+        &self,
+        rows: Vec<(usize, String)>,
+        skip: usize,
+        accent: Color,
+    ) -> Vec<Line<'static>> {
+        let selection = self
+            .vim
+            .as_ref()
+            .and_then(|vim| vim.selection(&self.input, self.cursor));
+        let numbers = self.vim.is_some().then(|| self.input_gutter() as usize - 1);
+        let cursor_line = self.input[..self.cursor.min(self.input.len())]
+            .matches('\n')
+            .count();
+        let mut line = 0;
+        rows.into_iter()
+            .enumerate()
+            .map(|(i, (start, row))| {
+                // Which line of the prompt the row is on, and whether it starts it.
+                let starts_line = i == 0 || self.input[..start].ends_with('\n');
+                if starts_line && i > 0 {
+                    line += 1;
+                }
+                (i, start, row, line, starts_line)
+            })
+            .skip(skip)
+            .map(|(i, start, row, line, starts_line)| {
+                let prefix = match numbers {
+                    // Line numbers, like an editor's, with the cursor's line brighter.
+                    Some(width) if starts_line => {
+                        let number = Span::from(format!("{:>width$} ", line + 1));
+                        if line == cursor_line {
+                            number.fg(accent)
+                        } else {
+                            number.fg(Color::DarkGray)
+                        }
+                    }
+                    Some(width) => Span::from(" ".repeat(width + 1)),
+                    None => Span::from(if i == 0 { "› " } else { "  " }).fg(accent),
+                };
+                let mut spans = vec![prefix];
+                let Some((a, b)) = selection else {
+                    spans.push(Span::from(row));
+                    return Line::from(spans);
+                };
+                let end = start + row.len();
+                let (x, y) = (a.clamp(start, end) - start, b.clamp(start, end) - start);
+                spans.push(Span::from(row[..x].to_string()));
+                if row.is_empty() && a <= start && start < b.max(a + 1) {
+                    // An empty line in the selection still shows as selected.
+                    spans.push(Span::from(" ").reversed());
+                } else {
+                    spans.push(Span::from(row[x..y].to_string()).reversed());
+                }
+                spans.push(Span::from(row[y..].to_string()));
+                Line::from(spans)
+            })
+            .collect()
+    }
+
+    /// The vim mode, shown at the bottom of the prompt box while vim mode is on.
+    pub(super) fn vim_title(&self) -> Option<Line<'static>> {
+        let vim = self.vim.as_ref()?;
+        let color = match vim.mode {
+            super::vim::Mode::Insert => Color::DarkGray,
+            super::vim::Mode::Normal => Color::Green,
+            _ => Color::Magenta,
+        };
+        let mut title = vec![Span::from(format!(" {} ", vim.label())).fg(color).bold()];
+        if vim.inserting() && !self.input.is_empty() && !self.input.starts_with('/') {
+            title.push(Span::from("· Esc, Enter to send ").fg(Color::DarkGray));
+        }
+        Some(Line::from(title).right_aligned())
+    }
+
+    fn draw_input(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        rows: Vec<(usize, String)>,
+        cursor: (usize, usize),
+    ) {
         let accent = if self.is_chef() {
             super::chef::CHEF
         } else {
@@ -486,15 +597,7 @@ impl App {
         };
         let visible = area.height.saturating_sub(2) as usize;
         let skip = (cursor.0 + 1).saturating_sub(visible);
-        let lines: Vec<Line> = rows
-            .into_iter()
-            .enumerate()
-            .skip(skip)
-            .map(|(i, row)| {
-                let prefix = if i == 0 { "› " } else { "  " };
-                Line::from(vec![Span::from(prefix).fg(accent), Span::from(row)])
-            })
-            .collect();
+        let lines = self.input_lines(rows, skip, accent);
         let border = if self.is_running() || self.tab_focus.is_some() {
             Color::DarkGray
         } else {
@@ -506,15 +609,27 @@ impl App {
         if let Some(title) = self.chef_input_title() {
             block = block.title(title);
         }
+        if let Some(title) = self.vim_title() {
+            block = block.title_bottom(title);
+        }
         frame.render_widget(Paragraph::new(lines).block(block), area);
         // With the tabs focused there is no cursor in the prompt.
         if self.tab_focus.is_some() {
             return;
         }
         frame.set_cursor_position(Position::new(
-            area.x + 3 + cursor.1 as u16,
+            area.x + 1 + self.input_gutter() + cursor.1 as u16,
             area.y + 1 + (cursor.0 - skip) as u16,
         ));
+    }
+
+    /// The columns before the prompt's text: `› `, or line numbers in vim mode.
+    pub(super) fn input_gutter(&self) -> u16 {
+        if self.vim.is_none() {
+            return 2;
+        }
+        let lines = self.input.matches('\n').count() + 1;
+        lines.to_string().len().max(2) as u16 + 1
     }
 
     fn draw_status(&mut self, frame: &mut Frame, area: Rect) {
@@ -985,14 +1100,14 @@ fn draw_queued(frame: &mut Frame, area: Rect, queued: &[String]) {
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-/// Wraps input text to `width` columns, returning visual rows and the
-/// (row, col) of the byte offset `cursor`.
+/// Wraps input text to `width` columns, returning visual rows (each with the byte offset
+/// it starts at) and the (row, col) of the byte offset `cursor`.
 pub(super) fn wrap_input(
     input: &str,
     cursor: usize,
     width: usize,
-) -> (Vec<String>, (usize, usize)) {
-    let mut rows = vec![String::new()];
+) -> (Vec<(usize, String)>, (usize, usize)) {
+    let mut rows = vec![(0, String::new())];
     let mut col = 0;
     let mut pos = None;
     for (i, ch) in input.char_indices() {
@@ -1000,24 +1115,24 @@ pub(super) fn wrap_input(
             if i == cursor {
                 pos = Some((rows.len() - 1, col));
             }
-            rows.push(String::new());
+            rows.push((i + 1, String::new()));
             col = 0;
             continue;
         }
         let w = ch.width().unwrap_or(0);
         if col + w > width {
-            rows.push(String::new());
+            rows.push((i, String::new()));
             col = 0;
         }
         if i == cursor {
             pos = Some((rows.len() - 1, col));
         }
-        rows.last_mut().unwrap().push(ch);
+        rows.last_mut().unwrap().1.push(ch);
         col += w;
     }
     let pos = pos.unwrap_or_else(|| {
         if col >= width {
-            rows.push(String::new());
+            rows.push((input.len(), String::new()));
             (rows.len() - 1, 0)
         } else {
             (rows.len() - 1, col)
