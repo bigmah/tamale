@@ -96,10 +96,12 @@ These files are appended to the system prompt if present (duplicates skipped):
 
 Use `/add-dir ../shared` to include another directory in the agent's scope, or pass
 `--add-dir <path>` at startup (repeat the flag for multiple directories). `/add-dir`
-without a path opens a file tree browser at the working directory's parent: type to filter,
-→/← to open a directory or go up, `~` for home, `/` for the root, a filter starting with `.`
-to show hidden directories, and Enter to add the highlighted one (the top row is the
-directory being shown). `/add-dir list` lists the working directory and all added
+without a path opens a file tree browser at the working directory's parent, with vim keys:
+`j`/`k` to move, `l`/`h` (or →/←) to open a directory or go up, `gg`/`G` and
+`Ctrl+D`/`Ctrl+U` to jump, `/` to filter (Enter keeps the filter, Esc clears it), `.` to show
+hidden directories, `~` for home, `\` for the root, and Enter to add the highlighted one (the
+top row is the directory being shown). The list only scrolls when the selection nears its
+edge. `/add-dir list` lists the working directory and all added
 directories; in the web UI, `/add-dir` does that too.
 
 Relative paths resolve from the original working directory. Absolute paths, `~` and

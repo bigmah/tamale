@@ -1489,8 +1489,14 @@ async fn add_dir_browser_walks_the_tree_and_adds_the_highlighted_directory() {
         "{shown}"
     );
 
-    // Typing filters (and keeps keys from the prompt); → opens, ← goes back up.
-    type_text(&mut app, "sha");
+    // `/` starts a filter (keys stay out of the prompt); → opens, ← goes back up.
+    let keys = |app: &mut App, text: &str| {
+        for c in text.chars() {
+            app.on_event(key(KeyCode::Char(c)));
+        }
+    };
+    keys(&mut app, "/sha");
+    assert!(app.dir_browser.as_ref().unwrap().filtering());
     app.on_event(key(KeyCode::Right));
     assert!(app.input.is_empty());
     let browser = app.dir_browser.as_ref().unwrap();
@@ -1505,20 +1511,62 @@ async fn add_dir_browser_walks_the_tree_and_adds_the_highlighted_directory() {
         app.dir_browser.as_ref().unwrap().highlighted(),
         root.join("shared")
     );
-    app.on_event(key(KeyCode::Char('.')));
+    // A filter starting with `.` shows hidden directories; Esc clears it and stops filtering.
+    keys(&mut app, ".");
     assert_eq!(app.dir_browser.as_ref().unwrap().filtered(), [".hidden"]);
-    app.on_event(key(KeyCode::Backspace));
+    app.on_event(key(KeyCode::Esc));
+    let browser = app.dir_browser.as_ref().unwrap();
+    assert!(!browser.filtering());
+    assert_eq!(browser.filtered(), ["project", "shared", "zeta"]);
 
-    // Enter adds the highlighted directory and closes the browser.
-    type_text(&mut app, "sha");
-    app.on_event(key(KeyCode::Right));
-    app.on_event(key(KeyCode::Down));
+    // Out of the filter, keys move as in vim: j/k, gg/G, h/l, and `.` toggles hidden.
+    keys(&mut app, "gg");
+    assert_eq!(app.dir_browser.as_ref().unwrap().highlighted(), root);
+    keys(&mut app, "jj");
+    assert_eq!(
+        app.dir_browser.as_ref().unwrap().highlighted(),
+        root.join("shared")
+    );
+    keys(&mut app, "Gk");
+    assert_eq!(
+        app.dir_browser.as_ref().unwrap().highlighted(),
+        root.join("shared")
+    );
+    keys(&mut app, ".");
+    assert_eq!(
+        app.dir_browser.as_ref().unwrap().filtered(),
+        [".hidden", "project", "shared", "zeta"]
+    );
+    assert_eq!(
+        app.dir_browser.as_ref().unwrap().highlighted(),
+        root.join("shared"),
+        "the selection stays put"
+    );
+    keys(&mut app, ".lh");
+    assert_eq!(
+        app.dir_browser.as_ref().unwrap().highlighted(),
+        root.join("shared")
+    );
+
+    // Enter keeps a filter and goes back to moving; Enter again adds and closes.
+    keys(&mut app, "/sha");
+    app.on_event(key(KeyCode::Enter));
+    assert!(
+        app.dir_browser.is_some(),
+        "the first Enter only ends the filter"
+    );
+    keys(&mut app, "lj");
     app.on_event(key(KeyCode::Enter));
     assert!(app.dir_browser.is_none());
     assert_eq!(
         app.workspace.additional_dirs,
         [root.join("shared/nested").canonicalize().unwrap()]
     );
+
+    // q closes too.
+    app.command("/add-dir");
+    keys(&mut app, "q");
+    assert!(app.dir_browser.is_none());
 
     // Esc cancels without adding anything; a page asking gets the scope listed instead.
     app.command("/add-dir");
@@ -1528,6 +1576,61 @@ async fn add_dir_browser_walks_the_tree_and_adds_the_highlighted_directory() {
     app.web_send("/add-dir".into());
     assert!(app.dir_browser.is_none());
     assert!(matches!(app.entries.last(), Some(Entry::Info(t)) if t.contains("nested")));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn add_dir_browser_moves_the_selection_not_the_list() {
+    let root = std::env::temp_dir().join(format!("tamale-scroll-{}", session::new_id()));
+    for i in 0..60 {
+        std::fs::create_dir_all(root.join(format!("d{i:02}"))).unwrap();
+    }
+    let workspace = Workspace {
+        cwd: root.join("d00"),
+        additional_dirs: Vec::new(),
+    };
+    let client = Backend::Api(anthropic::Client::new("test-key").unwrap());
+    let (mut app, _rx) = App::new_with_channel(client, test_settings("test-model"), workspace);
+    app.command("/add-dir");
+    // The first row shown, and the row the selection is on.
+    let view = |app: &mut App| {
+        screen(app);
+        let browser = app.dir_browser.as_ref().unwrap();
+        (browser.offset, browser.selected)
+    };
+    app.on_event(key(KeyCode::Char('g')));
+    app.on_event(key(KeyCode::Char('g')));
+    let (top, _) = view(&mut app);
+    assert_eq!(top, 0);
+    let height = app.dir_browser.as_ref().unwrap().height;
+    assert!(height > 8, "{height}");
+
+    // Going down, the list stays still until the selection is a few rows from the bottom.
+    for _ in 0..height - 4 {
+        app.on_event(key(KeyCode::Char('j')));
+        assert_eq!(view(&mut app).0, 0);
+    }
+    app.on_event(key(KeyCode::Char('j')));
+    assert_eq!(view(&mut app).0, 1, "then it scrolls a row at a time");
+    for _ in 0..10 {
+        app.on_event(key(KeyCode::Char('j')));
+    }
+    let (offset, selected) = view(&mut app);
+    assert_eq!(selected - offset, height - 4);
+
+    // Back up, the selection moves over the list rather than dragging it along.
+    for i in 1..height - 7 {
+        app.on_event(key(KeyCode::Char('k')));
+        assert_eq!(view(&mut app), (offset, selected - i));
+    }
+
+    // Going up a directory centres the one just left.
+    app.on_event(key(KeyCode::Char('G')));
+    app.on_event(key(KeyCode::Char('l')));
+    app.on_event(key(KeyCode::Char('h')));
+    let (offset, selected) = view(&mut app);
+    assert_eq!(selected, 60);
+    assert!(offset > 0 && selected - offset > 3, "{offset} {selected}");
     let _ = std::fs::remove_dir_all(root);
 }
 

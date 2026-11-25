@@ -642,8 +642,12 @@ impl App {
             "answer the agent's questions · esc to interrupt"
         } else if self.rewind_picker.is_some() {
             "↑/↓ move · enter rewind · esc cancel"
-        } else if self.dir_browser.is_some() {
-            "type to filter · ↑/↓ move · →/← open/up · enter add · esc cancel"
+        } else if let Some(browser) = &self.dir_browser {
+            if browser.filtering() {
+                "type to filter · enter done · esc clear"
+            } else {
+                "/ filter · enter add · q quit"
+            }
         } else if self.picker.is_some() || self.resume_picker.is_some() {
             "type to filter · ↑/↓ move · enter select · esc cancel"
         } else if self.effort_picker.is_some() {

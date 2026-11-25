@@ -309,6 +309,19 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Add-dir browser",
+        &[
+            ("j/k, ↑/↓", "Move selection"),
+            ("l/→/Tab, h/←/-", "Open the directory, or go up"),
+            ("gg/G, Ctrl+D/U, Ctrl+F/B", "Top/bottom, half page, page"),
+            ("/", "Filter (Enter keeps it, Esc clears it)"),
+            (".", "Show or hide hidden directories"),
+            ("~ / \\", "Go home / to the root"),
+            ("Enter", "Add the highlighted directory"),
+            ("Esc / q", "Clear the filter, or cancel"),
+        ],
+    ),
+    (
         "Rewind picker",
         &[
             ("↑/↓, j/k", "Move selection (most recent turn first)"),
