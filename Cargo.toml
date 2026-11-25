@@ -18,11 +18,11 @@ getrandom = "0.3"
 globset = "0.4"
 ignore = "0.4"
 pulldown-cmark = { version = "0.13", default-features = false }
-ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
+ratatui = { version = "0.30", default-features = false, features = ["crossterm", "layout-cache", "underline-color", "unstable-rendered-line-info"] }
 regex = "1"
 reqwest = { version = "0.13", features = ["query", "json", "gzip"] }
-rig-core = "0.42"
-scraper = "0.20"
+rig-core = { version = "0.42", default-features = false, features = ["reqwest", "rustls"] }
+scraper = { version = "0.29.0", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha1_smol = "1.0.1"
@@ -39,7 +39,9 @@ toml = { version = "1.1", default-features = false, features = ["parse", "serde"
 unicode-segmentation = "1"
 unicode-width = "0.2.3"
 qrcode = { version = "0.14.1", default-features = false }
-snow = "0.10"
+# Not the defaults: its `std` feature turns on ring, and only AESGCM/SHA256/25519 are used.
+# (chacha is only here because snow 0.10 imports `KeyInit` for AES-GCM under that feature.)
+snow = { version = "0.10", default-features = false, features = ["use-aes-gcm", "use-chacha20poly1305", "use-sha2", "use-curve25519", "use-getrandom"] }
 aes-gcm = "0.10"
 hkdf = "0.12"
 sha2 = "0.10"
