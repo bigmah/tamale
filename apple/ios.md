@@ -245,8 +245,7 @@ by title + session, and notes stay on the version they were made on.
 - [x] tamale: `md` on assistant and note entries, `artifacts` on assistant entries, `hash` on
       the `artifact` reply and gallery items. Tests in `src/web.rs`.
 - [x] Fixture writer: e2e vectors + message samples into `apple/Fixtures`, run from
-      `cargo test`, which fails if the checked-in files are stale (as `src/browser/dist` is
-      checked in today).
+      `cargo test`, which fails if the checked-in files are stale.
 - [x] `docs/ios.md` stub and a line in `docs/remote-access.md` once there's a TestFlight.
       (Done now, pointing at building from source until there is one.)
 

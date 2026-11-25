@@ -5,8 +5,8 @@ edition = "2024"
 description = "tamale's web UI, in Dioxus: built for WebAssembly as the page /web serves, and as a desktop window that runs it"
 publish = false
 
-# Built by web/build.sh (the page) or with `--no-default-features --features desktop` (the
-# window that runs it), separately from tamale.
+# Built for the browser by tamale's build.rs (the page), or with `--no-default-features
+# --features desktop` (the window that runs it), separately from tamale.
 [workspace]
 
 [features]
@@ -41,7 +41,8 @@ web-sys = { version = "0.3", optional = true, features = [
     "Response", "ScriptProcessorNode", "ScrollBehavior", "ScrollIntoViewOptions", "ScrollLogicalPosition",
     "ScrollToOptions", "Storage", "Url", "UrlSearchParams", "VisualViewport", "WebSocket", "Window",
 ] }
-wasm-bindgen = { version = "0.2", optional = true }
+# Must match wasm-bindgen-cli-support in tamale's build-dependencies (see build.rs).
+wasm-bindgen = { version = "=0.2.130", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 js-sys = { version = "0.3", optional = true }
 gloo-timers = { version = "0.3", optional = true, features = ["futures"] }

@@ -1,5 +1,5 @@
 //! tamale's web UI, in Dioxus. Built for WebAssembly it's the page tamale's `/web` serves
-//! (see `build.sh`); built with the `desktop` feature it's a window of its own that runs
+//! (tamale's `build.rs` builds it); built with the `desktop` feature it's a window of its own that runs
 //! that same page (see `shell`).
 
 #![allow(unused_mut)]

@@ -6,7 +6,7 @@ repository = "https://github.com/bigmah/tamale"
 
 [workspace]
 members = ["browser/protocol", "hub", "hub/protocol"]
-# Built for wasm32 by browser/build.sh.
+# Built for wasm32 by build.rs, as is web/ (a workspace of its own).
 exclude = ["browser/client"]
 
 [dependencies]
@@ -44,6 +44,13 @@ aes-gcm = "0.10"
 hkdf = "0.12"
 sha2 = "0.10"
 base64 = "0.22"
+
+# build.rs: builds web/ and browser/client for the browser and embeds them.
+[build-dependencies]
+# Must match the wasm-bindgen both of those crates pin.
+wasm-bindgen-cli-support = "=0.2.130"
+flate2 = "1"
+sha2 = "0.10"
 
 [dev-dependencies]
 rqrr = "0.10"

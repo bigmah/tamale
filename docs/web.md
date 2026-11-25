@@ -32,11 +32,9 @@ over a WebSocket; the client keeps a copy of the screen and redraws it, and send
 size and input (keys, text from input methods, pastes, wheel and clicks). Both directions
 use the types in `browser/protocol`, encoded with postcard.
 
-**Changing the client.** The built client is checked in under `src/browser/dist`, so
-building tamale doesn't need the WebAssembly toolchain. After changing `browser/client` or
-`browser/protocol`, rebuild it with `browser/build.sh` (it needs the `wasm32-unknown-unknown`
-target and the `wasm-bindgen` CLI version pinned in `browser/client/Cargo.toml`; it says how to
-install them), then rebuild tamale. `cargo test --workspace` also runs the protocol's tests.
+**Changing the client.** `cargo build` builds it (see *Building the browser apps* in
+[Development](development.md#building-the-browser-apps)), so change `browser/client` or
+`browser/protocol` and rebuild tamale. `cargo test --workspace` also runs the protocol's tests.
 
 ## Web UI
 
@@ -191,11 +189,10 @@ reaches the browser through web-sys (`web/src/host/web.rs`) rather than script. 
 `wasm-unsafe-eval`, and for pullspace (below) `unsafe-eval` and inline styles; inline script
 stays shut. Replies keep coming as HTML rendered by tamale; the page splits
 them into their top-level blocks, so streaming redraws only the last one and artifacts above
-it don't reload. The built app is checked in under `src/web/dist` (the module gzipped, about
-2.4 MB with pullspace in it), so building tamale needs no wasm toolchain. After changing `web/`, run
-`web/build.sh` (it needs the `dx` CLI, `cargo install dioxus-cli --version 0.7.10`, and the
-`wasm32-unknown-unknown` target), then rebuild tamale. `cd web && cargo test` runs its own
-tests. A hub passes `/app_bg.wasm` through; a hub from before the page was WebAssembly
+it don't reload. `cargo build` builds it into tamale (the module gzipped, about 2.3 MB with
+pullspace in it; see *Building the browser apps* in
+[Development](development.md#building-the-browser-apps)), so after changing `web/`, rebuild
+tamale. `cd web && cargo test` runs its own tests. A hub passes `/app_bg.wasm` through; a hub from before the page was WebAssembly
 doesn't, and needs updating.
 
 **The desktop app** (`web/src/shell.rs`, `--features desktop`) is a window onto your
@@ -241,11 +238,11 @@ count on the switch is `diff_stat` (`src/web/diff.rs`). pullspace keeps the file
 in the browser's own filesystem, which a browser offers only to a secure context; a page
 opened at this machine's network address (`/web lan`) is not one, and there it holds them in
 memory instead. To change it, change pullspace and push it, point the `pullspace` dependency
-in `web/Cargo.toml` and `pullspace-embed` in `Cargo.toml` at that commit, and run
-`web/build.sh`. To try a pullspace you haven't pushed, add `--config
-'patch."https://github.com/bigmah/pullspace".pullspace.path="../pullspace"'` (in `web/`) or
-`…pullspace-embed.path="../pullspace/crates/embed"'` to the `cargo`/`dx` command.
-`cargo test --bin tamale fake_review_page -- --ignored --nocapture` serves a page with a sample conversation and the code view on a made-up repository (or `TAMALE_FAKE_ROOT`)
+in `web/Cargo.toml` and `pullspace-embed` in `Cargo.toml` at that commit, and rebuild
+tamale. To try a pullspace you haven't pushed, point both at `path = "../pullspace"` (and
+`"../pullspace/crates/embed"`) for the time being.
+`cargo test --bin tamale fake_review_page -- --ignored --nocapture` serves a page with a
+sample conversation and the code view on a made-up repository (or `TAMALE_FAKE_ROOT`)
 to try it in a browser; `TAMALE_FAKE_LAN=1` serves it at this machine's network address
 instead, which is how a phone sees it and where the browser withholds storage and the
 clipboard; with `TAMALE_HUB_URL` and `TAMALE_HUB_KEY` set it also connects to

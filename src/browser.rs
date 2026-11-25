@@ -39,9 +39,9 @@ pub type WebTerminal = Terminal<FrameBackend>;
 pub const MAX_CELLS: u16 = 1000;
 
 const PAGE: &str = include_str!("browser/index.html");
-/// Built by `browser/build.sh`.
-const CLIENT_JS: &str = include_str!("browser/dist/client.js");
-const CLIENT_WASM: &[u8] = include_bytes!("browser/dist/client_bg.wasm");
+// The client (`browser/client`), built to WebAssembly by `build.rs`.
+const CLIENT_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/client.js"));
+const CLIENT_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/client_bg.wasm"));
 
 pub enum ClientEvent {
     /// A tab connected (replacing any earlier one); its size in columns and rows.

@@ -18,7 +18,19 @@ ln -sf "$PWD/target/release/tamale" ~/.cargo/bin/tamale
 
 During development, `cargo run --release -- <args>` works in place of `tamale <args>`.
 
-The built browser client is checked in; see [changing the client](web.md#browser) to rebuild it.
+### Building the browser apps
+
+tamale serves two apps that run in the browser, both Rust compiled to WebAssembly: the `/web`
+page (`web/`, with pullspace in it) and the `/browser` client (`browser/client`). `build.rs`
+builds them as part of every `cargo build`, so nothing built is checked in and there's nothing
+else to install or run. Each is a cargo build of its own for `wasm32-unknown-unknown`, always in
+release, into `target/ui` (shared by every profile); then wasm-bindgen, as a library
+(`wasm-bindgen-cli-support`, which must match the `wasm-bindgen` both crates pin), writes its
+script, with the JavaScript modules its crates bring folded in, and `src/web.rs` and
+`src/browser.rs` embed the results from `OUT_DIR`. `rust-toolchain.toml` has rustup add the
+wasm target; the first build takes a minute or two longer for it, and later ones rebuild the apps
+only when `web/` or `browser/` change. `cargo check`, clippy and rust-analyzer run `build.rs`
+too.
 
 ## Testing the hub
 
@@ -94,13 +106,12 @@ The agent:
 In a browser:
 
 - `src/browser.rs`, `src/browser/` – `/browser`: the local server, the page, the backend
-  that records changed cells, and input translation; `dist/` holds the built client
+  that records changed cells, and input translation
 - `browser/protocol` – the screen cells and input tamale exchanges with its browser client,
   and with a terminal attached to a background session
-- `browser/client` – the browser client (Rust, compiled to WebAssembly by `browser/build.sh`)
+- `browser/client` – the browser client (Rust, compiled to WebAssembly by `build.rs`)
 - `src/web.rs`, `src/web/` – `/web`: the server and its requests, the page's HTML and CSS,
-  and in `dist/` the built app
-- `web/` – the `/web` app (Rust and Dioxus, compiled to WebAssembly by `web/build.sh`, with
+- `web/` – the `/web` app (Rust and Dioxus, compiled to WebAssembly by `build.rs`, with
   pullspace, the code view, drawn by it from the `pullspace` crate; with
   `--features desktop`, the desktop app that lists your sessions and opens them, bundled by
   `web/bundle-desktop.sh`)

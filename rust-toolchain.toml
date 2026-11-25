@@ -1,0 +1,5 @@
+# tamale's build (build.rs) also compiles its two browser apps, web/ and browser/client, to
+# WebAssembly; listing the target here has rustup install it on the first `cargo build`.
+[toolchain]
+channel = "stable"
+targets = ["wasm32-unknown-unknown"]

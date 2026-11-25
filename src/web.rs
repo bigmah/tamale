@@ -71,9 +71,9 @@ const STYLE: &str = include_str!("web/app.css");
 /// is drawn in this page with a stylesheet of its own (see `pullspace_embed::css`).
 static SERVED_STYLE: std::sync::LazyLock<String> =
     std::sync::LazyLock::new(|| pullspace_embed::css::outside(STYLE));
-/// The page's app: tamale's web UI in Dioxus (`web/`), built to WebAssembly by `web/build.sh`.
-const SCRIPT: &str = include_str!("web/dist/app.js");
-const MODULE: &[u8] = include_bytes!("web/dist/app_bg.wasm.gz");
+/// The page's app: tamale's web UI in Dioxus (`web/`), built to WebAssembly by `build.rs`.
+const SCRIPT: &str = include_str!(concat!(env!("OUT_DIR"), "/app.js"));
+const MODULE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/app_bg.wasm.gz"));
 const ARTIFACT_FRAME: &str = include_str!("web/artifact-frame.html");
 
 /// What a tab asked for that the app has to handle.
@@ -364,7 +364,7 @@ fn asset(shared: &Shared, path: &str) -> Asset {
         ),
         "/app.css" => ok("text/css; charset=utf-8", &SERVED_STYLE, &[]),
         "/app.js" => ok("text/javascript; charset=utf-8", SCRIPT, &[]),
-        // The app's module, gzipped. Its URL carries a version (see `web/build.sh`), so it
+        // The app's module, gzipped. Its URL carries a version (see `build.rs`), so it
         // can be cached for good.
         "/app_bg.wasm" => Asset {
             status: StatusCode::OK,
