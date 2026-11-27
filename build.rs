@@ -36,6 +36,11 @@ fn main() {
         "browser/client/Cargo.lock",
         "browser/protocol/src",
         "browser/protocol/Cargo.toml",
+        "openui/src",
+        "openui/Cargo.toml",
+        "openui/dioxus/src",
+        "openui/dioxus/Cargo.toml",
+        "openui/dioxus/Cargo.lock",
         "rust-toolchain.toml",
     ] {
         println!("cargo:rerun-if-changed={input}");
@@ -55,6 +60,25 @@ fn main() {
     );
     write(&out.join("app.js"), script.as_bytes());
     write(&out.join("app_bg.wasm.gz"), &gzip(&wasm));
+
+    // The artifact viewer (openui/dioxus): served for artifacts opened in a tab of their own,
+    // and folded into the page the iOS app is sent for one (see src/web/artifacts.rs).
+    let module = cargo_wasm_with(
+        &root.join("openui/dioxus"),
+        &ui_target,
+        "openui-viewer",
+        &["--features", "viewer"],
+    );
+    let (script, wasm) = bindgen(&module, "openui");
+    let version = hex(&Sha256::digest([script.as_bytes(), &wasm].concat()))[..12].to_string();
+    write(&out.join("openui_bare.js"), script.as_bytes());
+    let script = format!(
+        "{script}\n// Started here rather than by the page, which only loads this script.\n\
+         __wbg_init({{ module_or_path: \"/openui_bg.wasm?v={version}\" }})\
+         .then((wasm) => {{ globalThis.__dx_mainWasm = wasm; }});\n"
+    );
+    write(&out.join("openui.js"), script.as_bytes());
+    write(&out.join("openui_bg.wasm.gz"), &gzip(&wasm));
 
     // The /browser client: its page (src/browser/index.html) starts it.
     let module = cargo_wasm(
@@ -105,11 +129,18 @@ fn ui_target_dir(out: &Path) -> PathBuf {
 
 /// Builds the crate at `dir` for the browser and returns its module.
 fn cargo_wasm(dir: &Path, target_dir: &Path, artifact: &str) -> PathBuf {
+    cargo_wasm_with(dir, target_dir, artifact, &[])
+}
+
+/// [`cargo_wasm`], with more arguments for cargo (features, say).
+fn cargo_wasm_with(dir: &Path, target_dir: &Path, artifact: &str, args: &[&str]) -> PathBuf {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let mut command = Command::new(cargo);
     command
         .current_dir(dir)
-        .args(["build", "--release", "--target", WASM, "--target-dir"])
+        .args(["build", "--release", "--target", WASM])
+        .args(args)
+        .arg("--target-dir")
         .arg(target_dir);
     // What cargo set for this build is about the host; the crate's own `.cargo/config.toml`
     // (web/'s getrandom backend) has to win, which no RUSTFLAGS does.

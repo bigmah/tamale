@@ -1286,41 +1286,16 @@ async fn changes_text(app: App) -> Result<Value, String> {
 pub struct Page {
     pub title: String,
     pub text: String,
-    pub html: String,
+    /// The OpenUI Lang document.
+    pub source: String,
 }
 
 async fn artifact_for_voice(app: App, topic: &Topic) -> Page {
-    let html = app.artifact_html(topic.url.clone()).await;
-    // Without tamale's own scripts, which it adds to every artifact (see artifacts.rs).
-    let document = match html.find("\n<script>") {
-        Some(at) => html[..at].to_string(),
-        None => html.clone(),
-    };
-    let mut body = document.clone();
-    for tag in ["script", "style", "noscript", "template"] {
-        while let Some(start) = body.to_ascii_lowercase().find(&format!("<{tag}")) {
-            let close = format!("</{tag}>");
-            let end = body.to_ascii_lowercase()[start..]
-                .find(&close)
-                .map_or(body.len(), |e| start + e + close.len());
-            body.replace_range(start..end, "");
-        }
-    }
-    let text = crate::html::text(&body);
-    let mut tidy = String::new();
-    for line in text
-        .lines()
-        .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
-    {
-        if !line.is_empty() {
-            tidy.push_str(&line);
-            tidy.push('\n');
-        }
-    }
+    let source = app.artifact_source(topic.url.clone()).await;
     Page {
         title: topic.title.clone(),
-        text: tidy.trim().to_string(),
-        html: document,
+        text: openui::plain_text(&source),
+        source,
     }
 }
 
@@ -1368,8 +1343,11 @@ Right now: {}",
             page.title,
             page.text.chars().take(150_000).collect::<String>()
         ));
-        if page.html.len() <= 120_000 {
-            out.push_str(&format!("\n\n=== Page HTML ===\n{}", page.html));
+        if page.source.len() <= 120_000 {
+            out.push_str(&format!(
+                "\n\n=== The page as written (OpenUI Lang) ===\n{}",
+                page.source
+            ));
         }
     }
     out

@@ -9,7 +9,8 @@ import UIKit
 import WebKit
 
 enum ArtifactPage {
-    /// tamale's ARTIFACT_CSP without `sandbox` and `frame-ancestors`, which a `<meta>` ignores.
+    /// What a page may do: inline scripts and `unsafe-eval` (WebAssembly), for the page
+    /// tamale sends, which draws an artifact with its viewer built in (see `apple/ios.md`).
     static let csp = "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https:; "
         + "style-src 'unsafe-inline' https:; img-src data: blob: https:; font-src data: https:; "
         + "media-src data: blob: https:; connect-src https:"
@@ -182,9 +183,11 @@ struct ArtifactWebView: UIViewRepresentable {
             measureSoon(view)
         }
 
-        /// Pages draw late too (charts, say), and tell us nothing when they do.
+        /// Pages draw late too, and tell us nothing when they do: tamale's draws once its
+        /// WebAssembly viewer has started, and a page shorter than the card doesn't change the
+        /// content size.
         func measureSoon(_ view: WKWebView) {
-            for delay in [0.3, 1.2] {
+            for delay in [0.3, 1.2, 2.5, 5, 10] {
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak view] in
                     guard let self, let view else { return }
                     self.measure(view)

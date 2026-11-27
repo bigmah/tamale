@@ -237,6 +237,23 @@ by title + session, and notes stay on the version they were made on.
   at <file>; read it first): `. With no live session, it offers to copy the prompt instead.
   Resuming sessions from the app isn't in scope.
 
+## Artifacts are OpenUI Lang
+
+tamale's artifacts are no longer model-written HTML. A reply's artifact is an OpenUI Lang
+document (a ```` ```openui ```` block, see the `openui/` crate and `src/web/artifact.md`),
+drawn with Dioxus by `openui/dioxus`: the web UI draws it in its thread, and the app gets
+the same renderer through the `artifact` reply:
+
+- `html` is a self-contained page (`embedded_page` in `src/web/artifacts.rs`): the document
+  as JSON data, the viewer's script inline and its WebAssembly module in it, gzipped and
+  base64'd (about half a megabyte). It needs nothing from the network, so it works offline
+  from the library, under `ArtifactPage.csp` as it is (inline scripts, and `unsafe-eval`,
+  which WebAssembly needs). Its `body` has the class `embedded`, which hides the viewer's
+  own title bar, as the card shows the title.
+- It also carries `source` (the document) and `title`. Gallery items' `file` ends in
+  `.openui`; `hash` is the document's SHA-256 as before.
+- Libraries cached before this hold the old HTML pages; they still show as they did.
+
 ## Phases
 
 ### Phase 0: groundwork (this repo, Rust)

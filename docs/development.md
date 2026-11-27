@@ -117,6 +117,8 @@ In a browser:
   `web/bundle-desktop.sh`)
 - `src/web/{mirror,render,artifacts}.rs` – what each tab was last sent, markdown and code as
   HTML, and the artifacts a reply ends in
+- `openui/` – OpenUI Lang, the language artifacts are written in: its parser, evaluator and
+  tamale's component library (the renderer, shared by the web UI and the artifact viewer, is `openui/dioxus`)
 - `src/web/{pullspace,diff}.rs` – reads of the workspace's files, for the code view, and of its
   changes
 - `src/web/wire.rs` – the `/web` messages tamale reads as well as writes (status, approval,

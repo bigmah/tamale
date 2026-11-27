@@ -6,8 +6,14 @@
 /// One top-level block of a reply.
 #[derive(Clone, PartialEq, Debug)]
 pub enum Block {
-    /// A finished artifact: an embed of the page at `src`.
-    Artifact { src: String, title: String },
+    /// An artifact: its OpenUI Lang document, drawn in place. `src` is where it's kept
+    /// once `done` (`/artifact/<id>`), empty while it's still streaming in.
+    Artifact {
+        src: String,
+        title: String,
+        source: String,
+        done: bool,
+    },
     /// A video a reply shows, to be asked of tamale by its path.
     Video { path: String, title: String },
     /// A code block, its inside (the language label and the highlighted code).
@@ -71,12 +77,15 @@ pub fn blocks(html: &str) -> Vec<Block> {
 
 fn block(source: &str) -> Block {
     let source = source.trim_start();
-    if let Some(rest) = source.strip_prefix("<div class=\"artifact\" data-src=\"") {
-        let src = rest.split('"').next().unwrap_or("");
+    if source.starts_with("<div class=\"artifact\" data-src=\"") {
+        let src = attr(source, "data-src").unwrap_or_default();
         let title = attr(source, "data-title").unwrap_or_default();
+        let document = attr(source, "data-source").unwrap_or_default();
         return Block::Artifact {
-            src: unescape(src),
+            src: unescape(&src),
             title: unescape(&title),
+            source: unescape(&document),
+            done: attr(source, "data-done").as_deref() == Some("1"),
         };
     }
     if source.starts_with("<div class=\"video\" data-path=\"") {
@@ -136,7 +145,10 @@ pub fn unescape(s: &str) -> String {
     while let Some(at) = rest.find('&') {
         out.push_str(&rest[..at]);
         rest = &rest[at..];
-        let Some(end) = rest[..rest.len().min(12)].find(';') else {
+        // An entity is short; look for its end in the first few characters (not bytes: a
+        // cut inside a character would panic, and text near an `&` is often not ASCII).
+        let window = rest.char_indices().nth(12).map_or(rest.len(), |(i, _)| i);
+        let Some(end) = rest[..window].find(';') else {
             out.push('&');
             rest = &rest[1..];
             continue;
@@ -489,9 +501,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn unescapes_beside_text_that_isnt_ascii() {
+        // An artifact's document, in an attribute: entities next to arrows and dashes.
+        assert_eq!(
+            unescape("&quot;Model reply → render.rs &amp; −943 “x” &bogus→→→→→→→→ &#8594;"),
+            "\"Model reply → render.rs & −943 “x” &bogus→→→→→→→→ →"
+        );
+        assert_eq!(unescape("&→→→→→→→→→→→→→→;"), "&→→→→→→→→→→→→→→;");
+    }
+
+    #[test]
     fn splits_a_reply_into_its_blocks() {
         let html = "<p>Hi <code>src/web.rs:12</code></p><div class=\"codeblock\"><div class=\"codeblock-lang\">rust</div><pre><code><span class=\"t-kw\">fn</span> x &lt;</code></pre></div>\
-            <hr /><div class=\"artifact\" data-src=\"/artifact/abc\" data-title=\"A &lt;b&gt;\"></div><ul><li>a<ul><li>b</li></ul></li></ul>";
+            <hr /><div class=\"artifact\" data-src=\"/artifact/abc\" data-title=\"A &lt;b&gt;\" data-done=\"1\" data-source=\"title = &quot;A &lt;b&gt;&quot;\nroot = Card([TextContent(&#39;x &gt; y&#39;)])\"></div><ul><li>a<ul><li>b</li></ul></li></ul>";
         let b = blocks(html);
         assert_eq!(b.len(), 5, "{b:?}");
         assert!(
@@ -499,7 +521,9 @@ mod tests {
         );
         assert!(matches!(&b[1], Block::Code { inner } if code_text(inner) == "fn x <"));
         assert!(
-            matches!(&b[3], Block::Artifact { src, title } if src == "/artifact/abc" && title == "A <b>")
+            matches!(&b[3], Block::Artifact { src, title, source, done: true }
+                if src == "/artifact/abc" && title == "A <b>"
+                    && source == "title = \"A <b>\"\nroot = Card([TextContent('x > y')])")
         );
         assert!(
             matches!(&b[4], Block::Html(h) if h.ends_with("</ul></ul>") || h.ends_with("</li></ul>"))

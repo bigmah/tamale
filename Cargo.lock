@@ -1997,6 +1997,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7e036b411754132fd6b74e94b74e9a13c5cf606fa93d1885c35860d3060820b1"
 
 [[package]]
+name = "openui"
+version = "0.1.0"
+
+[[package]]
 name = "ordered-float"
 version = "4.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3459,6 +3463,7 @@ dependencies = [
  "hkdf",
  "ignore",
  "libc",
+ "openui",
  "pulldown-cmark",
  "pullspace-embed",
  "qrcode",

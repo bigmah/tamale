@@ -149,7 +149,11 @@ pub fn tunnelled_path(path: &str) -> bool {
             // The page's app, as WebAssembly (tamale's `web/`).
             | "/app_bg.wasm"
             | "/app.css"
-            // tamale's page before it was WebAssembly; kept for older tamales.
+            // An artifact in a tab of its own: the viewer that draws it (`openui/dioxus`).
+            | "/openui.js"
+            | "/openui_bg.wasm"
+            // tamale's page before it was WebAssembly, and the frame artifacts were posted
+            // into before they were drawn by the page; kept for older tamales.
             | "/noise.js"
             | "/artifact-frame"
             // The review panel when it was pullspace in a frame; tamale draws it in the page

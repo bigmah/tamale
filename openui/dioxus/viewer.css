@@ -1,0 +1,24 @@
+/* The viewer's page: one artifact on its own (src/main.rs), in a browser tab or the iOS
+   app. With app.css's :root tokens and openui.css. */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; user-select: none; padding: 0; touch-action: manipulation; }
+input, textarea, select { font: inherit; color: inherit; }
+h1, h2, h3, h4, p, ul, ol, figure, blockquote { margin: 0; }
+svg { flex: none; }
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.oui-page { max-width: 1120px; margin: 0 auto; }
+.oui-page-bar { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; min-height: 44px; padding: env(safe-area-inset-top, 0px) 16px 0; background: var(--bg-2); border-bottom: 1px solid var(--border-soft); color: var(--fg-bright); font-weight: 600; font-size: 13px; }
+.oui-page-bar span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* In the iOS app the card around it has the title already. */
+.embedded .oui-page-bar { display: none; }

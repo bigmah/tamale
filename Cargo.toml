@@ -5,9 +5,9 @@ edition = "2024"
 repository = "https://github.com/bigmah/tamale"
 
 [workspace]
-members = ["browser/protocol", "hub", "hub/protocol"]
-# Built for wasm32 by build.rs, as is web/ (a workspace of its own).
-exclude = ["browser/client"]
+members = ["browser/protocol", "hub", "hub/protocol", "openui"]
+# Built for wasm32 by build.rs, as are web/ and openui/dioxus (workspaces of their own).
+exclude = ["browser/client", "openui/dioxus"]
 
 [dependencies]
 anyhow = "1.0.104"
@@ -30,6 +30,7 @@ sha1_smol = "1.0.1"
 # keeps the page's rules out of pullspace's box. pullspace itself is drawn by web/, which
 # depends on the `pullspace` crate; the built bundle (the `assets` feature) isn't needed.
 pullspace-embed = { git = "https://github.com/bigmah/pullspace", rev = "25ecd3b60dda6f6add7a441ec83e65ab90750419", default-features = false }
+openui = { path = "openui" }
 tamale-browser-protocol = { path = "browser/protocol" }
 tamale-hub-protocol = { path = "hub/protocol" }
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "regex-fancy"] }

@@ -2,7 +2,6 @@
 //! keeps a Content Security Policy without `unsafe-eval`.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
@@ -13,10 +12,10 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use web_sys::{
     BinaryType, Blob, BlobPropertyBag, CloseEvent, Document, Element, HtmlElement,
-    HtmlIFrameElement, HtmlTextAreaElement, KeyboardEvent, MessageEvent, WebSocket, Window,
+    HtmlTextAreaElement, KeyboardEvent, MessageEvent, WebSocket, Window,
 };
 
-use super::{FrameTarget, HostEvent, Key, KeyHandler, Place, SocketEvent};
+use super::{HostEvent, Key, KeyHandler, Place, SocketEvent};
 use crate::e2e;
 
 fn window() -> Window {
@@ -81,11 +80,8 @@ pub fn place() -> Place {
     let parent_hub = host
         .split_once('.')
         .map(|(_, rest)| format!("{protocol}//{rest}"));
-    let post_artifacts = e2e.is_some();
     Place {
         base: String::new(),
-        frames: String::new(),
-        post_artifacts,
         ws_url: format!(
             "{scheme}://{host}/ws?t={}",
             js_sys::encode_uri_component(&token)
@@ -512,49 +508,6 @@ pub fn open_tab(url: &str) -> bool {
         .is_ok()
 }
 
-thread_local! {
-    static TABS: RefCell<(u32, HashMap<u32, Window>)> = RefCell::new((0, HashMap::new()));
-}
-
-/// Opens `/artifact-frame` in a tab, to be sent an artifact once it's ready.
-pub fn open_frame_tab(url: &str) -> Option<u32> {
-    let tab = window()
-        .open_with_url_and_target(url, "_blank")
-        .ok()
-        .flatten()?;
-    Some(TABS.with(|t| {
-        let mut t = t.borrow_mut();
-        t.0 += 1;
-        let id = t.0;
-        t.1.insert(id, tab);
-        id
-    }))
-}
-
-/// Sends an artifact's document to the frame or tab that's waiting for it.
-pub fn post_artifact(target: &FrameTarget, html: &str) {
-    let message = Object::new();
-    set(&message, "tamaleArtifactHtml", html);
-    let target = match target {
-        FrameTarget::Frame(key) => frame_window(key),
-        FrameTarget::Tab(id) => TABS.with(|t| t.borrow_mut().1.remove(id)),
-    };
-    // The target can't be narrower: the frame's origin is opaque. It's the user's own
-    // artifact, going to a frame this page just made.
-    if let Some(w) = target {
-        let _ = w.post_message(&message, "*");
-    }
-}
-
-fn frame_window(key: &str) -> Option<Window> {
-    document()
-        .query_selector(&format!("iframe[data-frame=\"{key}\"]"))
-        .ok()
-        .flatten()
-        .and_then(|e| e.dyn_into::<HtmlIFrameElement>().ok())
-        .and_then(|f| f.content_window())
-}
-
 /// A `blob:` URL for `bytes`.
 pub fn blob_url(bytes: &[u8], mime: &str) -> Option<String> {
     let parts = Array::new();
@@ -932,7 +885,7 @@ pub fn install(keys: KeyHandler, events: UnboundedSender<HostEvent>, prompt: &'s
     }
 }
 
-/// What a message from a frame (or the hub's page) means, if it's one the app listens to.
+/// What a message from the hub's page means, if it's one the app listens to.
 fn frame_message(ev: &MessageEvent) -> Option<HostEvent> {
     let data = ev.data();
     let source = ev.source()?;
@@ -948,46 +901,6 @@ fn frame_message(ev: &MessageEvent) -> Option<HostEvent> {
                 return Some(HostEvent::HubClose);
             }
             return None;
-        }
-    }
-    // An artifact's frame, sized to fit, or asking for its document.
-    let frames = document().query_selector_all("iframe[data-frame]").ok()?;
-    for i in 0..frames.length() {
-        let Some(frame) = frames
-            .get(i)
-            .and_then(|n| n.dyn_into::<HtmlIFrameElement>().ok())
-        else {
-            continue;
-        };
-        if !frame
-            .content_window()
-            .is_some_and(|cw| Object::is(&source, &cw))
-        {
-            continue;
-        }
-        let key = frame.get_attribute("data-frame").unwrap_or_default();
-        if let Some(height) = get(&data, "tamaleArtifactHeight").as_f64() {
-            return Some(HostEvent::ArtifactHeight { frame: key, height });
-        }
-        if get(&data, "tamaleFrameReady").as_bool() == Some(true) {
-            return Some(HostEvent::FrameReady {
-                target: FrameTarget::Frame(key),
-            });
-        }
-        return None;
-    }
-    if get(&data, "tamaleFrameReady").as_bool() == Some(true) {
-        let tab = TABS.with(|t| {
-            t.borrow()
-                .1
-                .iter()
-                .find(|(_, w)| Object::is(&source, w))
-                .map(|(id, _)| *id)
-        });
-        if let Some(id) = tab {
-            return Some(HostEvent::FrameReady {
-                target: FrameTarget::Tab(id),
-            });
         }
     }
     None

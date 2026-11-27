@@ -9,7 +9,13 @@ public enum HTMLText {
         var artifacts: [ArtifactBlock] = []
         var s = html
 
-        // Artifacts, finished and still building.
+        // Artifacts: since they're OpenUI Lang, one placeholder carrying the document, with its
+        // id once it's finished.
+        s = replace(s, #"<div class="artifact" data-src="(?:/artifact/([A-Za-z0-9]+))?" data-title="([^"]*)" data-done="([01])" data-source="[^"]*"></div>"#) { g in
+            artifacts.append(ArtifactBlock(id: g[1].isEmpty ? nil : g[1], title: decodeEntities(g[2]), done: g[3] == "1", hash: nil))
+            return "\n\n\u{1}\(artifacts.count - 1)\u{1}\n\n"
+        }
+        // Before, HTML artifacts: finished and still building.
         s = replace(s, #"<div class="artifact" data-src="/artifact/([A-Za-z0-9]+)" data-title="([^"]*)"></div>"#) { g in
             artifacts.append(ArtifactBlock(id: g[1], title: decodeEntities(g[2]), done: true, hash: nil))
             return "\n\n\u{1}\(artifacts.count - 1)\u{1}\n\n"

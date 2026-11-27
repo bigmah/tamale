@@ -10,7 +10,7 @@ your existing [Claude Code](https://docs.claude.com/en/docs/claude-code),
 [Antigravity](https://antigravity.google/product/antigravity-cli) sign-in.
 
 Start a session in the terminal, then pick it up from the web or the iOS app through an
-end-to-end encrypted relay. Longer answers arrive as HTML artifacts on web and iOS, and
+end-to-end encrypted relay. Longer answers arrive as artifacts (OpenUI Lang, drawn natively) on web and iOS, and
 every UI has a diff viewer for reviewing what changed.
 
 Written entirely in Rust with [rig](https://rig.rs) and [ratatui](https://ratatui.rs)

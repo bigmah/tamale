@@ -40,12 +40,12 @@
       "artifacts": [
         {
           "done": true,
-          "hash": "b9c6f945b8adc81d381931851a403c9aee8e88f64e876c33775f73d808d06720",
+          "hash": "ae497c5ffce44f8aacb1dd764d01cf1498a8c140bfb87cf9f660ec469b2725b1",
           "id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
           "title": "Login flow"
         }
       ],
-      "html": "<p>I traced the bug.</p><ul><li><code>auth.rs</code> drops the cookie</li><li><strong>fix</strong>: keep it</li></ul><div class=\"artifact\" data-src=\"/artifact/a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0\" data-title=\"Login flow\"></div><p>Want me to apply it?</p>",
+      "html": "<p>I traced the bug.</p><ul><li><code>auth.rs</code> drops the cookie</li><li><strong>fix</strong>: keep it</li></ul><div class=\"artifact\" data-src=\"/artifact/a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0\" data-title=\"Login flow\" data-done=\"1\" data-source=\"title = &quot;Login flow&quot;\nroot = Card([CardHeader(&quot;Login flow&quot;), TextContent(&quot;Steps&quot;)])\n\"></div><p>Want me to apply it?</p>",
       "kind": "assistant",
       "md": "I traced the bug.\n\n- `auth.rs` drops the cookie\n- **fix**: keep it\n\n<!-- artifact 0 -->\n\nWant me to apply it?"
     },
@@ -67,7 +67,7 @@
           "title": "Draft"
         }
       ],
-      "html": "<p>Building:</p><div class=\"artifact building\"><div class=\"artifact-bar\"><span class=\"artifact-spark\"></span><span class=\"artifact-title\">Building Draft…</span><span class=\"artifact-meta\">2 lines</span></div></div>",
+      "html": "<p>Building:</p><div class=\"artifact\" data-src=\"\" data-title=\"Draft\" data-done=\"0\" data-source=\"title = &quot;Draft&quot;\nroot = Card([TextContent(&quot;half\"></div>",
       "kind": "assistant",
       "md": "Building:\n\n<!-- artifact 0 -->\n\n"
     }

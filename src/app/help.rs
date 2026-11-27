@@ -101,7 +101,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ),
     (
         "/artifacts",
-        "List this session's saved HTML artifacts (in /web: browse every session's)",
+        "List this session's saved artifacts (in /web: browse every session's)",
     ),
     ("/clear", "Clear the conversation and start fresh"),
     (

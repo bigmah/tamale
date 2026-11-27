@@ -10,6 +10,8 @@ use crate::html;
 use crate::icons::{I, icon, toque};
 use crate::wire::KitchenSession;
 
+use openui_dioxus::OpenUi;
+
 pub use crate::app::Seam as Which;
 
 impl Which {
@@ -431,15 +433,18 @@ pub fn GalleryDialog() -> Element {
 #[component]
 fn GalleryView(url: String, title: String, file: String, current: bool) -> Element {
     let app = use_context::<App>();
-    let key = use_hook(|| format!("g{}", html::hash(&format!("{url}{}", host::now_ms()))));
-    {
-        let (key, url) = (key.clone(), url.clone());
-        use_hook(move || app.frame_wants(&key, &url));
-    }
     let in_chat = host::exists(&format!(".artifact[data-src=\"{url}\"]"));
-    let posting = app.posting();
+    let urls = app.artifact_urls();
     let base = app.place.read().base.clone();
-    let frame_src = app.frame_src(&url);
+    let source = use_resource(use_reactive!(|url| async move {
+        app.artifact_source(url).await
+    }));
+    let send = Callback::new(move |text: String| {
+        app.close_gallery();
+        if app.send(json!({ "t": "send", "text": text }), false) {
+            app.scroll_to_bottom(true)
+        }
+    });
     let (u1, u2, u3, t1, t2, f1) = (
         url.clone(),
         url.clone(),
@@ -479,30 +484,29 @@ fn GalleryView(url: String, title: String, file: String, current: bool) -> Eleme
                 },
                 {icon(I::Edit)}
             }
-            a {
+            button {
                 class: "artifact-btn wide-only",
-                title: "Download as HTML",
-                href: "{base}{url}",
-                download: "{html::slug(&title)}.html",
-                onclick: move |ev: Event<MouseData>| if posting { ev.prevent_default(); app.save_artifact(u2.clone(), t2.clone()); },
+                title: "Download its OpenUI Lang document",
+                onclick: move |_| app.save_artifact(u2.clone(), t2.clone()),
                 {icon(I::Download)}
             }
-            a {
-                class: "artifact-btn",
-                title: "Open in a new tab",
-                href: "{base}{url}",
-                target: "_blank",
-                rel: "noopener noreferrer",
-                onclick: move |ev: Event<MouseData>| if posting { ev.prevent_default(); app.open_artifact_tab(&u3); },
-                {icon(I::Open)}
+            if urls {
+                a {
+                    class: "artifact-btn",
+                    title: "Open in a new tab",
+                    href: "{base}{u3}",
+                    target: "_blank",
+                    rel: "noopener noreferrer",
+                    {icon(I::Open)}
+                }
             }
         }
-        iframe {
-            title: "{title}",
-            "data-frame": "{key}",
-            "sandbox": "allow-scripts allow-popups allow-modals allow-forms",
-            referrerpolicy: "no-referrer",
-            src: "{frame_src}",
+        div { class: "art-doc",
+            match source.read().clone() {
+                // Keyed by the artifact, so another one starts with its own state.
+                Some(source) => rsx! { OpenUi { key: "{url}", source, done: true, send: Some(send) } },
+                None => rsx! { div { class: "oui-empty", "Loading…" } },
+            }
         }
     }
 }

@@ -1,0 +1,9 @@
+[package]
+name = "openui"
+version = "0.1.0"
+edition = "2024"
+description = "OpenUI Lang for tamale's artifacts: the parser, the evaluator and tamale's component library, shared by tamale (titles, the prompt) and its web UI (the Dioxus renderer)"
+publish = false
+
+# No dependencies: it's compiled into tamale and, for WebAssembly, into web/.
+[dependencies]

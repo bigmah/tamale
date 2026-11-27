@@ -82,7 +82,7 @@ conversation keeps going with the screen locked. The web UI has the same convers
   session, what Gemini reads of it (the conversation, status and changes, decrypted on the phone).
 - **Artifacts**: in the app's container, encrypted while the phone is locked (data protection
   `complete`).
-- Artifacts run like the web UI's sandboxed frames: each in its own web view with no storage,
+- Artifacts are drawn by tamale's own renderer (the web UI's, as WebAssembly in the page it sends), each in its own web view with no storage,
   no cookies, no access to the app, and the same content security policy. Links open in Safari
   after asking.
 

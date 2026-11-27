@@ -83,8 +83,6 @@ fn start(mut app: App) {
                         app.stick(stick);
                     }
                 }
-                HostEvent::ArtifactHeight { frame, height } => app.set_height(frame, height),
-                HostEvent::FrameReady { target } => app.frame_ready(target),
                 HostEvent::HubClose => app.end_session(),
                 HostEvent::OpenPath { path, diff } => {
                     if !app.is_chef() {

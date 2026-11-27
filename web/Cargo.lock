@@ -3736,6 +3736,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "openui"
+version = "0.1.0"
+
+[[package]]
+name = "openui-dioxus"
+version = "0.1.0"
+dependencies = [
+ "dioxus",
+ "openui",
+ "serde_json",
+]
+
+[[package]]
 name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5343,6 +5356,8 @@ dependencies = [
  "getrandom 0.3.4",
  "gloo-timers",
  "js-sys",
+ "openui",
+ "openui-dioxus",
  "pullspace",
  "serde",
  "serde_json",

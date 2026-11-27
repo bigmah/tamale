@@ -1,0 +1,31 @@
+[package]
+name = "openui-dioxus"
+version = "0.1.0"
+edition = "2024"
+description = "tamale's artifacts drawn with Dioxus: the renderer for OpenUI Lang documents (see ../), used by the web UI (web/) and by the viewer, a small app that draws one artifact on its own"
+publish = false
+
+# Built for wasm32 by tamale's build.rs (the viewer, with the `viewer` feature), and as part
+# of web/, separately from tamale.
+[workspace]
+
+[features]
+viewer = ["dioxus/web", "dioxus/launch", "dep:web-sys"]
+
+[[bin]]
+name = "openui-viewer"
+path = "src/main.rs"
+required-features = ["viewer"]
+
+[dependencies]
+dioxus = { version = "=0.7.10", default-features = false, features = ["macro", "hooks", "html", "signals", "document"] }
+openui = { path = ".." }
+serde_json = "1"
+# Only for the viewer: dioxus-web uses `Location` without asking web-sys for it.
+web-sys = { version = "0.3", optional = true, features = ["Location"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"

@@ -9,6 +9,9 @@ use crate::html::{self, Block};
 use crate::icons::{I, icon};
 use crate::voice::Topic;
 use crate::wire::Entry;
+use serde_json::json;
+
+use openui_dioxus::OpenUi;
 
 /// Steps whose summary is the path of the file they read or changed.
 const FILE_TOOLS: &[&str] = &["read_file", "write_file", "edit_file"];
@@ -174,7 +177,8 @@ fn Prose(class: String, html: String) -> Element {
             for block in blocks {
                 {
                     let base = match &block {
-                        Block::Artifact { src, .. } => format!("a{src}"),
+                        // By position, so one that finishes streaming keeps its state.
+                        Block::Artifact { .. } => "artifact".to_string(),
                         Block::Video { path, .. } => format!("v{path}"),
                         Block::Code { inner } => html::hash(inner),
                         Block::Html(h) => html::hash(h),
@@ -192,7 +196,12 @@ fn Prose(class: String, html: String) -> Element {
 #[component]
 fn BlockView(block: Block, id: String) -> Element {
     match block {
-        Block::Artifact { src, title } => rsx! { ArtifactBox { src, title } },
+        Block::Artifact {
+            src,
+            title,
+            source,
+            done,
+        } => rsx! { ArtifactBox { src, title, source, done } },
         Block::Video { path, title } => rsx! { VideoBox { path, title } },
         Block::Code { inner } => rsx! { CodeBlock { inner } },
         Block::Html(h) => rsx! { div { class: "blk", dangerous_inner_html: h } },
@@ -223,30 +232,13 @@ fn CodeBlock(inner: String) -> Element {
     }
 }
 
-/// An artifact: its page in a sandboxed frame, sized to fit, with a bar to revise, save,
-/// reload, open or enlarge it.
+/// An artifact, drawn in place (see `openui`), with a bar to talk about, revise, save,
+/// open or enlarge it. While it streams in, it's drawn as far as it has come.
 #[component]
-pub fn ArtifactBox(src: String, title: String) -> Element {
+pub fn ArtifactBox(src: String, title: String, source: String, done: bool) -> Element {
     let app = use_context::<App>();
-    let key = use_hook(|| format!("f{}", html::hash(&format!("{src}{}", host::now_ms()))));
-    let mut reloads = use_signal(|| 0u32);
-    let frame_src = app.frame_src(&src);
-    {
-        let (key, src) = (key.clone(), src.clone());
-        use_hook(move || app.frame_wants(&key, &src));
-    }
+    let key = use_hook(|| format!("f{}", html::hash(&format!("{}", host::now_ms()))));
     let full = app.full.read().as_deref() == Some(key.as_str());
-    {
-        let frame = format!("frame-{key}");
-        use_effect(move || {
-            let height = app.heights.read().get(&frame[6..]).copied();
-            host::set_style(
-                &frame,
-                "height",
-                height.map(|h| format!("{h}px")).as_deref(),
-            );
-        });
-    }
     let toggle = {
         let key = key.clone();
         move |_| {
@@ -257,60 +249,76 @@ pub fn ArtifactBox(src: String, title: String) -> Element {
             }
         }
     };
-    let posting = app.posting();
+    let urls = app.artifact_urls();
     let base = app.place.read().base.clone();
-    let (t1, t2, s1, s2, s3) = (
-        title.clone(),
-        title.clone(),
-        src.clone(),
-        src.clone(),
-        src.clone(),
-    );
+    let kept = done && !src.is_empty();
+    let lines = source.lines().count();
+    let send = Callback::new(move |text: String| {
+        app.close_full();
+        if app.send(json!({ "t": "send", "text": text }), false) {
+            app.scroll_to_bottom(true)
+        }
+    });
+    let (t1, t2, s1, s2) = (title.clone(), title.clone(), src.clone(), src.clone());
+    let class = match (full, done) {
+        (true, _) => "artifact full",
+        (false, true) => "artifact",
+        (false, false) => "artifact building",
+    };
     rsx! {
-        div { class: if full { "artifact full" } else { "artifact" }, id: "art-box-{key}", "data-src": "{src}",
+        div { class, id: "art-box-{key}", "data-src": "{src}",
             div { class: "artifact-bar",
-                span { class: "artifact-icon", {icon(I::Spark)} }
+                if done {
+                    span { class: "artifact-icon", {icon(I::Spark)} }
+                } else {
+                    span { class: "artifact-spark" }
+                }
                 // On a phone the title is the biggest target there is: tap it for full screen.
-                button { class: "artifact-title", title: "{title}", onclick: toggle.clone(), "{title}" }
+                button { class: "artifact-title", title: "{title}", onclick: toggle.clone(),
+                    if done { "{title}" } else { "Building {title}…" }
+                }
                 span { class: "spacer" }
-                button {
-                    class: "artifact-btn",
-                    title: "Talk about this artifact with Gemini",
-                    onclick: move |_| {
-                        app.close_full();
-                        app.voice.start(app, Some(Topic { title: t1.clone(), url: s1.clone() }), host::Audio::new());
-                    },
-                    {icon(I::Wave)}
+                if !done {
+                    span { class: "artifact-meta", "{lines} line{plural_s(lines)}" }
                 }
-                button {
-                    class: "artifact-btn",
-                    title: "Revise this artifact",
-                    onclick: move |_| {
-                        app.close_full();
-                        app.set_input(format!("Revise the \"{t2}\" artifact: "));
-                    },
-                    {icon(I::Edit)}
-                }
-                a {
-                    class: "artifact-btn wide-only",
-                    title: "Download as HTML (also saved with the session; /artifacts lists them)",
-                    href: "{base}{src}",
-                    download: "{html::slug(&title)}.html",
-                    onclick: {
-                        let title = title.clone();
-                        move |ev: Event<MouseData>| if posting { ev.prevent_default(); app.save_artifact(s2.clone(), title.clone()); }
-                    },
-                    {icon(I::Download)}
-                }
-                button { class: "artifact-btn wide-only", title: "Reload", onclick: move |_| reloads += 1, {icon(I::Reload)} }
-                a {
-                    class: "artifact-btn",
-                    title: "Open in a new tab",
-                    href: "{base}{src}",
-                    target: "_blank",
-                    rel: "noopener noreferrer",
-                    onclick: move |ev: Event<MouseData>| if posting { ev.prevent_default(); app.open_artifact_tab(&s3); },
-                    {icon(I::Open)}
+                if kept {
+                    button {
+                        class: "artifact-btn",
+                        title: "Talk about this artifact with Gemini",
+                        onclick: move |_| {
+                            app.close_full();
+                            app.voice.start(app, Some(Topic { title: t1.clone(), url: s1.clone() }), host::Audio::new());
+                        },
+                        {icon(I::Wave)}
+                    }
+                    button {
+                        class: "artifact-btn",
+                        title: "Revise this artifact",
+                        onclick: move |_| {
+                            app.close_full();
+                            app.set_input(format!("Revise the \"{t2}\" artifact: "));
+                        },
+                        {icon(I::Edit)}
+                    }
+                    button {
+                        class: "artifact-btn wide-only",
+                        title: "Download its OpenUI Lang document (also saved with the session; /artifacts lists them)",
+                        onclick: {
+                            let (src, title) = (src.clone(), title.clone());
+                            move |_| app.save_artifact(src.clone(), title.clone())
+                        },
+                        {icon(I::Download)}
+                    }
+                    if urls {
+                        a {
+                            class: "artifact-btn",
+                            title: "Open in a new tab",
+                            href: "{base}{s2}",
+                            target: "_blank",
+                            rel: "noopener noreferrer",
+                            {icon(I::Open)}
+                        }
+                    }
                 }
                 button {
                     class: "artifact-btn artifact-expand",
@@ -319,18 +327,15 @@ pub fn ArtifactBox(src: String, title: String) -> Element {
                     if full { {icon(I::Shrink)} } else { {icon(I::Expand)} }
                 }
             }
-            iframe {
-                key: "{reloads}",
-                title: "{title}",
-                "data-frame": "{key}",
-                "sandbox": "allow-scripts allow-popups allow-modals allow-forms",
-                referrerpolicy: "no-referrer",
-                "loading": "lazy",
-                id: "frame-{key}",
-                src: "{frame_src}",
+            div { class: "artifact-body",
+                OpenUi { source, done, send: Some(send) }
             }
         }
     }
+}
+
+fn plural_s(n: usize) -> &'static str {
+    if n == 1 { "" } else { "s" }
 }
 
 /// A video a reply shows, asked of tamale as it comes into view.

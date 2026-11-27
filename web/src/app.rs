@@ -9,7 +9,7 @@ use dioxus::prelude::*;
 use futures_channel::oneshot;
 use serde_json::{Value, json};
 
-use crate::host::{self, FrameTarget, Place};
+use crate::host::{self, Place};
 use crate::html;
 use crate::voice::Voice;
 use crate::wire::{self, Approval, Entry, Kitchen, Model, Questions, SavedSession, Status};
@@ -226,11 +226,9 @@ pub struct Mem {
     pub refresh: u64,
     pub toast: u64,
     /// The document at each artifact URL, once it came.
-    pub artifact_pages: HashMap<String, String>,
+    pub artifact_sources: HashMap<String, String>,
     /// What's waiting for each artifact id.
     pub artifacts_due: HashMap<String, Vec<oneshot::Sender<String>>>,
-    /// Frames and tabs waiting for an artifact, and which.
-    pub frames_due: Vec<(FrameTarget, String)>,
     /// Each video's blob URL and type, by path, once it came.
     pub videos: HashMap<String, (String, String)>,
     pub kitchen_seen: HashMap<String, String>,
@@ -274,10 +272,8 @@ pub struct App {
     pub picker: Signal<Picker>,
     pub ending: Signal<Ending>,
     pub help: Signal<bool>,
-    /// The artifact shown full screen, by its frame's key.
+    /// The artifact shown full screen, by its box's key.
     pub full: Signal<Option<String>>,
-    /// Each artifact frame's height, by its key, as the document in it asked.
-    pub heights: Signal<HashMap<String, f64>>,
     /// A long run finished out of sight, and a card waits on the user out of sight.
     pub done_unseen: Signal<bool>,
     pub warn: Signal<bool>,
@@ -354,7 +350,6 @@ impl App {
             ending: Signal::new(Ending::default()),
             help: Signal::new(false),
             full: Signal::new(None),
-            heights: Signal::new(HashMap::new()),
             done_unseen: Signal::new(false),
             warn: Signal::new(false),
             chat_share: Signal::new(share("chatShare")),
@@ -1033,27 +1028,17 @@ impl App {
         self.drop_layer(Layer::FullArtifact);
     }
 
-    /// What an artifact frame's `src` is: the artifact itself, or on an encrypted session
-    /// (where it can't come through the hub by URL) the empty page it's posted to.
-    pub fn frame_src(&self, url: &str) -> String {
-        let place = self.place.read();
-        if place.post_artifacts {
-            format!("{}/artifact-frame", place.frames)
-        } else {
-            format!("{}{url}", place.base)
-        }
+    /// Whether an artifact can be opened at its own URL: not through a hub on an encrypted
+    /// session, which won't pass it.
+    pub fn artifact_urls(&self) -> bool {
+        !self.e2e()
     }
 
-    /// Whether an artifact's links (open, download) are the app's to follow rather than the
-    /// browser's.
-    pub fn posting(&self) -> bool {
-        self.place.read().post_artifacts
-    }
-
-    /// The document at `url` (`/artifact/<id>`), asked of tamale over the socket.
-    pub async fn artifact_html(mut self, url: String) -> String {
-        if let Some(page) = self.mem.read().artifact_pages.get(&url) {
-            return page.clone();
+    /// The document of the artifact at `url` (`/artifact/<id>`), asked of tamale over the
+    /// socket.
+    pub async fn artifact_source(mut self, url: String) -> String {
+        if let Some(source) = self.mem.read().artifact_sources.get(&url) {
+            return source.clone();
         }
         let id = url.trim_start_matches("/artifact/").to_string();
         let (tx, rx) = oneshot::channel();
@@ -1064,7 +1049,8 @@ impl App {
             due.len() == 1
         };
         if first {
-            self.send(json!({ "t": "artifact", "id": id }), true);
+            // The document alone: this page draws it (no `html` page for a web view).
+            self.send(json!({ "t": "artifact", "id": id, "page": false }), true);
         }
         rx.await.unwrap_or_default()
     }
@@ -1075,81 +1061,41 @@ impl App {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
-        let html = m.get("html").and_then(Value::as_str).map(str::to_string);
+        let source = m.get("source").and_then(Value::as_str).map(str::to_string);
         let url = format!("/artifact/{id}");
-        let page = html
-            .clone()
-            .unwrap_or_else(|| "<p>No such artifact; it may be from an earlier run.</p>".into());
+        let got = source.clone().unwrap_or_else(|| {
+            "root = Callout(\"neutral\", \"No such artifact\", \"It may be from an earlier run.\")"
+                .into()
+        });
         let waiting = {
             let mut mem = self.mem.write();
-            if html.is_some() {
-                mem.artifact_pages.insert(url, page.clone());
+            if source.is_some() {
+                mem.artifact_sources.insert(url, got.clone());
             }
             mem.artifacts_due.remove(&id).unwrap_or_default()
         };
         for tx in waiting {
-            let _ = tx.send(page.clone());
+            let _ = tx.send(got.clone());
         }
     }
 
-    /// A frame (or tab) on `/artifact-frame` is ready: sends it its artifact.
-    pub fn frame_ready(mut self, target: FrameTarget) {
-        let url = {
-            let mut mem = self.mem.write();
-            let at = mem.frames_due.iter().position(|(t, _)| *t == target);
-            at.map(|at| mem.frames_due[at].1.clone())
-        };
-        let Some(url) = url else { return };
+    pub fn open_artifact_tab(self, url: &str) {
+        let base = self.place.read().base.clone();
+        if !host::open_tab(&format!("{base}{url}")) {
+            self.toast("The browser blocked opening a new tab.", 5000);
+        }
+    }
+
+    /// Saves the artifact's document, as written.
+    pub fn save_artifact(self, url: String, title: String) {
         spawn_forever(async move {
-            let html = self.artifact_html(url).await;
-            host::post_artifact(&target, &html);
-        });
-    }
-
-    /// Notes which artifact the frame with `key` shows, for when it asks.
-    pub fn frame_wants(mut self, key: &str, url: &str) {
-        let mut mem = self.mem.write();
-        let target = FrameTarget::Frame(key.to_string());
-        mem.frames_due.retain(|(t, _)| *t != target);
-        mem.frames_due.push((target, url.to_string()));
-    }
-
-    pub fn open_artifact_tab(mut self, url: &str) {
-        if !self.e2e() {
-            let base = self.place.read().base.clone();
-            host::open_tab(&format!("{base}{url}"));
-            return;
-        }
-        // The frame page clears its opener before it writes the artifact.
-        match host::open_frame_tab(&self.frame_src(url)) {
-            Some(tab) => self
-                .mem
-                .write()
-                .frames_due
-                .push((FrameTarget::Tab(tab), url.to_string())),
-            None => self.toast("The browser blocked opening a new tab.", 5000),
-        }
-    }
-
-    pub fn save_artifact(mut self, url: String, title: String) {
-        spawn_forever(async move {
-            let html = self.artifact_html(url).await;
+            let source = self.artifact_source(url).await;
             host::download(
-                &format!("{}.html", html::slug(&title)),
-                html.as_bytes(),
-                "text/html",
+                &format!("{}.openui", html::slug(&title)),
+                source.as_bytes(),
+                "text/plain",
             );
         });
-    }
-
-    pub fn set_height(mut self, frame: String, height: f64) {
-        let stick = self.near_bottom();
-        let height = height.clamp(120.0, 8000.0);
-        if self.heights.peek().get(&frame) == Some(&height) {
-            return;
-        }
-        self.heights.write().insert(frame, height);
-        self.stick(stick);
     }
 
     /// A video's blob URL and type, asked of tamale once.

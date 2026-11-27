@@ -142,7 +142,8 @@ impl Entry {
                         "" => "Artifact",
                         title => title,
                     };
-                    let block = format!("```html artifact\n<title>{title}</title>\n```");
+                    let title = title.replace('\\', "\\\\").replace('"', "\\\"");
+                    let block = format!("```openui\ntitle = \"{title}\"\n```");
                     text = text.replacen(&super::artifact_marker(n), &block, 1);
                 }
                 session::Entry::Assistant(text)
@@ -208,8 +209,7 @@ mod tests {
 
     #[test]
     fn an_artifact_comes_back_as_its_title_where_it_was() {
-        let reply =
-            "Here:\n\n```html artifact\n<title>Login flow</title><p>Steps</p>\n```\n\nDone.";
+        let reply = "Here:\n\n```openui\ntitle = \"Login flow\"\nroot = Card([])\n```\n\nDone.";
         let session::Entry::Assistant(text) =
             there_and_back(&session::Entry::Assistant(reply.into()))
         else {
@@ -217,7 +217,7 @@ mod tests {
         };
         assert_eq!(
             text,
-            "Here:\n\n```html artifact\n<title>Login flow</title>\n```\n\nDone."
+            "Here:\n\n```openui\ntitle = \"Login flow\"\n```\n\nDone."
         );
     }
 

@@ -1,6 +1,5 @@
 //! What the app needs of wherever it runs: the address it talks to, sockets, storage, the
-//! clock, and the few things only the document can do (focus, scrolling, frames, the
-//! clipboard), from the browser through web-sys (`web`). The rest of the app sees only this
+//! clock, and the few things only the document can do (focus, scrolling, the clipboard), from the browser through web-sys (`web`). The rest of the app sees only this
 //! module.
 
 use std::rc::Rc;
@@ -17,12 +16,6 @@ pub struct Place {
     /// What links to the session's server start with: empty, as the page is served from
     /// there.
     pub base: String,
-    /// Where the empty artifact frame (`/artifact-frame`) is served from: the page's own
-    /// origin, which it needs to talk to it.
-    pub frames: String,
-    /// Artifacts are posted into `/artifact-frame` rather than loaded by URL: on an encrypted
-    /// session, where they can't come through a hub by URL.
-    pub post_artifacts: bool,
     /// The session's socket.
     pub ws_url: String,
     /// The session's id, the first label of its host name, for the encryption's prologue.
@@ -77,23 +70,10 @@ pub enum HostEvent {
     Media,
     /// The visible height changed (the on-screen keyboard came or went).
     Viewport,
-    /// An artifact's frame says how tall its document is.
-    ArtifactHeight { frame: String, height: f64 },
-    /// A frame or tab opened on `/artifact-frame` is ready for its document.
-    FrameReady { target: FrameTarget },
     /// The hub's page asks to close this session (it asked the user first).
     HubClose,
     /// A file path in a reply was clicked: open it in the code view.
     OpenPath { path: String, diff: bool },
-}
-
-/// Where an artifact's document goes once its frame is ready.
-#[derive(Clone, Debug, PartialEq)]
-pub enum FrameTarget {
-    /// An `iframe` with this `data-frame`.
-    Frame(String),
-    /// A tab opened with [`open_frame_tab`].
-    Tab(u32),
 }
 
 /// The handler for keys the app answers anywhere. It runs while the key is being

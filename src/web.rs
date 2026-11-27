@@ -9,10 +9,11 @@
 //! for the workspace's files and changes, which this server reads itself (see `pullspace`
 //! and `diff`). Any number of tabs can be open; they all show the same session.
 //!
-//! Assistant replies may end in an interactive HTML artifact (a ```` ```html artifact ````
-//! block; prompts sent from the page ask for one). Each finished artifact is stored under
-//! an unguessable id and served from `/artifact/<id>` with a sandboxing CSP, so it runs in
-//! an opaque origin that can't reach the session; the page embeds it in an iframe.
+//! Assistant replies may end in an artifact: an OpenUI Lang document in a ```` ```openui ````
+//! block (prompts sent from the page ask for one), which the page draws with its own Dioxus
+//! components (`openui/dioxus`), so an artifact is data and never runs script. Each
+//! finished artifact is kept under an unguessable id: `/artifact/<id>` is a page that draws
+//! it alone, and the `artifact` request returns its document.
 
 mod artifacts;
 mod diff;
@@ -38,7 +39,9 @@ pub enum HubState<'a> {
     /// Not yet, and what's gone wrong so far.
     Connecting(Option<String>),
 }
-pub use artifacts::{ARTIFACT_PROMPT, artifact_dir, artifact_guide};
+pub use artifacts::{
+    ARTIFACT_PROMPT, EXTENSION as ARTIFACT_EXTENSION, artifact_dir, artifact_guide,
+};
 pub use gemini::child_env as gemini_env;
 pub use render::{artifact_marker, artifact_title, is_artifact};
 pub use wire::{Approval, Status};
@@ -66,7 +69,12 @@ use artifacts::{Artifacts, artifact_reply, saved_artifacts};
 use mirror::Mirror;
 
 const PAGE: &str = include_str!("web/index.html");
-const STYLE: &str = include_str!("web/app.css");
+/// The page's own rules, then those of the components artifacts are drawn with.
+const STYLE: &str = concat!(
+    include_str!("web/app.css"),
+    "\n",
+    include_str!("../openui/dioxus/openui.css")
+);
 /// The page's stylesheet as served: every rule kept out of pullspace's box, since pullspace
 /// is drawn in this page with a stylesheet of its own (see `pullspace_embed::css`).
 static SERVED_STYLE: std::sync::LazyLock<String> =
@@ -74,7 +82,10 @@ static SERVED_STYLE: std::sync::LazyLock<String> =
 /// The page's app: tamale's web UI in Dioxus (`web/`), built to WebAssembly by `build.rs`.
 const SCRIPT: &str = include_str!(concat!(env!("OUT_DIR"), "/app.js"));
 const MODULE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/app_bg.wasm.gz"));
-const ARTIFACT_FRAME: &str = include_str!("web/artifact-frame.html");
+/// The artifact viewer (`openui/dioxus`), built to WebAssembly by `build.rs`: its script,
+/// started at `/openui_bg.wasm`, and its module, gzipped.
+const VIEWER_SCRIPT: &str = include_str!(concat!(env!("OUT_DIR"), "/openui.js"));
+const VIEWER_MODULE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/openui_bg.wasm.gz"));
 
 /// What a tab asked for that the app has to handle.
 pub enum WebEvent {
@@ -326,12 +337,12 @@ const PAGE_CSP: &str = "default-src 'self'; connect-src 'self' \
      script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'; \
      form-action 'none'; frame-ancestors 'none'";
 
-/// Scripts run, but in an opaque origin that can't read this server's pages or open its
-/// socket, even if opened in a tab of its own.
-const ARTIFACT_CSP: &str = "sandbox allow-scripts allow-popups allow-modals allow-forms; \
-     default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https:; \
-     style-src 'unsafe-inline' https:; img-src data: blob: https:; \
-     font-src data: https:; media-src data: blob: https:; connect-src https:; \
+/// An artifact in a tab of its own: the viewer's own script (`unsafe-eval` is for Dioxus's
+/// `eval`, as on the page) and inline style, drawing a document that's only data. Its
+/// images may come from https sites (see `openui` `Image`).
+const ARTIFACT_CSP: &str = "default-src 'self'; img-src 'self' data: https:; \
+     style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; \
+     connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; \
      frame-ancestors 'self'";
 
 /// The page at `path` (`/`, `/app.js`, `/app_bg.wasm`, `/app.css` or `/artifact/<id>`), without checking
@@ -364,6 +375,21 @@ fn asset(shared: &Shared, path: &str) -> Asset {
         ),
         "/app.css" => ok("text/css; charset=utf-8", &SERVED_STYLE, &[]),
         "/app.js" => ok("text/javascript; charset=utf-8", SCRIPT, &[]),
+        "/openui.js" => ok("text/javascript; charset=utf-8", VIEWER_SCRIPT, &[]),
+        "/openui_bg.wasm" => Asset {
+            status: StatusCode::OK,
+            headers: vec![
+                (header::CONTENT_TYPE, "application/wasm"),
+                (header::CONTENT_ENCODING, "gzip"),
+                (
+                    header::CACHE_CONTROL,
+                    "private, max-age=31536000, immutable",
+                ),
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            ],
+            body: String::new(),
+            bytes: Some(VIEWER_MODULE),
+        },
         // The app's module, gzipped. Its URL carries a version (see `build.rs`), so it
         // can be cached for good.
         "/app_bg.wasm" => Asset {
@@ -380,23 +406,14 @@ fn asset(shared: &Shared, path: &str) -> Asset {
             body: String::new(),
             bytes: Some(MODULE),
         },
-        // Holds nothing itself: on an encrypted session the page posts an artifact to it.
-        "/artifact-frame" => ok(
-            "text/html; charset=utf-8",
-            ARTIFACT_FRAME,
-            &[
-                (header::REFERRER_POLICY, "no-referrer"),
-                (header::CONTENT_SECURITY_POLICY, ARTIFACT_CSP),
-            ],
-        ),
         _ => {
-            let page = path
+            let source = path
                 .strip_prefix("/artifact/")
-                .and_then(|id| shared.artifacts.lock().unwrap().pages.get(id).cloned());
-            match page {
-                Some(page) => ok(
+                .and_then(|id| shared.artifacts.lock().unwrap().sources.get(id).cloned());
+            match source {
+                Some(source) => ok(
                     "text/html; charset=utf-8",
-                    &page,
+                    &artifacts::viewer_page(&source),
                     &[
                         (header::REFERRER_POLICY, "no-referrer"),
                         (header::CONTENT_SECURITY_POLICY, ARTIFACT_CSP),
@@ -469,7 +486,8 @@ impl Server {
             .route("/app.css", get(style))
             .route("/app.js", get(script))
             .route("/app_bg.wasm", get(module))
-            .route("/artifact-frame", get(artifact_frame))
+            .route("/openui.js", get(viewer_script))
+            .route("/openui_bg.wasm", get(viewer_module))
             .route("/artifact/{id}", get(artifact))
             .with_state(shared.clone());
         let task = tokio::spawn(async move {
@@ -680,6 +698,21 @@ async fn style(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Respons
     asset(&shared, "/app.css").into_response()
 }
 
+/// The artifact viewer's script (see [`artifacts::viewer_page`]).
+async fn viewer_script(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Response {
+    if !shared.own_host(&headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    asset(&shared, "/openui.js").into_response()
+}
+
+async fn viewer_module(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Response {
+    if !shared.own_host(&headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    asset(&shared, "/openui_bg.wasm").into_response()
+}
+
 async fn script(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Response {
     if !shared.own_host(&headers) {
         return StatusCode::FORBIDDEN.into_response();
@@ -694,15 +727,7 @@ async fn module(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Respon
     asset(&shared, "/app_bg.wasm").into_response()
 }
 
-/// Where an artifact is posted to when the app can't load it by URL (see artifact-frame.html).
-async fn artifact_frame(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Response {
-    if !shared.own_host(&headers) {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    asset(&shared, "/artifact-frame").into_response()
-}
-
-/// An artifact, sandboxed (see [`ARTIFACT_CSP`]).
+/// An artifact in a page of its own (see [`artifacts::viewer_page`]).
 async fn artifact(
     State(shared): State<Arc<Shared>>,
     Path(id): Path<String>,
@@ -875,17 +900,19 @@ fn handle(shared: &Arc<Shared>, id: u64, request: Value) {
                 before: before as usize,
             });
         }
-        // On an encrypted session the page can't fetch `/artifact/<id>`; it asks here.
+        // An artifact's document, for the gallery, saving and talking about it.
         "artifact" => {
             let artifact = str_field("id");
-            let (page, hash) = {
+            let (source, hash) = {
                 let artifacts = shared.artifacts.lock().unwrap();
                 (
-                    artifacts.pages.get(&artifact).cloned(),
+                    artifacts.sources.get(&artifact).cloned(),
                     artifacts.hashes.get(&artifact).cloned(),
                 )
             };
-            let reply = artifact_reply(&artifact, page.as_deref(), hash.as_deref());
+            // The web UI asks for the document alone; the iOS app also wants a page for it.
+            let page = request.get("page").and_then(Value::as_bool).unwrap_or(true);
+            let reply = artifact_reply(&artifact, source.as_deref(), hash.as_deref(), page);
             shared.send_to(id, reply.to_string());
         }
         // The voice assistant's key and choices (see `gemini`).

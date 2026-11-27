@@ -155,7 +155,7 @@ const CHECK: &str = r#"(() => {
     url: location.origin,
     conn: q('#conn')?.className ?? null,
     thread: (q('#thread')?.innerText ?? '').slice(0, 120),
-    artifact: q('.artifact iframe')?.style.height ?? null,
+    artifact: (q('.artifact .oui')?.innerText ?? '').slice(0, 80) || null,
     review: q('#review')?.className ?? null,
     pullspace: (q('#review .pullspace')?.innerText ?? '').slice(0, 80),
     voice: !!navigator.mediaDevices?.getUserMedia,

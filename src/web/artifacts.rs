@@ -1,6 +1,7 @@
-//! The interactive HTML artifacts a reply may end in: what asks the model for them, the
-//! store that gives each finished one the id it's served by, and the files a session
-//! saves them as.
+//! The artifacts a reply may end in: OpenUI Lang documents (see the `openui` crate) that
+//! the page draws with its own components. Here: what asks the model for them, the store
+//! that gives each finished one the id it's kept by, the page that shows one in a tab of
+//! its own, and the files a session saves them as.
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -16,22 +17,37 @@ use super::render;
 pub const ARTIFACT_PROMPT: &str = "\n\n<web-ui>Reply for tamale's web UI: do the work with \
 tools as usual, then keep the reply brief: a few sentences, or a short list of at most 10 \
 items. If the full answer is longer than that (more than 10 findings, steps, files, changes \
-or options, or tables, diagrams or long code), write a summary of at most three sentences \
-and put the full answer in one complete, self-contained HTML document in a fenced block \
-whose info string is exactly `html artifact`, following the artifact design guide in your \
+or options, or tables, diagrams, charts or long code), write a summary of at most three \
+sentences and put the full answer in one OpenUI Lang document in a fenced block whose info \
+string is exactly `openui`, using only the components in the artifact guide in your \
 instructions. To revise an earlier artifact, send the whole updated document.</web-ui>";
 
-/// The built-in artifact design guide; `~/.config/tamale/artifacts.md` replaces it.
+/// The built-in artifact guide; `~/.config/tamale/artifacts.md` replaces its prose. The
+/// component reference is always tamale's own (see [`openui::library::reference`]).
 const ARTIFACT_GUIDE: &str = include_str!("artifact.md");
 
-/// The artifact design guide for the system prompt: the user's
-/// `~/.config/tamale/artifacts.md` if it has any text, else the built-in one. With a Gemini
-/// key, it ends with how to narrate a video (see `gemini::narration_guide`).
+/// Where the guide's component reference goes.
+const COMPONENTS_MARK: &str = "{{components}}";
+
+/// The artifact guide for the system prompt: the user's `~/.config/tamale/artifacts.md` if
+/// it has any text, else the built-in one, with the component library in it (at
+/// `{{components}}`, or at the end). With a Gemini key, it ends with how to narrate a video
+/// (see `gemini::narration_guide`).
 pub fn artifact_guide() -> String {
     let guide = crate::config::user_config_dir()
         .and_then(|dir| std::fs::read_to_string(dir.join("artifacts.md")).ok())
         .filter(|text| !text.trim().is_empty())
         .unwrap_or_else(|| ARTIFACT_GUIDE.to_string());
+    let reference = openui::library::reference();
+    let guide = if guide.contains(COMPONENTS_MARK) {
+        guide.replace(COMPONENTS_MARK, reference.trim_end())
+    } else {
+        format!(
+            "{}\n\n## Components\n\n{}",
+            guide.trim_end(),
+            reference.trim_end()
+        )
+    };
     match super::gemini::narration_guide() {
         Some(narration) => format!("{}\n\n{}", guide.trim_end(), narration.trim_end()),
         None => guide,
@@ -43,13 +59,16 @@ pub fn artifact_dir(session_id: &str) -> Option<PathBuf> {
     Some(crate::session::dir()?.join(session_id).join("artifacts"))
 }
 
+/// The extension artifacts are saved with.
+pub const EXTENSION: &str = "openui";
+
 /// The file an artifact is saved as: its title as a slug, then a short content hash so
 /// revisions sit side by side and re-rendering the same document finds the same file.
-pub(super) fn artifact_file_name(html: &str) -> String {
+pub(super) fn artifact_file_name(source: &str) -> String {
     let mut h = DefaultHasher::new();
-    html.hash(&mut h);
+    source.hash(&mut h);
     let mut slug = String::new();
-    for c in render::artifact_title(html).unwrap_or_default().chars() {
+    for c in render::artifact_title(source).unwrap_or_default().chars() {
         if c.is_ascii_alphanumeric() {
             slug.push(c.to_ascii_lowercase());
         } else if !slug.is_empty() && !slug.ends_with('-') {
@@ -61,27 +80,18 @@ pub(super) fn artifact_file_name(html: &str) -> String {
     }
     let slug = slug.trim_end_matches('-');
     let slug = if slug.is_empty() { "artifact" } else { slug };
-    format!("{slug}-{:08x}.html", h.finish() as u32)
+    format!("{slug}-{:08x}.{EXTENSION}", h.finish() as u32)
 }
 
-/// Saves `html` into `dir` unless it's already there.
-pub(super) fn save_artifact(dir: &std::path::Path, html: &str) -> std::io::Result<PathBuf> {
-    let path = dir.join(artifact_file_name(html));
+/// Saves `source` into `dir` unless it's already there.
+pub(super) fn save_artifact(dir: &std::path::Path, source: &str) -> std::io::Result<PathBuf> {
+    let path = dir.join(artifact_file_name(source));
     if !path.exists() {
         std::fs::create_dir_all(dir)?;
-        crate::secure::write_private(&path, html)?;
+        crate::secure::write_private(&path, source)?;
     }
     Ok(path)
 }
-
-/// Script added to each artifact so the page can size its iframe to fit.
-const ARTIFACT_RESIZER: &str = "<script>(()=>{const post=()=>parent.postMessage(\
-{tamaleArtifactHeight:Math.ceil(document.documentElement.scrollHeight)},'*');\
-addEventListener('load',post);new ResizeObserver(post).observe(document.documentElement);\
-post();})();</script>";
-
-/// Script added to each artifact so nothing needs sideways scrolling on a narrow screen.
-const ARTIFACT_FIT: &str = concat!("<script>", include_str!("artifact-fit.js"), "</script>");
 
 /// SHA-256 of `text` in lowercase hex: an artifact's stable name, the same in every
 /// process and Rust version, for clients that keep a library of them (see `apple/ios.md`).
@@ -93,20 +103,97 @@ pub fn content_hash(text: &str) -> String {
         .collect()
 }
 
+/// The viewer's script without its start (wasm-bindgen's module, see `build.rs`), and its
+/// module gzipped, for [`embedded_page`].
+const VIEWER_BARE: &str = include_str!(concat!(env!("OUT_DIR"), "/openui_bare.js"));
+const VIEWER_MODULE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/openui_bg.wasm.gz"));
+
+/// What the viewer's page is styled with: the web UI's colour and type tokens (app.css's
+/// `:root`), the page's own rules and the components'.
+static VIEWER_STYLE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    let app = include_str!("app.css");
+    let tokens = app
+        .find(":root {")
+        .and_then(|start| Some(&app[start..start + app[start..].find("\n}\n")? + 2]))
+        .unwrap_or_default();
+    format!(
+        "{tokens}\n{}\n{}",
+        include_str!("../../openui/dioxus/viewer.css"),
+        include_str!("../../openui/dioxus/openui.css")
+    )
+});
+
+/// A page that draws one artifact with the viewer (`openui/dioxus`). The document is data in
+/// a JSON script element, so nothing in it runs. `script` starts the viewer.
+fn page(source: &str, class: &str, script: &str) -> String {
+    let title = render::artifact_title(source).unwrap_or_else(|| "Artifact".into());
+    let data = json!({ "title": title, "source": source })
+        .to_string()
+        // Nothing in the data may end or confuse its script element.
+        .replace('<', "\\u003c");
+    let mut escaped = String::new();
+    for c in title.chars() {
+        match c {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            c => escaped.push(c),
+        }
+    }
+    format!(
+        "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
+         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">\n\
+         <meta name=\"color-scheme\" content=\"dark\">\n<title>{escaped}</title>\n\
+         <style>\n{style}\n</style>\n\
+         <script type=\"application/json\" id=\"openui-artifact\">{data}</script>\n\
+         {script}\n</head>\n<body class=\"{class}\">\n<div id=\"main\"></div>\n</body>\n</html>\n",
+        style = *VIEWER_STYLE,
+    )
+}
+
+/// An artifact in a tab of its own (`/artifact/<id>`): the viewer's page, with the viewer
+/// loaded from this server (`/openui.js`).
+pub(super) fn viewer_page(source: &str) -> String {
+    page(
+        source,
+        "",
+        "<script type=\"module\" src=\"/openui.js\"></script>",
+    )
+}
+
+/// An artifact as one self-contained page, for clients that show artifacts in a web view of
+/// their own and keep them offline (the iOS app): the viewer's script inline, and its
+/// module in it gzipped, so the page needs nothing from anywhere. It runs under a policy
+/// that allows inline scripts and `unsafe-eval` (which WebAssembly needs), as the app's does.
+pub fn embedded_page(source: &str) -> String {
+    use base64::Engine;
+    let module = base64::engine::general_purpose::STANDARD.encode(VIEWER_MODULE);
+    let script = format!(
+        "<script type=\"application/octet-stream\" id=\"openui-module\">{module}</script>\n\
+         <script type=\"module\">\n{VIEWER_BARE}\n\
+         const gz = Uint8Array.from(atob(document.getElementById('openui-module').textContent), (c) => c.charCodeAt(0));\n\
+         const bytes = await new Response(new Blob([gz]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();\n\
+         __wbg_init({{ module_or_path: bytes }}).then((wasm) => {{ globalThis.__dx_mainWasm = wasm; }});\n\
+         </script>",
+    );
+    page(source, "embedded", &script)
+}
+
 /// Artifacts by id, and the id given to each document, so a re-rendered reply keeps its URLs.
 #[derive(Default)]
 pub(super) struct Artifacts {
     ids: HashMap<u64, String>,
-    pub(super) pages: HashMap<String, Arc<str>>,
-    /// Each id's [`content_hash`] of the document as the model wrote it.
+    /// Each id's document.
+    pub(super) sources: HashMap<String, Arc<str>>,
+    /// Each id's [`content_hash`].
     pub(super) hashes: HashMap<String, String>,
 }
 
 impl Artifacts {
-    /// The URL `html` is served from, storing it if new and saving it into `dir`.
-    pub(super) fn register(&mut self, html: &str, dir: Option<&std::path::Path>) -> String {
+    /// The URL `source` is kept at, storing it if new and saving it into `dir`.
+    pub(super) fn register(&mut self, source: &str, dir: Option<&std::path::Path>) -> String {
         let mut h = DefaultHasher::new();
-        html.hash(&mut h);
+        source.hash(&mut h);
         let id = self
             .ids
             .entry(h.finish())
@@ -121,21 +208,35 @@ impl Artifacts {
             .clone();
         self.hashes
             .entry(id.clone())
-            .or_insert_with(|| content_hash(html));
-        self.pages.entry(id.clone()).or_insert_with(|| {
+            .or_insert_with(|| content_hash(source));
+        self.sources.entry(id.clone()).or_insert_with(|| {
             if let Some(dir) = dir {
-                let _ = save_artifact(dir, html);
+                let _ = save_artifact(dir, source);
             }
-            format!("{html}\n{ARTIFACT_FIT}\n{ARTIFACT_RESIZER}").into()
+            source.into()
         });
         format!("/artifact/{id}")
     }
 }
 
-/// The answer to an `artifact` request: the page as served (with tamale's scripts), and
-/// the [`content_hash`] of the document as written.
-pub(super) fn artifact_reply(id: &str, html: Option<&str>, hash: Option<&str>) -> Value {
-    json!({ "t": "artifact", "id": id, "html": html, "hash": hash })
+/// The answer to an `artifact` request: the document, its title and [`content_hash`], and
+/// with `page`, for clients that show artifacts in a web view (the iOS app), a
+/// self-contained page that draws it ([`embedded_page`]). The web UI draws the document
+/// itself, and asks without.
+pub(super) fn artifact_reply(
+    id: &str,
+    source: Option<&str>,
+    hash: Option<&str>,
+    page: bool,
+) -> Value {
+    json!({
+        "t": "artifact",
+        "id": id,
+        "source": source,
+        "title": source.and_then(render::artifact_title),
+        "html": source.filter(|_| page).map(embedded_page),
+        "hash": hash,
+    })
 }
 
 /// The artifacts saved by the current session (its directory is `current`) and by
@@ -160,9 +261,9 @@ pub(super) fn saved_artifacts(
             .into_iter()
             .flatten()
             .flatten()
-            .filter(|e| e.path().extension().is_some_and(|x| x == "html"))
+            .filter(|e| e.path().extension().is_some_and(|x| x == EXTENSION))
             .filter_map(|e| {
-                let html = std::fs::read_to_string(e.path()).ok()?;
+                let source = std::fs::read_to_string(e.path()).ok()?;
                 let modified = e
                     .metadata()
                     .and_then(|m| m.modified())
@@ -171,11 +272,11 @@ pub(super) fn saved_artifacts(
                     .ok()?
                     .as_secs();
                 let item = json!({
-                    "title": render::artifact_title(&html).unwrap_or_else(|| "Artifact".into()),
+                    "title": render::artifact_title(&source).unwrap_or_else(|| "Artifact".into()),
                     "file": e.path().display().to_string(),
                     "modified": modified,
-                    "hash": content_hash(&html),
-                    "url": artifacts.lock().unwrap().register(&html, None),
+                    "hash": content_hash(&source),
+                    "url": artifacts.lock().unwrap().register(&source, None),
                 });
                 Some((modified, item))
             })

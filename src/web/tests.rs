@@ -107,7 +107,7 @@ fn a_tab_that_wants_it_all_is_sent_no_progress() {
 #[test]
 fn artifacts_keep_their_url_across_renders() {
     let mut mirror = Mirror::default();
-    let reply = "Sure.\n\n```html artifact\n<title>T</title>\n```";
+    let reply = "Sure.\n\n```openui\ntitle = \"T\"\nroot = Card([])\n```";
     let mut entries = vec![Entry::Assistant(reply.into())];
     let first = mirror.update(&view(&entries));
     let url = first[0]
@@ -118,23 +118,23 @@ fn artifacts_keep_their_url_across_renders() {
         .to_string();
     let id = url.strip_prefix("/artifact/").unwrap();
     assert_eq!(id.len(), 32);
-    let page = mirror.artifacts.lock().unwrap().pages[id].clone();
-    assert!(page.starts_with("<title>T</title>") && page.contains("tamaleArtifactHeight"));
+    let source = mirror.artifacts.lock().unwrap().sources[id].clone();
+    assert_eq!(&*source, "title = \"T\"\nroot = Card([])\n");
 
     entries[0] = Entry::Assistant(format!("{reply}\n\nMore."));
     let again = mirror.update(&view(&entries));
     assert!(again[0].contains(&url), "{}", again[0]);
-    assert_eq!(mirror.artifacts.lock().unwrap().pages.len(), 1);
+    assert_eq!(mirror.artifacts.lock().unwrap().sources.len(), 1);
 }
 
 #[test]
 fn native_clients_get_markdown_artifact_blocks_and_stable_hashes() {
     let mut mirror = Mirror::default();
-    let doc = "<title>T</title><p>x</p>\n";
+    let doc = "title = \"T\"\nroot = Card([TextContent(\"x\")])\n";
     let entries = vec![
-        Entry::Assistant(format!("Sure.\n\n```html artifact\n{doc}```\n\nMore.")),
+        Entry::Assistant(format!("Sure.\n\n```openui\n{doc}```\n\nMore.")),
         Entry::Note("*noted*".into()),
-        Entry::Assistant("```html artifact\n<title>Half</title>".into()),
+        Entry::Assistant("```openui\ntitle = \"Half\"\nroot = Card([".into()),
     ];
     let sent = mirror.update(&view(&entries));
     let message: Value = serde_json::from_str(&sent[0]).unwrap();
@@ -166,21 +166,26 @@ fn native_clients_get_markdown_artifact_blocks_and_stable_hashes() {
     assert!(building["id"].is_null() && building["hash"].is_null());
     assert_eq!(building["title"], "Half");
 
-    // The artifact reply names the document by the same hash, though the page served has
-    // tamale's scripts added.
+    // The artifact reply names the document by the same hash, and carries it, and a page
+    // that draws it for clients that show artifacts in a web view.
     let artifacts = mirror.artifacts.lock().unwrap();
     let reply = artifact_reply(
         id,
-        artifacts.pages.get(id).map(|p| &**p),
+        artifacts.sources.get(id).map(|p| &**p),
         artifacts.hashes.get(id).map(|h| h.as_str()),
+        true,
     );
     assert_eq!(reply["hash"], content_hash(doc));
-    assert!(
-        reply["html"]
-            .as_str()
-            .unwrap()
-            .contains("tamaleArtifactHeight")
-    );
+    assert_eq!(reply["source"], doc);
+    assert_eq!(reply["title"], "T");
+    // A page that needs nothing from anywhere: the document, the viewer and its module.
+    let html = reply["html"].as_str().unwrap();
+    assert!(html.contains("id=\"openui-artifact\""), "{}", &html[..400]);
+    assert!(html.contains("id=\"openui-module\"") && html.contains("__wbg_init"));
+    assert!(!html.contains("src=\"/"), "it loads nothing");
+    // The web UI asks for the document alone.
+    let bare = artifact_reply(id, artifacts.sources.get(id).map(|p| &**p), None, false);
+    assert!(bare["html"].is_null() && bare["source"] == doc);
     assert_eq!(
         content_hash("abc"),
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
@@ -193,7 +198,7 @@ fn artifacts_are_saved_once_under_their_title() {
         "tamale-artifacts-test-{}",
         crate::session::new_id()
     ));
-    let reply = "Done.\n\n```html artifact\n<title>Auth flow: v2!</title><p>hi</p>\n```";
+    let reply = "Done.\n\n```openui\ntitle = \"Auth flow: v2!\"\nroot = Card([])\n```";
     let entries = vec![Entry::Assistant(reply.into())];
     let mut mirror = Mirror::default();
     let mut with_dir = view(&entries);
@@ -205,11 +210,11 @@ fn artifacts_are_saved_once_under_their_title() {
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(files.len(), 1, "{files:?}");
-    assert!(files[0].starts_with("auth-flow-v2-") && files[0].ends_with(".html"));
+    assert!(files[0].starts_with("auth-flow-v2-") && files[0].ends_with(".openui"));
     let saved = std::fs::read_to_string(dir.join(&files[0])).unwrap();
-    assert_eq!(saved, "<title>Auth flow: v2!</title><p>hi</p>\n");
+    assert_eq!(saved, "title = \"Auth flow: v2!\"\nroot = Card([])\n");
     assert_eq!(
-        artifact_file_name("<p>x</p>").split('-').next(),
+        artifact_file_name("root = Card([])").split('-').next(),
         Some("artifact")
     );
     let _ = std::fs::remove_dir_all(dir);
@@ -220,9 +225,9 @@ fn saved_artifacts_list_the_current_session_first_and_share_chat_urls() {
     let root = std::env::temp_dir().join(format!("tamale-saved-test-{}", crate::session::new_id()));
     let (now, old, empty) = (root.join("now"), root.join("old"), root.join("empty"));
     let store = Mutex::new(Artifacts::default());
-    save_artifact(&old, "<title>Old</title>").unwrap();
-    save_artifact(&now, "<title>New</title>").unwrap();
-    let chat_url = store.lock().unwrap().register("<title>New</title>", None);
+    save_artifact(&old, "title = \"Old\"").unwrap();
+    save_artifact(&now, "title = \"New\"").unwrap();
+    let chat_url = store.lock().unwrap().register("title = \"New\"", None);
     let listed = saved_artifacts(
         Some(now.clone()),
         [(old, None), (now, None), (empty, None)].into_iter(),
@@ -235,7 +240,7 @@ fn saved_artifacts_list_the_current_session_first_and_share_chat_urls() {
     assert_eq!(sessions[0]["items"][0]["url"], chat_url.as_str());
     assert_eq!(
         sessions[0]["items"][0]["hash"],
-        content_hash("<title>New</title>")
+        content_hash("title = \"New\"")
     );
     assert_eq!(sessions[1]["items"][0]["title"], "Old");
     let _ = std::fs::remove_dir_all(root);
@@ -361,10 +366,10 @@ async fn the_share_link_is_the_hubs_while_connected_to_one() {
 }
 
 #[tokio::test]
-async fn artifacts_are_served_sandboxed_to_this_host_only() {
+async fn artifacts_are_served_as_data_to_this_host_only() {
     let mut server = Server::start(false).await.unwrap();
     let entries = vec![Entry::Assistant(
-        "```html artifact\n<title>T</title><script>1</script>\n```".into(),
+        "```openui\ntitle = \"T</script><script>1\"\nroot = Card([])\n```".into(),
     )];
     server.sync(view(&entries));
     let id = server
@@ -372,7 +377,7 @@ async fn artifacts_are_served_sandboxed_to_this_host_only() {
         .artifacts
         .lock()
         .unwrap()
-        .pages
+        .sources
         .keys()
         .next()
         .unwrap()
@@ -389,15 +394,28 @@ async fn artifacts_are_served_sandboxed_to_this_host_only() {
     let csp = response.headers()[header::CONTENT_SECURITY_POLICY]
         .to_str()
         .unwrap();
-    assert!(csp.starts_with("sandbox allow-scripts "), "{csp}");
-    assert!(!csp.contains("allow-same-origin"), "{csp}");
+    // Only the app's own script runs; the document is data in the page.
     assert!(
-        response
-            .text()
-            .await
-            .unwrap()
-            .contains("<script>1</script>")
+        csp.contains("script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval';"),
+        "{csp}"
     );
+    assert!(!csp.contains("sandbox"), "{csp}");
+    let page = response.text().await.unwrap();
+    assert!(
+        page.contains("<script type=\"application/json\" id=\"openui-artifact\">"),
+        "{page}"
+    );
+    assert!(!page.contains("<script>1"), "{page}");
+    assert!(
+        page.contains("<title>T&lt;/script&gt;&lt;script&gt;1</title>"),
+        "{page}"
+    );
+    // The viewer that draws it comes from this server too.
+    assert!(page.contains("<script type=\"module\" src=\"/openui.js\">"));
+    for path in ["/openui.js", "/openui_bg.wasm"] {
+        let got = client.get(format!("{base}{path}")).send().await.unwrap();
+        assert_eq!(got.status(), 200, "{path}");
+    }
 
     let missing = client
         .get(format!("{base}/artifact/nope"))
@@ -812,7 +830,7 @@ async fn an_encrypted_relay_shows_the_hub_nothing_and_takes_nothing_from_it() {
     let entries = vec![
         Entry::User(SECRET.into()),
         Entry::Assistant(format!(
-            "```html artifact\n<title>T</title><p>{SECRET}</p>\n```"
+            "```openui\nroot = Card([TextContent(\"{SECRET}\")])\n```"
         )),
     ];
     server.sync(view(&entries));
@@ -947,56 +965,27 @@ async fn an_encrypted_relay_shows_the_hub_nothing_and_takes_nothing_from_it() {
     assert!(welcome.contains(SECRET) && welcome.contains("\"t\":\"entries\""));
     let artifact_id = {
         let artifacts = server.shared.artifacts.lock().unwrap();
-        artifacts.pages.keys().next().unwrap().clone()
+        artifacts.sources.keys().next().unwrap().clone()
     };
     let _ = opened(answer(&mut frames, 8).await.unwrap()); // status
     let _ = opened(answer(&mut frames, 8).await.unwrap()); // approval
     let _ = opened(answer(&mut frames, 8).await.unwrap()); // questions
 
-    // The hub can't tunnel an artifact; the frame page holds nothing.
+    // The hub can't tunnel an artifact.
     to_agent
         .send(ToAgent::Get {
             r: 1,
             path: format!("/artifact/{artifact_id}"),
         })
         .unwrap();
-    to_agent
-        .send(ToAgent::Get {
-            r: 2,
-            path: "/artifact-frame".into(),
-        })
-        .unwrap();
-    let mut got = 0;
-    while got < 2 {
-        match next(&mut frames).await {
-            ToHub::Got {
-                r: 1, status, body, ..
-            } => {
-                assert_eq!(status, 404);
-                assert!(body.is_empty());
-                got += 1;
-            }
-            ToHub::Got {
-                r: 2,
-                status,
-                headers,
-                body,
-                ..
-            } => {
-                assert_eq!(status, 200);
-                assert!(body.contains("tamaleArtifactHtml"));
-                let csp = &headers
-                    .iter()
-                    .find(|(k, _)| k == "content-security-policy")
-                    .unwrap()
-                    .1;
-                assert!(
-                    csp.starts_with("sandbox allow-scripts ") && !csp.contains("allow-same-origin"),
-                    "{csp}"
-                );
-                got += 1;
-            }
-            _ => {}
+    loop {
+        if let ToHub::Got {
+            r: 1, status, body, ..
+        } = next(&mut frames).await
+        {
+            assert_eq!(status, 404);
+            assert!(body.is_empty());
+            break;
         }
     }
 
@@ -1015,18 +1004,19 @@ async fn an_encrypted_relay_shows_the_hub_nothing_and_takes_nothing_from_it() {
         8,
         json!({ "t": "artifact", "id": artifact_id }).to_string(),
     );
-    let reply: Value = {
+    // With the viewer in its page, it comes in several pieces.
+    let reply: Value = loop {
         let frame = answer(&mut frames, 8).await.unwrap();
-        serde_json::from_str(
-            &browser
-                .open(frame["m"].as_str().unwrap(), 64 << 20)
-                .unwrap()
-                .unwrap(),
-        )
-        .unwrap()
+        if let Some(text) = browser
+            .open(frame["m"].as_str().unwrap(), 64 << 20)
+            .unwrap()
+        {
+            break serde_json::from_str(&text).unwrap();
+        }
     };
     assert_eq!(reply["t"], "artifact");
-    assert!(reply["html"].as_str().unwrap().contains(SECRET));
+    assert!(reply["source"].as_str().unwrap().contains(SECRET));
+    assert!(reply["html"].as_str().unwrap().contains("openui-module"));
 
     // A genuine prompt gets through, in several pieces if need be.
     let long = "p".repeat(200_000);
@@ -1220,25 +1210,56 @@ async fn real_hub_relays_a_browser_end_to_end() {
 
 /// What the stand-in session answers "long" with: taller than the screen, with a background
 /// of its own and a sticky header, as a real artifact has.
-const LONG_ARTIFACT: &str = r#"<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>Launch checklist</title>
-<style>
-body { margin: 0; background: #f6efe2; color: #2b2620; font: 16px/1.5 -apple-system, sans-serif; }
-header { position: sticky; top: 0; background: #b8532c; color: #fff; padding: 12px 16px; font-weight: 600; }
-section { padding: 8px 16px; }
-table { border-collapse: collapse; width: 100%; }
-td, th { border-bottom: 1px solid #d9cdb8; padding: 6px; text-align: left; }
-pre { background: #2b2620; color: #f6efe2; padding: 10px; border-radius: 6px; }
-footer { padding: 16px; background: #b8532c; color: #fff; }
-</style></head><body><header>Launch checklist</header><main id="m"></main><footer>The end of the page</footer>
-<script>
-let html = '';
-for (let i = 1; i <= 14; i++) {
-  html += `<section><h2>Step ${i}</h2><p>Everything that has to be true before step ${i} is done, in enough words to wrap across a few lines on a phone.</p>
-<table><tr><th>Owner</th><th>Due</th></tr><tr><td>Sam</td><td>Mar ${i}</td></tr></table><pre>make step-${i}</pre></section>`;
-}
-document.getElementById('m').innerHTML = html;
-</script></body></html>"#;
+const LONG_ARTIFACT: &str = r#"title = "Launch checklist"
+root = Card([header, progress, steps, done])
+header = CardHeader("Launch checklist", "Fourteen steps, each with an owner and a command")
+progress = Progress(3, 14, "Steps done", "good")
+steps = Steps(@Each(items, "i", StepsItem(
+  "Step " + i.n,
+  Stack([
+    TextContent("Everything that has to be true before step " + i.n + " is done, in enough words to wrap across a few lines on a phone."),
+    Table([Col("Owner", ["Sam"]), Col("Due", ["Mar " + i.n])]),
+    CodeBlock("sh", "make step-" + i.n)
+  ]),
+  i.n <= 3 ? "done" : i.n == 4 ? "active" : "todo"
+)))
+items = [
+  {n: 1},
+  {n: 2},
+  {n: 3},
+  {n: 4},
+  {n: 5},
+  {n: 6},
+  {n: 7},
+  {n: 8},
+  {n: 9},
+  {n: 10},
+  {n: 11},
+  {n: 12},
+  {n: 13},
+  {n: 14},
+]
+done = Callout("success", "The end of the page", "Everything above is in order.")"#;
+
+/// An artifact with most of the components in it, for looking at (TAMALE_FAKE_ARTIFACT).
+const SHOWCASE_ARTIFACT: &str = r#"title = "Inline cap"
+root = Card([header, stats, flow, tabs, files, more, followUps])
+header = CardHeader("Files up to 512 KB are sent whole", "Bigger ones go in 64 KB pieces, at most 37 of them: `src/web/pullspace.rs`")
+stats = Grid([Metric("512 KB", "Sent whole", "+384 KB", "good"), Metric("37", "Pieces at most", "−5", "good"), Metric("2.3 s", "Worst load on 3G", "+0.4 s", "bad")], 160)
+flow = Flow([FlowNode("Tab asks", "pullspace::Link"), FlowNode("Size check", "inline_cap()", "accent"), FlowNode("Whole file", "≤ 512 KB", "success"), FlowNode("Pieces", "64 KB × n", "warning")])
+tabs = Tabs([TabItem("why", "Why", why), TabItem("diff", "Diff", diff), TabItem("numbers", "Numbers", numbers)])
+why = Stack([Callout("danger", "Root cause", "The cap was **128 KB**, so most source files went in pieces and each piece was a round trip."), Markdown("Raising it:\n\n- cuts round trips for 92% of files\n- keeps the biggest message under the socket's limit\n\n> Measured over this repository's 1,204 files.")])
+diff = Diff("src/web/pullspace.rs", "@@ -40,7 +40,7 @@ impl Link {\n /// Files up to this size are sent in one message.\n-const INLINE_CAP: usize = 128 * 1024;\n+const INLINE_CAP: usize = 512 * 1024;\n const PIECE: usize = 64 * 1024;\n const MAX_PIECES: usize = 37;", "Four times the cap: one message for nearly every file")
+numbers = Stack([SegmentedControl("chart", [SelectItem("bars", "By size"), SelectItem("line", "Over time"), SelectItem("pie", "Share")], $chart), shown])
+$chart = "bars"
+shown = $chart == "bars" ? bars : $chart == "line" ? line : pie
+bars = BarChart(["<64K", "64–128K", "128–512K", ">512K"], [Series("Before", [3, 4, 9, 9]), Series("After", [1, 1, 1, 9])], "grouped", "File size", "Round trips")
+line = LineChart(["Mon", "Tue", "Wed", "Thu", "Fri"], [Series("p95 load (ms)", [820, 790, 410, 380, 372])])
+pie = PieChart(["Whole", "In pieces"], [1108, 96], "donut")
+files = Accordion([AccordionItem("files", "Files touched (" + @Count(changed) + ")", Table([Col("File", @Each(changed, "f", f.path), "code"), Col("Lines", @Each(changed, "f", f.lines), "number"), Col("Change", @Each(changed, "f", f.kind), "tag")]))])
+changed = [{path: "src/web/pullspace.rs", lines: 2, kind: "cap"}, {path: "web/src/review.rs", lines: 14, kind: "pieces"}, {path: "src/web/tests.rs", lines: 31, kind: "tests"}]
+more = Steps([StepsItem("Raise the cap", "Done in `pullspace.rs`.", "done"), StepsItem("Check the hub's limit", Progress(48, 64, "MB of the hub's 64 MB frame"), "active"), StepsItem("Ship", null, "todo")])
+followUps = FollowUpBlock([FollowUpItem("Apply it to the browser mirror too"), FollowUpItem("How was this measured?")])"#;
 
 /// A chef's page with a sample kitchen and conversation, served on this machine until
 /// `TAMALE_FAKE_SECONDS` (default 60) pass, for looking at: prints `URL=<url>`.
@@ -1459,13 +1480,9 @@ async fn fake_review_page() {
     }
     // A reply with an artifact (TAMALE_FAKE_ARTIFACT), to open or talk about.
     if std::env::var_os("TAMALE_FAKE_ARTIFACT").is_some() {
-        entries.push(Entry::Assistant(
-            "The cap, on a page:\n\n```html artifact\n<!doctype html><html lang=\"en\"><head>\
-             <meta charset=\"utf-8\"><title>Inline cap</title></head><body><h1>512 KB</h1>\
-             <p>Files up to 512 KB are sent whole; bigger ones in 64 KB pieces, at most 37 \
-             of them.</p></body></html>\n```"
-                .into(),
-        ));
+        entries.push(Entry::Assistant(format!(
+            "The cap, on a page:\n\n```openui\n{SHOWCASE_ARTIFACT}\n```"
+        )));
     }
     let mut v = view(&entries);
     v.status = Status {
@@ -1486,6 +1503,7 @@ async fn fake_review_page() {
         ..Status::default()
     };
     v.roots = vec![repo.clone()];
+    let (status, roots) = (v.status.clone(), v.roots.clone());
     server.sync(v);
     println!("URL={}", server.url);
     // With a hub (TAMALE_HUB_URL, TAMALE_HUB_KEY), encrypted, and a link into it.
@@ -1549,6 +1567,31 @@ async fn fake_review_page() {
     while let Ok(Some(event)) = tokio::time::timeout_at(deadline, server.events.recv()).await {
         match event {
             WebEvent::Connected(id) => server.welcome(id),
+            // A reply that streams in a document (TAMALE_FAKE_STREAM: its path) as a model
+            // would write it, a few characters at a time.
+            WebEvent::Send(text) if std::env::var_os("TAMALE_FAKE_STREAM").is_some() => {
+                println!("SEND={text:?}");
+                let doc =
+                    std::fs::read_to_string(std::env::var("TAMALE_FAKE_STREAM").unwrap()).unwrap();
+                entries.push(Entry::User(text));
+                entries.push(Entry::Assistant(String::new()));
+                let full = format!("Here it is.\n\n```openui\n{}\n```\n\nDone.", doc.trim_end());
+                let cuts: Vec<usize> = full
+                    .char_indices()
+                    .map(|(i, _)| i)
+                    .step_by(24)
+                    .chain([full.len()])
+                    .collect();
+                for cut in cuts {
+                    *entries.last_mut().unwrap() = Entry::Assistant(full[..cut].to_string());
+                    let mut v = view(&entries);
+                    v.status = status.clone();
+                    v.roots = roots.clone();
+                    server.sync(v);
+                    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                }
+                println!("STREAMED");
+            }
             // What the page sent, for checking it from a script.
             WebEvent::Send(text) => println!("SEND={text:?}"),
             WebEvent::Interrupt => println!("INTERRUPT"),
@@ -1618,7 +1661,7 @@ async fn fake_session_for_the_apple_app() {
         ]
     }));
     entries.extend([Entry::Assistant(
-        "Here it is.\n\n```html artifact\n<!doctype html><title>The plan</title><h1>Plan</h1>\n```"
+        "Here it is.\n\n```openui\nroot = Card([CardHeader(\"The plan\"), TextContent(\"Plan\")])\n```"
             .into(),
     )]);
     let mut approval = Some(Approval {
@@ -1704,7 +1747,7 @@ async fn fake_session_for_the_apple_app() {
             WebEvent::Send(text) if text == "Can you generate an artifact for this?" => {
                 // As a model writes one: a little prose, then the page line by line.
                 entries.push(Entry::User(text));
-                let mut reply = "Sure, here's a page for it.\n\n```html artifact\n".to_string();
+                let mut reply = "Sure, here's a page for it.\n\n```openui\n".to_string();
                 entries.push(Entry::Assistant(reply.clone()));
                 // Named apart from "long"'s page, which other tests look for.
                 let page = LONG_ARTIFACT.replace("Launch checklist", "Release plan");
@@ -1740,14 +1783,14 @@ async fn fake_session_for_the_apple_app() {
                 }
                 if text == "long" {
                     entries.push(Entry::Assistant(format!(
-                        "A long one.\n\n```html artifact\n{LONG_ARTIFACT}\n```"
+                        "A long one.\n\n```openui\n{LONG_ARTIFACT}\n```"
                     )));
                     sync(&mut server, &entries, &approval, &question);
                     continue;
                 }
                 entries.push(Entry::Assistant(format!(
-                    "You said **{text}**.\n\n```html artifact\n<!doctype html><title>Echo</title><p>{}</p>\n```",
-                    render::escape(&text)
+                    "You said **{text}**.\n\n```openui\ntitle = \"Echo\"\nroot = Card([TextContent({})])\n```",
+                    json!(text)
                 )));
             }
             WebEvent::Approve(choice, reason) => {
@@ -1828,4 +1871,39 @@ fn the_pages_stylesheet_stops_at_pullspaces_box() {
             depth_in_keyframes = None;
         }
     }
+}
+
+#[test]
+fn the_artifact_guide_lists_every_component_and_its_examples_draw() {
+    let guide = artifact_guide();
+    assert!(!guide.contains("{{components}}"));
+    for c in openui::library::LIBRARY {
+        assert!(guide.contains(&c.signature()), "{}", c.name);
+    }
+    // Every example in it is a document tamale can draw, with nothing left out.
+    let mut examples = 0;
+    for block in guide.split("```openui\n").skip(1) {
+        let source = block.split("```").next().unwrap();
+        assert_eq!(openui::problems(source), Vec::<String>::new(), "{source}");
+        assert!(openui::title(source).is_some(), "{source}");
+        examples += 1;
+    }
+    assert!(examples > 0);
+    // So do the documents the fake pages show.
+    for doc in [LONG_ARTIFACT, SHOWCASE_ARTIFACT] {
+        assert_eq!(openui::problems(doc), Vec::<String>::new(), "{doc}");
+    }
+}
+
+/// Writes the page the iOS app is sent for the showcase artifact (or `TAMALE_PAGE_SRC`) to `TAMALE_PAGE_OUT`, for
+/// trying it in a web view: `cargo test -p tamale write_embedded_page -- --ignored`
+#[test]
+#[ignore]
+fn write_embedded_page() {
+    let out = std::env::var("TAMALE_PAGE_OUT").expect("TAMALE_PAGE_OUT");
+    // Or another document, from `TAMALE_PAGE_SRC`.
+    let source = std::env::var("TAMALE_PAGE_SRC")
+        .map(|path| std::fs::read_to_string(path).unwrap())
+        .unwrap_or_else(|_| SHOWCASE_ARTIFACT.to_string());
+    std::fs::write(out, super::artifacts::embedded_page(&source)).unwrap();
 }

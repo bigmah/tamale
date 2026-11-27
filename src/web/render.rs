@@ -196,17 +196,19 @@ fn safe_href(url: &str) -> bool {
     }
 }
 
-/// The info string that marks a fenced block as an HTML artifact for the page to run.
-pub const ARTIFACT_INFO: &str = "html artifact";
+/// The info string that marks a fenced block as an artifact: an OpenUI Lang document the
+/// page draws (see the `openui` crate).
+pub const ARTIFACT_INFO: &str = openui::FENCE;
 
 /// Assistant markdown as HTML, with artifacts shown as code.
 pub fn markdown(text: &str) -> String {
     markdown_with(text, None)
 }
 
-/// Assistant markdown as HTML. With `artifact`, finished ```` ```html artifact ```` blocks
-/// are handed to it, and it returns the URL the page loads the document from; they are
-/// shown as an embed of that URL, or as a placeholder while still streaming in.
+/// Assistant markdown as HTML. With `artifact`, ```` ```openui ```` blocks become
+/// placeholders carrying their document, which the page draws in place, even while it's
+/// still streaming in. Finished ones are handed to `artifact`, which returns the URL the
+/// artifact is kept at (to open, save or talk about).
 pub fn markdown_with(text: &str, mut artifact: Option<&mut dyn FnMut(&str) -> String>) -> String {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
@@ -223,7 +225,7 @@ pub fn markdown_with(text: &str, mut artifact: Option<&mut dyn FnMut(&str) -> St
         |out: &mut String, (lang, body, closed): (String, String, bool)| match artifact.as_mut() {
             Some(register) if is_artifact(&lang) => {
                 let url = closed.then(|| register(&body));
-                push_artifact(out, &body, url.as_deref());
+                push_artifact(out, &body, url.as_deref(), closed);
             }
             Some(_) if closed && is_video(&lang) => push_videos(out, &body),
             _ => push_code_block(out, &lang, &body),
@@ -406,7 +408,7 @@ pub fn artifact_marker(n: usize) -> String {
 }
 
 /// Assistant markdown for native clients (see `apple/ios.md`): the text with each
-/// ```` ```html artifact ```` block replaced by an [`artifact_marker`] line of its own, and
+/// ```` ```openui ```` block replaced by an [`artifact_marker`] line of its own, and
 /// the blocks' documents with whether their closing fence has arrived.
 pub fn split_artifacts(text: &str) -> (String, Vec<(String, bool)>) {
     let mut md = String::with_capacity(text.len());
@@ -461,45 +463,25 @@ fn push_marked(md: &mut String, before: &str, n: usize) {
 }
 
 pub fn is_artifact(lang: &str) -> bool {
-    lang.split_whitespace().collect::<Vec<_>>().join(" ") == ARTIFACT_INFO
+    lang.trim() == ARTIFACT_INFO
 }
 
-/// The document's `<title>`, if it has one.
-pub fn artifact_title(html: &str) -> Option<String> {
-    let lower = html.to_ascii_lowercase();
-    let start = lower.find("<title")?;
-    let start = start + lower[start..].find('>')? + 1;
-    let end = start + lower[start..].find("</title")?;
-    let title = html[start..end].trim();
-    (!title.is_empty()).then(|| title.to_string())
+/// The artifact's title (see [`openui::title`]).
+pub fn artifact_title(source: &str) -> Option<String> {
+    openui::title(source)
 }
 
-/// An artifact: an embed the page fills in once `url` is known, a placeholder before.
-fn push_artifact(out: &mut String, body: &str, url: Option<&str>) {
+/// An artifact: a placeholder with its document, which the page draws; `url` once it's
+/// finished and kept.
+fn push_artifact(out: &mut String, body: &str, url: Option<&str>, done: bool) {
     let title = artifact_title(body).unwrap_or_else(|| "Artifact".into());
-    match url {
-        Some(url) => {
-            out.push_str("<div class=\"artifact\" data-src=\"");
-            escape_into(out, url);
-            out.push_str("\" data-title=\"");
-            escape_into(out, &title);
-            out.push_str("\"></div>");
-        }
-        None => {
-            let lines = body.lines().count();
-            let _ = write!(
-                out,
-                "<div class=\"artifact building\"><div class=\"artifact-bar\">\
-                 <span class=\"artifact-spark\"></span><span class=\"artifact-title\">Building "
-            );
-            escape_into(out, &title);
-            let _ = write!(
-                out,
-                "…</span><span class=\"artifact-meta\">{lines} line{}</span></div></div>",
-                if lines == 1 { "" } else { "s" }
-            );
-        }
-    }
+    out.push_str("<div class=\"artifact\" data-src=\"");
+    escape_into(out, url.unwrap_or(""));
+    out.push_str("\" data-title=\"");
+    escape_into(out, &title);
+    let _ = write!(out, "\" data-done=\"{}\" data-source=\"", u8::from(done));
+    escape_into(out, body);
+    out.push_str("\"></div>");
 }
 
 /// The info string that marks a fenced block as videos for the page to play: one path a line.
@@ -594,21 +576,25 @@ mod tests {
             seen.borrow_mut().push(body.to_string());
             "/artifact/abc".to_string()
         };
-        let doc = "Here:\n\n```html artifact\n<title>A <b></title><p>hi</p>\n```\n\nDone.";
+        let doc = "Here:\n\n```openui\ntitle = \"A <b>\"\nroot = Card([])\n```\n\nDone.";
         let html = markdown_with(doc, Some(&mut register));
         assert!(
-            html.contains("data-src=\"/artifact/abc\" data-title=\"A &lt;b&gt;\""),
+            html.contains(
+                "data-src=\"/artifact/abc\" data-title=\"A &lt;b&gt;\" data-done=\"1\" \
+                 data-source=\"title = &quot;A &lt;b&gt;&quot;\nroot = Card([])\n\""
+            ),
             "{html}"
         );
         assert!(html.contains("<p>Done.</p>"), "{html}");
-        assert_eq!(*seen.borrow(), vec!["<title>A <b></title><p>hi</p>\n"]);
+        assert_eq!(*seen.borrow(), vec!["title = \"A <b>\"\nroot = Card([])\n"]);
 
-        let streaming = markdown_with("```html artifact\n<p>hi</p>\n``", Some(&mut register));
-        assert!(streaming.contains("artifact building"), "{streaming}");
-        assert!(!streaming.contains("data-src"), "{streaming}");
+        // Still streaming, it's drawn as far as it has come, but not kept yet.
+        let streaming = markdown_with("```openui\nroot = Card([\n``", Some(&mut register));
+        assert!(streaming.contains("data-src=\"\""), "{streaming}");
+        assert!(streaming.contains("data-done=\"0\""), "{streaming}");
         assert_eq!(seen.borrow().len(), 1);
 
-        // Without a registry (and for plain html blocks) it's just code.
+        // Without a registry (and for other blocks) it's just code.
         assert!(markdown(doc).contains("codeblock"));
         let plain = markdown_with("```html\n<p>x</p>\n```", Some(&mut register));
         assert!(plain.contains("codeblock"), "{plain}");
@@ -636,20 +622,17 @@ mod tests {
 
     #[test]
     fn native_markdown_takes_artifacts_out_and_marks_where_they_were() {
-        let doc = "Here:\n\n```html artifact\n<title>A</title><p>hi</p>\n```\nDone.\n\n```rust\nfn x() {}\n```";
+        let doc = "Here:\n\n```openui\nroot = Card([])\n```\nDone.\n\n```rust\nfn x() {}\n```";
         let (md, blocks) = split_artifacts(doc);
         assert_eq!(
             md,
             "Here:\n\n<!-- artifact 0 -->\n\nDone.\n\n```rust\nfn x() {}\n```"
         );
-        assert_eq!(
-            blocks,
-            vec![("<title>A</title><p>hi</p>\n".to_string(), true)]
-        );
+        assert_eq!(blocks, vec![("root = Card([])\n".to_string(), true)]);
 
-        let (md, blocks) = split_artifacts("Building:\n```html artifact\n<p>hi</p>\n``");
+        let (md, blocks) = split_artifacts("Building:\n```openui\nroot = Card([\n``");
         assert_eq!(md, "Building:\n\n<!-- artifact 0 -->\n\n");
-        assert_eq!(blocks, vec![("<p>hi</p>\n``".to_string(), false)]);
+        assert_eq!(blocks, vec![("root = Card([\n``".to_string(), false)]);
 
         let (md, blocks) = split_artifacts("no artifacts\n```html\n<p>x</p>\n```");
         assert_eq!(md, "no artifacts\n```html\n<p>x</p>\n```");

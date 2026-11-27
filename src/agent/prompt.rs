@@ -17,7 +17,7 @@ Be specific (exact paths, names, snippets where essential) but concise. \
 Respond with the summary only.";
 
 /// The system prompt. With `web_ui`, it also carries the artifact design guide (see
-/// [`crate::web::artifact_guide`]), since every reply then ends in an HTML artifact.
+/// [`crate::web::artifact_guide`]), since a long reply then ends in an artifact.
 pub fn system_prompt(workspace: &Workspace, web_ui: bool) -> String {
     let mut prompt = format!(
         "You are a coding agent running in the user's terminal. You help with software \

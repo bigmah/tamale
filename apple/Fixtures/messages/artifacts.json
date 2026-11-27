@@ -5,8 +5,8 @@
       "current": true,
       "items": [
         {
-          "file": "/home/me/.local/share/tamale/sessions/session-1/login-flow.html",
-          "hash": "b9c6f945b8adc81d381931851a403c9aee8e88f64e876c33775f73d808d06720",
+          "file": "/home/me/.local/share/tamale/sessions/session-1/login-flow.openui",
+          "hash": "ae497c5ffce44f8aacb1dd764d01cf1498a8c140bfb87cf9f660ec469b2725b1",
           "modified": 1700000100,
           "title": "Login flow",
           "url": "/artifact/a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0"

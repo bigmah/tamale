@@ -491,7 +491,7 @@ impl Renderer<'_, '_> {
             let lines = code.text.lines().count();
             let mut spans = vec![
                 Span::styled("▸ ", FRAME),
-                Span::styled("HTML artifact", Style::new().fg(Color::Magenta)),
+                Span::styled("Artifact", Style::new().fg(Color::Magenta)),
             ];
             if let Some(title) = title {
                 spans.push(Span::styled(" · ", FRAME));
@@ -953,24 +953,24 @@ mod tests {
     }
 
     #[test]
-    fn html_artifacts_collapse_to_one_line() {
+    fn artifacts_collapse_to_one_line() {
         assert_eq!(
             text(
-                "Here.\n\n```html artifact\n<title>Sync flow</title>\n<p>x</p>\n```\n\nDone.",
+                "Here.\n\n```openui\ntitle = \"Sync flow\"\nroot = Card([])\n```\n\nDone.",
                 80
             ),
             [
                 "Here.",
                 "",
-                "▸ HTML artifact · Sync flow · 2 lines · /web to view",
+                "▸ Artifact · Sync flow · 2 lines · /web to view",
                 "",
                 "Done.",
             ]
         );
         // Still streaming in: collapsed as well.
         assert_eq!(
-            text("```html artifact\n<p>x", 80),
-            ["▸ HTML artifact · 1 line · /web to view"]
+            text("```openui\nroot = Card([", 80),
+            ["▸ Artifact · 1 line · /web to view"]
         );
     }
 

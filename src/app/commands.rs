@@ -66,7 +66,7 @@ impl App {
         }
     }
 
-    /// Lists the HTML artifacts this session's `/web` replies saved, newest first.
+    /// Lists the artifacts this session's `/web` replies saved, newest first.
     pub(super) fn list_artifacts(&mut self) {
         let Some(dir) = crate::web::artifact_dir(&self.session_id) else {
             self.entries.push(Entry::Error(
@@ -78,7 +78,11 @@ impl App {
             .into_iter()
             .flatten()
             .flatten()
-            .filter(|e| e.path().extension().is_some_and(|x| x == "html"))
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .is_some_and(|x| x == crate::web::ARTIFACT_EXTENSION)
+            })
             .map(|e| {
                 let modified = e.metadata().and_then(|m| m.modified());
                 (modified.unwrap_or(std::time::UNIX_EPOCH), e.path())

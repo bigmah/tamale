@@ -258,7 +258,7 @@ impl App {
         }
         let due: Vec<String> = self.mem.read().artifacts_due.keys().cloned().collect();
         for id in due {
-            self.send(json!({ "t": "artifact", "id": id }), true);
+            self.send(json!({ "t": "artifact", "id": id, "page": false }), true);
         }
     }
 

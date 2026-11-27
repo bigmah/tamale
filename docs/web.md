@@ -82,23 +82,28 @@ back to the terminal, and `Ctrl+C` quits. Any number of tabs can be open.
   session's socket, end-to-end encrypted like everything else on it.
 - **Artifacts.** During a web session replies are brief: a few sentences, or a list of at
   most 10 items. A longer answer (more than 10 items, or tables, diagrams or long code) comes
-  as a sentence or three of summary followed by an HTML artifact that carries all of it: a
-  designed page, interactive when that helps (diagrams, step-throughs, tabs, diffs, charts).
-  The model writes it as a fenced
-  ```` ```html artifact ```` block. While the block streams in, the page shows a
-  placeholder, and when it is done the page loads it in a frame sized to fit. The bar
-  above it can **revise** it (puts `Revise the "<title>" artifact: ` in the prompt; the
-  model answers with the whole updated document), download it, reload it, expand it
-  (`Esc` closes) or open it in a new tab. Back in the terminal, each artifact is
+  as a sentence or three of summary followed by an artifact that carries all of it,
+  interactive when that helps (flows, steps, tabs, diffs, charts, filters, follow-up
+  questions). The model writes it in [OpenUI Lang](https://www.openui.com/docs/openui-lang)
+  as a fenced ```` ```openui ```` block: one `name = Component(args…)` statement a line,
+  using tamale's component library (the `openui/` crate). The page draws it with its own
+  Dioxus components (`openui/dioxus`), as part of the page rather than in a frame,
+  so an artifact is data and never runs script. It's drawn while it streams in, `root`
+  first, and its controls can keep `$state`, filter lists or send the agent a message.
+  The bar above it can **revise** it (puts `Revise the "<title>" artifact: ` in the
+  prompt; the model answers with the whole updated document), download its document,
+  expand it (`Esc` closes) or open it in a new tab. Back in the terminal, each artifact is
   collapsed to one line with its title. The sparkle button beside Send asks for one in a
   tap ("Can you generate an artifact for this?"), as in the iOS app; it hides while you
   type.
-- **Artifact guide.** How artifacts should look and behave lives in a design guide
-  (`src/web/artifact.md`: output contract, which layout fits which kind of answer, the
-  colour and type tokens, component recipes and a quality checklist). While `/web` is on
-  it is added to the system prompt, and each prompt only carries a short reminder. To
-  use your own, put it in `~/.config/tamale/artifacts.md`; it replaces the built-in one.
-- **Saving and resuming.** Every finished artifact is also saved as a standalone HTML
+- **Artifact guide.** How to write artifacts lives in a guide (`src/web/artifact.md`: the
+  output contract, OpenUI Lang's syntax, which components fit which kind of answer and a
+  quality checklist). The component reference in it is generated from the library, so it
+  always matches what the page can draw. While `/web` is on it is added to the system
+  prompt, and each prompt only carries a short reminder. To use your own, put it in
+  `~/.config/tamale/artifacts.md`; it replaces the built-in prose, and the reference goes
+  where it says `{{components}}` (or at the end).
+- **Saving and resuming.** Every finished artifact is also saved as an `.openui`
   file in `~/.local/share/tamale/sessions/<session-id>/artifacts/`, named after its title
   plus a short content hash, so revisions sit side by side. Artifacts are part of the
   conversation, so `tamale --continue` (or `--resume`) followed by `/web` shows them all
@@ -167,10 +172,11 @@ The address works the same way as `/browser`'s: the server listens only on 127.0
 with a random token, and checks the `Host` and `Origin` headers. The page also sends a
 strict Content Security Policy, and model output is never treated as HTML in the page
 itself; the only site besides tamale it may reach is Gemini's API
-(`generativelanguage.googleapis.com`), for the voice conversation. Artifacts are the exception: each one is served from its own unguessable
-`/artifact/<id>` URL with a `sandbox` CSP that leaves out `allow-same-origin`. Its scripts
-run in an opaque origin that can't read the page, the token or the socket, even when the
-artifact is opened in a tab of its own. Scripts and styles may load from https CDNs.
+(`generativelanguage.googleapis.com`), for the voice conversation. Artifacts are drawn by
+the page's own components from an OpenUI Lang document, so nothing a model writes runs as
+script; their links open only http(s) and mailto URLs, and their images only https ones.
+Each finished artifact is also served from its own unguessable `/artifact/<id>` URL: the
+same app, drawing that one document (carried as JSON data in the page) on its own.
 
 **How it works.** `src/web.rs` sends JSON over a WebSocket. Assistant markdown is turned
 into HTML in tamale (`src/web/render.rs`, which uses pulldown-cmark), and code is

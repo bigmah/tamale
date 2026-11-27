@@ -8,8 +8,8 @@
 //! already run commands as the user, so handing it the key gives nothing away.
 //!
 //! A reply shows a video it rendered (with Manim, say) as a ```` ```video ```` block holding the
-//! file's path. The page asks for the file over its socket, as it does for artifacts on an
-//! encrypted session, so it plays through a hub too.
+//! file's path. The page asks for the file over its socket, as it does for artifacts, so it
+//! plays through a hub too.
 
 use std::path::{Path, PathBuf};
 

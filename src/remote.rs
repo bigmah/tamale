@@ -516,7 +516,7 @@ mod tests {
             panic!()
         };
         assert!(
-            text.contains("```html artifact\n<title>Sync flow</title>\n```"),
+            text.contains("```openui\ntitle = \"Sync flow\"\n```"),
             "{text}"
         );
         assert!(matches!(&items[2], Entry::Tool { output: Some((o, true)), .. } if o == "a"));

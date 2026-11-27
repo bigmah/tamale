@@ -251,7 +251,7 @@ pub fn side_question_prompt(question: &str) -> String {
 question for you. Answer it from this conversation; you may read files and search to answer, \
 but don't change anything (edits and shell commands are refused). This question and your \
 answer are not added to the conversation, so answer completely and concisely, in a few \
-sentences or a short list, as plain markdown. Don't produce an HTML artifact.\n\n\
+sentences or a short list, as plain markdown. Don't produce an artifact.\n\n\
 <question>\n{question}\n</question>"
     )
 }

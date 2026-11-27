@@ -2474,13 +2474,13 @@ async fn web_sessions_ask_for_artifacts_but_show_the_prompt_as_typed() {
     app.set_web_session(true);
     app.web_send("how does sync work?".into());
     assert!(matches!(app.entries.last(), Some(Entry::User(t)) if t == "how does sync work?"));
-    assert!(last_prompt(&app).contains("html artifact"));
+    assert!(last_prompt(&app).contains("info string is exactly `openui`"));
     app.task.take().unwrap().abort();
     app.on_agent(app.turn, AgentEvent::Done);
 
     app.set_web_session(false);
     app.web_send("and now?".into());
-    assert!(!last_prompt(&app).contains("html artifact"));
+    assert!(!last_prompt(&app).contains("info string is exactly `openui`"));
     app.task.take().unwrap().abort();
     app.on_agent(app.turn, AgentEvent::Done);
 
@@ -2488,19 +2488,19 @@ async fn web_sessions_ask_for_artifacts_but_show_the_prompt_as_typed() {
     app.set_hub_viewers(Some(1));
     app.set_web_viewers(1);
     app.web_send("from the phone".into());
-    assert!(last_prompt(&app).contains("html artifact"));
+    assert!(last_prompt(&app).contains("info string is exactly `openui`"));
     app.task.take().unwrap().abort();
     app.on_agent(app.turn, AgentEvent::Done);
 
     // Another terminal driving it gets ordinary replies, even with the phone there.
     app.terminal_send("from a terminal".into());
-    assert!(!last_prompt(&app).contains("html artifact"));
+    assert!(!last_prompt(&app).contains("info string is exactly `openui`"));
     app.task.take().unwrap().abort();
     app.on_agent(app.turn, AgentEvent::Done);
 
     // And the phone gets its artifacts back with its next prompt.
     app.web_send("from the phone again".into());
-    assert!(last_prompt(&app).contains("html artifact"));
+    assert!(last_prompt(&app).contains("info string is exactly `openui`"));
     app.task.take().unwrap().abort();
     app.finish_saves().await;
     unsafe { std::env::remove_var("TAMALE_SESSIONS_DIR") };
@@ -2517,12 +2517,9 @@ async fn a_reply_cut_off_inside_a_code_block_continues_in_the_same_entry() {
     app.task = Some(tokio::spawn(std::future::pending()));
     let delta =
         |app: &mut App, text: &str| app.on_agent(app.turn, AgentEvent::TextDelta(text.into()));
-    delta(
-        &mut app,
-        "Here.\n\n```html artifact\n<title>T</title>\n<p>he",
-    );
+    delta(&mut app, "Here.\n\n```openui\nroot = TextContent(\"he");
     app.on_agent(app.turn, AgentEvent::Continuing("Continuing…".into()));
-    delta(&mut app, "llo</p>\n```");
+    delta(&mut app, "llo\")\n```");
     app.on_agent(
         app.turn,
         AgentEvent::Retry {
@@ -2531,7 +2528,7 @@ async fn a_reply_cut_off_inside_a_code_block_continues_in_the_same_entry() {
             error: "timeout".into(),
         },
     );
-    delta(&mut app, "llo</p>\n```\n");
+    delta(&mut app, "llo\")\n```\n");
     let replies: Vec<&String> = app
         .entries
         .iter()
@@ -2542,7 +2539,7 @@ async fn a_reply_cut_off_inside_a_code_block_continues_in_the_same_entry() {
         .collect();
     assert_eq!(
         replies,
-        ["Here.\n\n```html artifact\n<title>T</title>\n<p>hello</p>\n```\n"]
+        ["Here.\n\n```openui\nroot = TextContent(\"hello\")\n```\n"]
     );
 
     // Cut off outside a code block, the continuation is a reply of its own.

@@ -131,9 +131,9 @@ fn vectors() -> Value {
 
 /// One sample of each message the app reads, with the random artifact id made fixed.
 fn messages(dir: &std::path::Path) -> Vec<(&'static str, Value)> {
-    let artifact = "<!doctype html><title>Login flow</title><p>Steps</p>\n";
+    let artifact = "title = \"Login flow\"\nroot = Card([CardHeader(\"Login flow\"), TextContent(\"Steps\")])\n";
     let reply = format!(
-        "I traced the bug.\n\n- `auth.rs` drops the cookie\n- **fix**: keep it\n\n```html artifact\n{artifact}```\n\nWant me to apply it?"
+        "I traced the bug.\n\n- `auth.rs` drops the cookie\n- **fix**: keep it\n\n```openui\n{artifact}```\n\nWant me to apply it?"
     );
     let entries = vec![
         Entry::Info("Welcome! tamale 0.1.2".into()),
@@ -159,7 +159,9 @@ fn messages(dir: &std::path::Path) -> Vec<(&'static str, Value)> {
         Entry::Assistant(reply),
         Entry::Note("Compacted the conversation: *3 turns* summarised.".into()),
         Entry::Error("The backend timed out.".into()),
-        Entry::Assistant("Building:\n\n```html artifact\n<title>Draft</title>\n<p>half".into()),
+        Entry::Assistant(
+            "Building:\n\n```openui\ntitle = \"Draft\"\nroot = Card([TextContent(\"half".into(),
+        ),
     ];
     let mirror = Mirror::default();
     let mut v = view(&entries);
@@ -227,7 +229,7 @@ fn messages(dir: &std::path::Path) -> Vec<(&'static str, Value)> {
         .artifacts
         .lock()
         .unwrap()
-        .pages
+        .sources
         .keys()
         .next()
         .unwrap()
@@ -236,20 +238,24 @@ fn messages(dir: &std::path::Path) -> Vec<(&'static str, Value)> {
         |text: &str| -> Value { serde_json::from_str(&text.replace(&id, ARTIFACT_ID)).unwrap() };
     let (page, hash) = {
         let artifacts = mirror.artifacts.lock().unwrap();
-        (artifacts.pages[&id].clone(), artifacts.hashes[&id].clone())
+        (
+            artifacts.sources[&id].clone(),
+            artifacts.hashes[&id].clone(),
+        )
     };
 
     let saved = dir.join("session-1");
     save_artifact(&saved, artifact).unwrap();
     let store = Mutex::new(Artifacts::default());
     let mut gallery = saved_artifacts(Some(saved.clone()), std::iter::empty(), &store);
-    let gallery_id = store.lock().unwrap().pages.keys().next().unwrap().clone();
+    let gallery_id = store.lock().unwrap().sources.keys().next().unwrap().clone();
     for session in gallery["sessions"].as_array_mut().unwrap() {
         session["updated"] = 1_700_000_100.into();
         for item in session["items"].as_array_mut().unwrap() {
             item["modified"] = 1_700_000_100.into();
             // The real name ends in a hash that can change between Rust versions.
-            item["file"] = "/home/me/.local/share/tamale/sessions/session-1/login-flow.html".into();
+            item["file"] =
+                "/home/me/.local/share/tamale/sessions/session-1/login-flow.openui".into();
             item["url"] = format!("/artifact/{ARTIFACT_ID}").into();
         }
     }
@@ -283,11 +289,18 @@ fn messages(dir: &std::path::Path) -> Vec<(&'static str, Value)> {
             "question-none.json",
             json!({ "t": "question", "question": null }),
         ),
+        ("artifact.json", {
+            // The page is the viewer's whole module inline (megabytes); its start stands
+            // in for it, as the app only hands it to a web view.
+            let mut reply = fix(&artifact_reply(&id, Some(&page), Some(&hash), true).to_string());
+            let html = reply["html"].as_str().unwrap();
+            reply["html"] = html[..html.find("<script").unwrap()].into();
+            reply
+        }),
         (
-            "artifact.json",
-            fix(&artifact_reply(&id, Some(&page), Some(&hash)).to_string()),
+            "artifact-missing.json",
+            artifact_reply("ffff", None, None, true),
         ),
-        ("artifact-missing.json", artifact_reply("ffff", None, None)),
         ("artifacts.json", gallery),
         (
             "hs0.json",

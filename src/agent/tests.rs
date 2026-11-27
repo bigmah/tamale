@@ -944,8 +944,8 @@ async fn queued_user_messages_are_delivered_with_the_next_tool_result() {
 #[test]
 fn open_fences_are_detected_only_until_closed() {
     let open = ends_in_open_fence;
-    assert!(open("Hi\n\n```html artifact\n<p>x"));
-    assert!(!open("Hi\n\n```html artifact\n<p>x</p>\n```"));
+    assert!(open("Hi\n\n```openui\nroot = Card(["));
+    assert!(!open("Hi\n\n```openui\nroot = Card([])\n```"));
     assert!(open("````md\n```\nstill inside\n"));
     assert!(!open("````md\n```\n````\n"));
     assert!(!open("just `inline` code"));

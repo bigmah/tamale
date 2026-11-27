@@ -24,6 +24,9 @@ getrandom = "0.3"
 web-time = "1"
 futures-channel = "0.3"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# Artifacts: OpenUI Lang documents, and the components that draw them.
+openui = { path = "../openui" }
+openui-dioxus = { path = "../openui/dioxus" }
 
 # The code view: pullspace, rendered in this page (see src/review.rs). Its own page's web
 # renderer (the `standalone` feature) is left out; this crate brings dioxus/web.
@@ -34,7 +37,7 @@ web-sys = { version = "0.3", optional = true, features = [
     "AudioBuffer", "AudioBufferSourceNode", "AudioContext", "AudioContextState", "AudioDestinationNode", "AudioNode", "AudioParam",
     "AudioProcessingEvent", "AudioScheduledSourceNode", "BaseAudioContext", "BinaryType", "Blob", "BlobPropertyBag",
     "Clipboard", "CloseEvent", "CssStyleDeclaration", "Document", "DomRect", "DomTokenList", "Element", "Event",
-    "EventTarget", "GainNode", "Headers", "History", "HtmlElement", "HtmlIFrameElement", "HtmlInputElement",
+    "EventTarget", "GainNode", "Headers", "History", "HtmlElement", "HtmlInputElement",
     "HtmlTextAreaElement", "IntersectionObserver", "IntersectionObserverEntry", "IntersectionObserverInit",
     "KeyboardEvent", "Location", "MediaDevices", "MediaQueryList", "MediaStream", "MediaStreamAudioSourceNode",
     "MediaStreamConstraints", "MediaStreamTrack", "MessageEvent", "Navigator", "NodeList", "Request", "RequestInit",
