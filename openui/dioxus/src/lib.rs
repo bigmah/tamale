@@ -9,6 +9,9 @@ use dioxus::prelude::*;
 use openui::text::{self as t, DiffKind, Span};
 use openui::{Act, Eval, Node, State, Value};
 
+mod lesson;
+pub use lesson::Exchange;
+
 /// What the renderer asks of the page, through JavaScript so it's the same in a browser and
 /// in a desktop window.
 mod page {
@@ -50,6 +53,10 @@ struct Ctx {
     state: Memo<State>,
     /// Sends a message to the agent as the user's (none in a tab of its own).
     send: Option<Callback<String>>,
+    /// The artifact's title (see `openui::title`), which a lesson's messages name it by.
+    title: Memo<String>,
+    /// For a lesson: what the reader sent from it and the agent's replies.
+    talk: Memo<Vec<Exchange>>,
 }
 
 /// The form a part is in, for the buttons that send its values.
@@ -64,17 +71,33 @@ struct FormInfo {
 #[derive(Clone, Copy)]
 struct Tried(Signal<bool>);
 
-/// An artifact. `send` is how its actions talk to the agent.
+/// An artifact. `send` is how its actions talk to the agent; `talk`, for a lesson, is what
+/// the reader sent from it and the replies (see `openui::lesson`).
 #[component]
-pub fn OpenUi(source: String, done: bool, send: Option<Callback<String>>) -> Element {
+pub fn OpenUi(
+    source: String,
+    done: bool,
+    send: Option<Callback<String>>,
+    #[props(default)] talk: Vec<Exchange>,
+) -> Element {
     let program = use_memo(use_reactive!(|source| openui::parse(&source)));
+    let title = use_memo(use_reactive!(
+        |source| openui::title(&source).unwrap_or_default()
+    ));
+    let talk = use_memo(use_reactive!(|talk| talk));
     let set = use_signal(State::new);
     let state = use_memo(move || {
         let mut st = set();
         openui::init_state(&program.read(), &mut st);
         st
     });
-    use_context_provider(|| Ctx { set, state, send });
+    use_context_provider(|| Ctx {
+        set,
+        state,
+        send,
+        title,
+        talk,
+    });
     let program = program.read();
     let st = state.read();
     let mut eval = Eval::new(&program, &st);
@@ -444,6 +467,8 @@ fn view_node(n: &Node, cx: &Cx) -> Element {
         "Input" | "TextArea" | "Select" | "Switch" | "Slider" | "SegmentedControl" => {
             rsx! { Control { node } }
         }
+        // ------------------------------------------------------------ lessons
+        "Lesson" => rsx! { lesson::Lesson { node } },
         // Parts of something else, drawn by it; and components tamale doesn't have.
         _ => rsx! {},
     }

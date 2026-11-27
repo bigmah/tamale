@@ -4,7 +4,7 @@ use dioxus::core::spawn_forever;
 use dioxus::prelude::*;
 use serde_json::json;
 
-use crate::app::{ARTIFACT_PROMPT, App, PROMPT, VIDEO_PROMPT};
+use crate::app::{ARTIFACT_PROMPT, App, LESSON_PROMPT, PROMPT, VIDEO_PROMPT};
 use crate::host;
 use crate::icons::{I, icon, send_icons};
 
@@ -93,6 +93,12 @@ pub const COMMANDS: &[Command] = &[
         name: "/artifacts",
         args: "",
         desc: "Browse artifacts from this and earlier sessions",
+        local: true,
+    },
+    Command {
+        name: "/learn",
+        args: "[what]",
+        desc: "Learn something from the ground up, part by part, with questions that check you get it; alone, what you were just discussing",
         local: true,
     },
     Command {
@@ -445,6 +451,15 @@ fn Composer() -> Element {
                     });
                 },
                 onkeydown: move |ev| on_prompt_key(app, ev, n_items),
+            }
+            button {
+                class: "make-artifact make-lesson",
+                id: "make-lesson",
+                hidden: !empty,
+                title: "Learn this from the ground up, with questions along the way  /learn",
+                "aria-label": "Make a lesson",
+                onclick: move |_| if app.send(json!({ "t": "send", "text": LESSON_PROMPT }), false) { app.scroll_to_bottom(true) },
+                {icon(I::Learn)}
             }
             button {
                 class: "make-artifact make-video",

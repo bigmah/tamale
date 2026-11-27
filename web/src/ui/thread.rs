@@ -11,7 +11,7 @@ use crate::voice::Topic;
 use crate::wire::Entry;
 use serde_json::json;
 
-use openui_dioxus::OpenUi;
+use openui_dioxus::{Exchange, OpenUi};
 
 /// Steps whose summary is the path of the file they read or changed.
 const FILE_TOOLS: &[&str] = &["read_file", "write_file", "edit_file"];
@@ -147,9 +147,24 @@ fn Hero() -> Element {
 #[component]
 fn EntryView(index: usize, item: Item) -> Element {
     match &*item.0 {
-        Entry::User { text } => {
-            rsx! { div { class: "msg user", dangerous_inner_html: html::user_html(text) } }
-        }
+        Entry::User { text } => match openui::lesson::parse(text) {
+            // Sent from a lesson: which part, then what the reader wrote.
+            Some(m) => {
+                let about = format!("{} · Part {}: {}", m.title, m.part, m.part_title);
+                let (question, body) = match openui::lesson::says::answered(m.body) {
+                    Some((q, a)) => (Some(q.to_string()), a.to_string()),
+                    None => (None, m.body.to_string()),
+                };
+                rsx! {
+                    div { class: "msg user lesson-msg",
+                        div { class: "lesson-about", {icon(I::Learn)} span { "{about}" } }
+                        if let Some(q) = question { div { class: "lesson-q", "Answering: {q}" } }
+                        div { dangerous_inner_html: html::user_html(&body) }
+                    }
+                }
+            }
+            None => rsx! { div { class: "msg user", dangerous_inner_html: html::user_html(text) } },
+        },
         Entry::Assistant { html, .. } => {
             rsx! { Prose { class: "msg assistant prose", html: html.clone() } }
         }
@@ -253,9 +268,22 @@ pub fn ArtifactBox(src: String, title: String, source: String, done: bool) -> El
     let base = app.place.read().base.clone();
     let kept = done && !src.is_empty();
     let lines = source.lines().count();
+    // A lesson keeps the reader in it: what they send there, and the replies, show in the
+    // part they came from.
+    let lesson = use_memo(use_reactive!(|source| openui::lesson::is_lesson(&source)));
+    let lesson = lesson();
+    let talk = if lesson && done {
+        let running = app.status.read().as_ref().is_some_and(|s| s.running);
+        lesson_talk(&app.entries.read(), &title, running)
+    } else {
+        Vec::new()
+    };
     let send = Callback::new(move |text: String| {
-        app.close_full();
-        if app.send(json!({ "t": "send", "text": text }), false) {
+        let from_lesson = openui::lesson::parse(&text).is_some();
+        if !from_lesson {
+            app.close_full();
+        }
+        if app.send(json!({ "t": "send", "text": text }), false) && !from_lesson {
             app.scroll_to_bottom(true)
         }
     });
@@ -265,10 +293,17 @@ pub fn ArtifactBox(src: String, title: String, source: String, done: bool) -> El
         (false, true) => "artifact",
         (false, false) => "artifact building",
     };
+    let class = if lesson {
+        format!("{class} lesson")
+    } else {
+        class.to_string()
+    };
     rsx! {
         div { class, id: "art-box-{key}", "data-src": "{src}",
             div { class: "artifact-bar",
-                if done {
+                if done && lesson {
+                    span { class: "artifact-icon lesson-icon", title: "A lesson", {icon(I::Learn)} }
+                } else if done {
                     span { class: "artifact-icon", {icon(I::Spark)} }
                 } else {
                     span { class: "artifact-spark" }
@@ -328,10 +363,48 @@ pub fn ArtifactBox(src: String, title: String, source: String, done: bool) -> El
                 }
             }
             div { class: "artifact-body",
-                OpenUi { source, done, send: Some(send) }
+                OpenUi { source, done, send: Some(send), talk }
             }
         }
     }
+}
+
+/// What the reader sent from the lesson `title` (see `openui::lesson`), each with the
+/// replies that followed it. The latest waits while the agent is `running`, or until its
+/// reply begins.
+fn lesson_talk(entries: &[Item], title: &str, running: bool) -> Vec<Exchange> {
+    let mut out: Vec<Exchange> = Vec::new();
+    // The exchange the replies so far belong to.
+    let mut open: Option<usize> = None;
+    for item in entries {
+        match &*item.0 {
+            Entry::User { text } => {
+                open = None;
+                if let Some(m) = openui::lesson::parse(text).filter(|m| m.title == title) {
+                    out.push(Exchange {
+                        part: m.part,
+                        asked: m.body.to_string(),
+                        ..Exchange::default()
+                    });
+                    open = Some(out.len() - 1);
+                }
+            }
+            Entry::Assistant { html, .. } => {
+                if let Some(e) = open.map(|k| &mut out[k]) {
+                    if !e.reply.is_empty() {
+                        e.reply.push('\n');
+                    }
+                    e.reply.push_str(html);
+                }
+            }
+            Entry::Error { .. } => open = None,
+            _ => {}
+        }
+    }
+    if let Some(e) = open.map(|k| &mut out[k]) {
+        e.waiting = running || e.reply.is_empty();
+    }
+    out
 }
 
 fn plural_s(n: usize) -> &'static str {

@@ -52,6 +52,10 @@ pub const GROUPS: &[(&str, &str)] = &[
         "Interactive",
         "Controls. An action is `@ToAssistant(\"message\", context?)` (sends the user's message to you), `@OpenUrl(url)`, `@Set($var, value)`, `@Reset($var, …)`, or several in `Action([…])`.",
     ),
+    (
+        "Lessons",
+        "Only for a lesson (see Lessons): `root = Lesson(…)`, never inside a Card. tamale shows one part at a time with the reader's progress, sends their answers and questions to you, and shows your feedback in the part they came from.",
+    ),
 ];
 
 pub const LIBRARY: &[Component] = &[
@@ -517,6 +521,45 @@ pub const LIBRARY: &[Component] = &[
             o("label", "string")
         ],
         "A range slider."
+    ),
+    // ---------------------------------------------------------------- lessons
+    c!(
+        "Lessons",
+        "Lesson",
+        [p("goal", "string"), p("parts", "LessonPart[]")],
+        "A lesson: what the reader will understand by the end, then its parts, from the simplest case up to that goal."
+    ),
+    c!(
+        "Lessons",
+        "LessonPart",
+        [
+            p("title", "string"),
+            p("level", "string"),
+            p("content", "Node[]"),
+            o("checks", "(Check | QuickCheck)[]")
+        ],
+        "One step up: a short title, where it sits (a few words, e.g. \"The simplest case\", \"Adding retries\", \"The change\"), the explanation drawn with any components, and the questions that check it."
+    ),
+    c!(
+        "Lessons",
+        "Check",
+        [
+            p("question", "string"),
+            o("hint", "string"),
+            o("keyPoints", "string")
+        ],
+        "An open question the reader answers in their own words; their answer comes to you for feedback. The hint nudges without giving it away; keyPoints (what a good answer says) are shown once they've answered."
+    ),
+    c!(
+        "Lessons",
+        "QuickCheck",
+        [
+            p("question", "string"),
+            p("options", "string[]"),
+            p("answer", "number"),
+            o("why", "string")
+        ],
+        "A multiple-choice question answered on the spot: answer is the right option's index from 0, why explains it (shown after any pick)."
     ),
 ];
 

@@ -858,6 +858,19 @@ impl App {
                 self.open_gallery();
                 true
             }
+            "/learn" | "/lesson" | "/teach" => {
+                let text = if arg.is_empty() {
+                    LESSON_PROMPT.to_string()
+                } else {
+                    format!(
+                        "Teach me this from the ground up, as a lesson I can check my understanding in: {arg}"
+                    )
+                };
+                if self.send(json!({ "t": "send", "text": text }), false) {
+                    self.scroll_to_bottom(true);
+                }
+                true
+            }
             "/video" | "/manim" => {
                 let text = if arg.is_empty() {
                     VIDEO_PROMPT.to_string()
@@ -1353,6 +1366,9 @@ impl App {
 pub const VIDEO_PROMPT: &str = "Can you make an animated video of this with Manim?";
 /// The iOS app's artifact button sends the same words.
 pub const ARTIFACT_PROMPT: &str = "Can you generate an artifact for this?";
+/// What the lesson button and `/learn` send: the artifact guide's Lessons section says how.
+pub const LESSON_PROMPT: &str =
+    "Can you teach me this from the ground up, as a lesson I can check my understanding in?";
 
 /// Commands that open a picker or screen in the terminal when given no arguments.
 fn terminal_only(name: &str) -> Option<&'static str> {

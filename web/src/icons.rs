@@ -32,6 +32,7 @@ pub enum I {
     Jump,
     Film,
     Sparkles,
+    Learn,
 }
 
 fn paths(i: I) -> &'static [&'static str] {
@@ -93,6 +94,12 @@ fn paths(i: I) -> &'static [&'static str] {
         I::Sparkles => &[
             "M7 2.5 8.2 5.8 11.5 7 8.2 8.2 7 11.5 5.8 8.2 2.5 7 5.8 5.8z",
             "M12 10.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z",
+        ],
+        // A mortarboard: a lesson.
+        I::Learn => &[
+            "M8 3 1.5 6 8 9l6.5-3z",
+            "M4.25 7.4v3.1c0 .9 1.7 2 3.75 2s3.75-1.1 3.75-2V7.4",
+            "M14.5 6v3.75",
         ],
     }
 }

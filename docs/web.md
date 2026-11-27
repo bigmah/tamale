@@ -143,6 +143,23 @@ back to the terminal, and `Ctrl+C` quits. Any number of tabs can be open.
   - *The microphone.* Browsers only give it to secure pages: through a hub (https) or at
     this machine's own address (`127.0.0.1`), not at a network address (`/web lan`), where
     you type to Gemini instead.
+- **Lessons.** `/learn <what>` ("/learn how this branch changes retries"), or the mortarboard
+  button beside the film button (`/learn` alone: whatever you were just discussing), asks
+  for a lesson instead of an explanation: an artifact (`root = Lesson(goal, parts)`, see
+  `openui/src/lesson.rs`) that builds the subject from the ground up. It starts with the
+  simplest case on a concrete example, written for a curious 9th grader, and each part adds
+  one piece of complexity until the last part is the goal. For a branch or PR, it builds up to
+  `main` first and then explains the change in terms of the parts before it. The page shows
+  one part at a time, with a rail of every part and what you've marked understood. Each part
+  ends with checks: open questions (`Check`, with a hint, and what a good answer covers once
+  you've answered) and multiple choice (`QuickCheck`, answered on the spot). It also has a
+  discussion. Answers, questions and replies go to the agent as ordinary messages whose
+  first line names the lesson and part (`[Lesson: <title> · Part 2: <part>]`). The agent
+  tutors Socratically: a verdict (**Right.**, **Partly.** or **Not yet.**), the missing
+  piece shown on the simplest case, and one follow-up question. The page finds those
+  exchanges in the conversation by that line and shows them in the part they came from, so
+  a lesson open full screen stays open while you work through it. The how-to is the artifact
+  guide's Lessons section, so every backend knows it.
 - **Animated videos with Manim.** `/video <what>` ("/video how a hash map handles
   collisions"), or just asking for an animation in your own words, has tamale write a
   [Manim](https://www.manim.community/) scene, renders it in a scratch directory from
@@ -253,5 +270,6 @@ to try it in a browser; `TAMALE_FAKE_LAN=1` serves it at this machine's network 
 instead, which is how a phone sees it and where the browser withholds storage and the
 clipboard; with `TAMALE_HUB_URL` and `TAMALE_HUB_KEY` set it also connects to
 that hub and prints a link in. `TAMALE_FAKE_VIDEO=<path>` adds a reply that shows that video,
-`TAMALE_FAKE_ARTIFACT=1` one with an artifact, and prompts the page sends are printed as
+`TAMALE_FAKE_ARTIFACT=1` one with an artifact, `TAMALE_FAKE_LESSON=1` one with a lesson whose
+answers and questions get a canned tutor reply, and prompts the page sends are printed as
 `SEND=…`.

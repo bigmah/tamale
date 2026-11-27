@@ -12,6 +12,7 @@
 //! artifact embeds its data.
 
 pub mod eval;
+pub mod lesson;
 pub mod lex;
 pub mod library;
 pub mod parse;

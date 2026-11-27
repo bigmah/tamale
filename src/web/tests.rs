@@ -1261,6 +1261,14 @@ changed = [{path: "src/web/pullspace.rs", lines: 2, kind: "cap"}, {path: "web/sr
 more = Steps([StepsItem("Raise the cap", "Done in `pullspace.rs`.", "done"), StepsItem("Check the hub's limit", Progress(48, 64, "MB of the hub's 64 MB frame"), "active"), StepsItem("Ship", null, "todo")])
 followUps = FollowUpBlock([FollowUpItem("Apply it to the browser mirror too"), FollowUpItem("How was this measured?")])"#;
 
+/// A lesson, as the lesson button would get one: from the simplest case up to the change.
+const LESSON_ARTIFACT: &str = r#"title = "How the page gets a file"
+root = Lesson("Why big files now come in 64 KB pieces, and why that makes the page faster", [p1, p2, p3, p4])
+p1 = LessonPart("Asking for a file", "The simplest case", [TextContent("When you open a file in the code view, the page in your browser doesn't have it yet. It **asks** tamale for it, and tamale, on your computer, reads the file and sends the text back. Like asking a librarian for a book: you ask, they fetch it, you read."), Flow([FlowNode("You open main.rs", "the page"), FlowNode("Ask for it", "a message", "accent"), FlowNode("Read it", "tamale"), FlowNode("Show it", "the page", "success")]), Callout("info", "Remember", "One ask, one answer: the whole file at once.")], [Check("If the file were 50 MB, what would you notice while it's sent whole?", "Think about what the page can do while it waits.", "Nothing shows until the whole file has arrived; on a slow phone connection that can be many seconds, and one huge message can be refused or time out."), QuickCheck("Where does the file's text come from?", ["The browser's cache", "tamale reading it on your computer", "GitHub"], 1, "The page has no files of its own: tamale reads them where they live.")])
+p2 = LessonPart("A size limit", "+ A cap", [TextContent("Sending everything at once breaks down for big files. So tamale has a **cap**: files up to a size are sent whole, bigger ones aren't."), CodeBlock("rust", "pub const MAX_INLINE: u64 = 512 * 1024;", "src/web/pullspace.rs")], [Check("Why have a cap at all, instead of always sending files whole?", "What did part 1's question show?", "Whole files are simplest and fastest when small; past some size, one message gets too slow and too big, so there has to be a line.")])
+p3 = LessonPart("Pieces", "Where main is today", [TextContent("Past the cap, a file is sent in **pieces** of 64 KB, which the page puts back together. The page can show the first piece while the rest arrive.")], [Check("A 200 KB file: how many pieces, and why might that be slower than sending it whole?", null, "Four pieces (64 KB each, the last one partly full): four round trips instead of one, each paying the network's delay.")])
+p4 = LessonPart("Raising the cap", "The change", [TextContent("Part 3's answer is the whole story: small files paid for pieces they didn't need. The branch raises the cap from 128 KB to **512 KB**, so most files go back to the simplest case."), Diff("src/web/pullspace.rs", "@@ -38,1 +38,1 @@\n-pub const MAX_INLINE: u64 = 128 * 1024;\n+pub const MAX_INLINE: u64 = 512 * 1024;")], [Check("In terms of part 1, what did this change do for a 300 KB file?")])"#;
+
 /// A chef's page with a sample kitchen and conversation, served on this machine until
 /// `TAMALE_FAKE_SECONDS` (default 60) pass, for looking at: prints `URL=<url>`.
 /// `cargo test -p tamale fake_chef_page -- --ignored --nocapture`
@@ -1478,6 +1486,18 @@ async fn fake_review_page() {
             Entry::Assistant(format!("Here's the animation.\n\n```video\n{video}\n```")),
         ]);
     }
+    // A lesson (TAMALE_FAKE_LESSON): what's sent from it gets a tutor's reply, streamed.
+    if std::env::var_os("TAMALE_FAKE_LESSON").is_some() {
+        entries.extend([
+            Entry::User(
+                "Can you teach me this from the ground up, as a lesson I can check my understanding in?"
+                    .into(),
+            ),
+            Entry::Assistant(format!(
+                "Here's the cap from the ground up: from how the page asks for one file to why                  the branch raises it.\n\n```openui\n{LESSON_ARTIFACT}\n```"
+            )),
+        ]);
+    }
     // A reply with an artifact (TAMALE_FAKE_ARTIFACT), to open or talk about.
     if std::env::var_os("TAMALE_FAKE_ARTIFACT").is_some() {
         entries.push(Entry::Assistant(format!(
@@ -1591,6 +1611,44 @@ async fn fake_review_page() {
                     tokio::time::sleep(std::time::Duration::from_millis(30)).await;
                 }
                 println!("STREAMED");
+            }
+            // An answer or a question from the lesson: a tutor's reply, a few words at a time.
+            WebEvent::Send(text) if openui::lesson::parse(&text).is_some() => {
+                println!("SEND={text:?}");
+                let answer = openui::lesson::parse(&text)
+                    .and_then(|m| openui::lesson::says::answered(m.body))
+                    .is_some();
+                let reply = if answer {
+                    "**Partly.** You've got the waiting: nothing shows until the last byte arrives. \
+                     But think about the message itself. Back in the simplest case, the answer \
+                     is *one* message. What might the connection do with one 50 MB message?"
+                } else {
+                    "Good question. Go back to the librarian: asking for a book costs a trip whatever \
+                     its size. Each piece is a trip of its own, so pieces only pay when the book \
+                     is too heavy to carry at once. Does that make the 512 KB cap feel right?"
+                };
+                entries.push(Entry::User(text));
+                entries.push(Entry::Assistant(String::new()));
+                let mut st = status.clone();
+                st.running = true;
+                let words: Vec<&str> = reply.split_inclusive(' ').collect();
+                for k in 0..=words.len() {
+                    *entries.last_mut().unwrap() = Entry::Assistant(words[..k].concat());
+                    let mut v = view(&entries);
+                    v.status = if k == words.len() {
+                        status.clone()
+                    } else {
+                        st.clone()
+                    };
+                    v.roots = roots.clone();
+                    server.sync(v);
+                    tokio::time::sleep(std::time::Duration::from_millis(if k == 0 {
+                        900
+                    } else {
+                        40
+                    }))
+                    .await;
+                }
             }
             // What the page sent, for checking it from a script.
             WebEvent::Send(text) => println!("SEND={text:?}"),
@@ -1890,7 +1948,7 @@ fn the_artifact_guide_lists_every_component_and_its_examples_draw() {
     }
     assert!(examples > 0);
     // So do the documents the fake pages show.
-    for doc in [LONG_ARTIFACT, SHOWCASE_ARTIFACT] {
+    for doc in [LONG_ARTIFACT, SHOWCASE_ARTIFACT, LESSON_ARTIFACT] {
         assert_eq!(openui::problems(doc), Vec::<String>::new(), "{doc}");
     }
 }

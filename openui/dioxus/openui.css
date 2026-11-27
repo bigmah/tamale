@@ -286,3 +286,81 @@ textarea.oui-input { resize: vertical; }
 @media (prefers-reduced-motion: reduce) {
   .oui *, .oui *::after { transition: none !important; }
 }
+
+/* lessons (src/lesson.rs): one part at a time, a rail of the parts, checks and a discussion */
+.oui-lesson { display: flex; flex-direction: column; gap: 18px; scroll-margin-top: 12px; }
+.oui-lesson-goal { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border-radius: var(--r-lg); background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--bg-1); border: 1px solid var(--accent-line); }
+.oui-lesson-goal .k { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.07em; color: var(--accent); }
+.oui-lesson-goal .v { color: var(--fg-bright); font-weight: 550; }
+.oui-lesson-rail { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; counter-reset: stop; }
+.oui-lesson-stop { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 8px; max-width: 220px; min-height: 36px; padding: 4px 12px 4px 4px; border-radius: 18px; border: 1px solid var(--border); background: var(--bg-1); color: var(--fg-dim); font-size: 12.5px; font-weight: 550; touch-action: manipulation; transition: all var(--quick) var(--ease); }
+.oui-lesson-stop:hover { border-color: var(--line); color: var(--fg); }
+.oui-lesson-stop .n { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--bg-3); font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.oui-lesson-stop .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oui-lesson-stop.on { border-color: var(--accent); color: var(--fg-bright); background: var(--accent-soft); }
+.oui-lesson-stop.on .n { background: var(--accent); color: var(--on-accent); }
+.oui-lesson-stop.done .n { background: var(--add-bg); color: var(--added); }
+.oui-lesson-stop.started .n { box-shadow: inset 0 0 0 1.5px var(--accent-line); }
+.oui-lesson-stop:focus-visible, .oui-quick:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.oui-lesson-part { display: flex; flex-direction: column; gap: 14px; animation: oui-lesson-in 220ms var(--ease); }
+@keyframes oui-lesson-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.oui-lesson-level { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; color: var(--fg-faint); font-weight: 550; }
+.oui-lesson-level .lvl { padding: 2px 9px; border-radius: 10px; background: rgba(167, 139, 250, 0.15); color: var(--violet); font-weight: 600; }
+.oui-lesson h2.oui-lesson-title { margin: -6px 0 0; font-size: 22px; font-weight: 650; letter-spacing: -0.015em; line-height: 1.25; color: var(--fg-bright); }
+.oui-lesson-content { display: flex; flex-direction: column; gap: 14px; min-width: 0; font-size: 15px; line-height: 1.6; }
+.oui-lesson-checks, .oui-talk { display: flex; flex-direction: column; gap: 10px; padding-top: 14px; border-top: 1px solid var(--border-soft); }
+.oui-lesson-checks h3, .oui-talk h3 { margin: 0; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.07em; color: var(--fg-faint); }
+.oui-check { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--bg-1); }
+.oui-check.answered { border-color: rgba(79, 191, 122, 0.4); }
+.oui-check-q { display: flex; gap: 10px; align-items: flex-start; color: var(--fg-bright); font-weight: 550; }
+.oui-check-q .mark { flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 700; }
+.oui-check.answered .oui-check-q .mark { background: var(--add-bg); color: var(--added); }
+.oui-check textarea.oui-input, .oui-talk textarea.oui-input { width: 100%; resize: vertical; font: inherit; }
+.oui-check-row { display: flex; align-items: center; gap: 10px; }
+.oui-check-row .spacer { flex: 1; }
+.oui-check-note { font-size: 12px; color: var(--fg-faint); }
+.oui-check-more { font-size: 13px; color: var(--fg-dim); }
+.oui-check-more summary { cursor: pointer; color: var(--accent); font-weight: 550; width: fit-content; }
+.oui-check-more > div { margin-top: 6px; padding: 8px 12px; border-left: 2px solid var(--border); }
+.oui-quick-options { display: flex; flex-direction: column; gap: 6px; }
+.oui-quick { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 6px 12px 6px 6px; border-radius: var(--r); border: 1px solid var(--border); background: var(--bg); color: var(--fg); text-align: left; touch-action: manipulation; transition: all var(--quick) var(--ease); }
+.oui-quick:hover { border-color: var(--line); }
+.oui-quick .l { flex: none; width: 26px; height: 26px; border-radius: var(--r-sm); display: grid; place-items: center; background: var(--bg-3); font-size: 12px; font-weight: 650; color: var(--fg-dim); }
+.oui-quick.right { border-color: rgba(79, 191, 122, 0.6); background: var(--add-bg); }
+.oui-quick.right .l { background: var(--added); color: var(--on-accent); }
+.oui-quick.wrong { border-color: rgba(224, 108, 117, 0.6); background: var(--del-bg); }
+.oui-quick.wrong .l { background: var(--deleted); color: var(--on-accent); }
+.oui-quick.dim { opacity: 0.6; }
+.oui-quick-why { font-size: 13.5px; padding: 8px 12px; border-radius: var(--r); }
+.oui-quick-why.right { background: var(--add-bg); }
+.oui-quick-why.right strong { color: var(--added); }
+.oui-quick-why.wrong { background: var(--del-bg); }
+.oui-quick-why.wrong strong { color: var(--deleted); }
+.oui-talk-x { display: flex; flex-direction: column; gap: 8px; }
+.oui-talk-you, .oui-talk-tutor { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border-radius: var(--r-lg); min-width: 0; }
+.oui-talk-you { background: var(--bg-3); margin-left: 32px; }
+.oui-talk-tutor { background: var(--bg-1); border: 1px solid var(--border); margin-right: 32px; }
+.oui-talk .who { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; color: var(--fg-faint); }
+.oui-talk-tutor .who { color: var(--violet); }
+.oui-talk-you .about { font-size: 12px; color: var(--fg-dim); }
+.oui-talk-you .said { white-space: pre-wrap; }
+.oui-talk-tutor .said > :first-child { margin-top: 0; }
+.oui-talk-tutor .said > :last-child { margin-bottom: 0; }
+.oui-talk-none { color: var(--fg-faint); font-size: 13px; }
+.oui-talk-wait { display: flex; gap: 4px; padding: 6px 0; }
+.oui-talk-wait span { width: 6px; height: 6px; border-radius: 50%; background: var(--fg-faint); animation: oui-talk-dot 1.2s infinite ease-in-out; }
+.oui-talk-wait span:nth-child(2) { animation-delay: 0.15s; }
+.oui-talk-wait span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes oui-talk-dot { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
+.oui-talk-ask { display: flex; gap: 8px; align-items: flex-end; }
+.oui-talk-ask textarea { flex: 1; }
+.oui-lesson-nav { display: flex; align-items: center; gap: 10px; padding-top: 14px; border-top: 1px solid var(--border-soft); }
+.oui-lesson-count { flex: 1; text-align: center; font-size: 12px; color: var(--fg-faint); }
+.oui-lesson-offline { font-size: 12.5px; color: var(--fg-faint); margin: 0; }
+@media (max-width: 560px) {
+  .oui-talk-you { margin-left: 16px; }
+  .oui-talk-tutor { margin-right: 0; }
+  .oui-lesson-count { display: none; }
+  .oui-lesson-nav { justify-content: space-between; }
+  .oui-lesson h2.oui-lesson-title { font-size: 20px; }
+}
