@@ -1243,31 +1243,53 @@ done = Callout("success", "The end of the page", "Everything above is in order."
 
 /// An artifact with most of the components in it, for looking at (TAMALE_FAKE_ARTIFACT).
 const SHOWCASE_ARTIFACT: &str = r#"title = "Inline cap"
-root = Card([header, stats, flow, tabs, files, more, followUps])
-header = CardHeader("Files up to 512 KB are sent whole", "Bigger ones go in 64 KB pieces, at most 37 of them: `src/web/pullspace.rs`")
-stats = Grid([Metric("512 KB", "Sent whole", "+384 KB", "good"), Metric("37", "Pieces at most", "−5", "good"), Metric("2.3 s", "Worst load on 3G", "+0.4 s", "bad")], 160)
-flow = Flow([FlowNode("Tab asks", "pullspace::Link"), FlowNode("Size check", "inline_cap()", "accent"), FlowNode("Whole file", "≤ 512 KB", "success"), FlowNode("Pieces", "64 KB × n", "warning")])
-tabs = Tabs([TabItem("why", "Why", why), TabItem("diff", "Diff", diff), TabItem("numbers", "Numbers", numbers)])
-why = Stack([Callout("danger", "Root cause", "The cap was **128 KB**, so most source files went in pieces and each piece was a round trip."), Markdown("Raising it:\n\n- cuts round trips for 92% of files\n- keeps the biggest message under the socket's limit\n\n> Measured over this repository's 1,204 files.")])
+root = Card([header, stats, how, tabs, files, more, followUps])
+header = CardHeader("Files up to 512 KB are now sent whole", "`src/web/pullspace.rs` · bigger ones still go in 64 KB pieces, at most 37 of them")
+stats = Grid([Metric("512 KB", "Sent whole", "+384 KB", "good"), Metric(37, "Pieces at most", "−5", "good"), Metric("2.3 s", "Worst load on 3G", "+0.4 s", "bad")])
+how = Diagram([DiagramNode("ask", "Tab asks for a file", "pullspace::Link"), DiagramNode("size", "Bigger than the cap?", "MAX_INLINE", "accent"), DiagramNode("whole", "One message", "the whole file", "success"), DiagramNode("pieces", "64 KB pieces", "a round trip each", "warning"), DiagramNode("shown", "Shown in the code view", "web/src/review.rs")], [DiagramEdge("ask", "size"), DiagramEdge("size", "whole", "no"), DiagramEdge("size", "pieces", "yes"), DiagramEdge("whole", "shown"), DiagramEdge("pieces", "shown", "put together")])
+tabs = Tabs([TabItem("Why", why), TabItem("Diff", diff), TabItem("On the wire", wire), TabItem("Numbers", numbers)])
+why = [Callout("danger", "Root cause", "The cap was **128 KB**, so most source files went in pieces and each piece was a round trip."), Markdown("Raising it:\n\n- cuts round trips for 92% of files\n- keeps the biggest message under the socket's limit\n\n> Measured over this repository's 1,204 files."), CodeBlock("rust", "    /// Reads a file for the page: whole if it's small enough.\n    pub fn read(path: &Path) -> io::Result<Sent> {\n        let meta = std::fs::metadata(path)?;\n        if meta.len() > MAX_INLINE {\n            return Ok(Sent::Pieces(pieces(path, PIECE)?));\n        }\n        Ok(Sent::Whole(std::fs::read_to_string(path)?))\n    }", "src/web/pullspace.rs", 118, ["121-123"])]
 diff = Diff("src/web/pullspace.rs", "@@ -40,7 +40,7 @@ impl Link {\n /// Files up to this size are sent in one message.\n-const INLINE_CAP: usize = 128 * 1024;\n+const INLINE_CAP: usize = 512 * 1024;\n const PIECE: usize = 64 * 1024;\n const MAX_PIECES: usize = 37;", "Four times the cap: one message for nearly every file")
-numbers = Stack([SegmentedControl("chart", [SelectItem("bars", "By size"), SelectItem("line", "Over time"), SelectItem("pie", "Share")], $chart), shown])
+wire = Sequence(["Page", "tamale", "Disk"], [Message("Page", "tamale", "`{\"t\":\"file\",\"path\":\"src/main.rs\"}`", "when a file is opened in the code view", "accent"), Message("tamale", "Disk", "metadata, then read"), Message("tamale", "tamale", "under 512 KB?", "`MAX_INLINE`"), Message("tamale", "Page", "the whole file", "one message", "success")])
+numbers = [SegmentedControl("chart", [SelectItem("bars", "By size"), SelectItem("line", "Over time"), SelectItem("pie", "Share")], $chart), shown]
 $chart = "bars"
 shown = $chart == "bars" ? bars : $chart == "line" ? line : pie
-bars = BarChart(["<64K", "64–128K", "128–512K", ">512K"], [Series("Before", [3, 4, 9, 9]), Series("After", [1, 1, 1, 9])], "grouped", "File size", "Round trips")
-line = LineChart(["Mon", "Tue", "Wed", "Thu", "Fri"], [Series("p95 load (ms)", [820, 790, 410, 380, 372])])
+bars = BarChart(["<64K", "64–128K", "128–512K", ">512K"], [Series("Before", [3, 4, 9, 9], "neutral"), Series("After", [1, 1, 1, 9], "good")], "grouped", "File size", "round trips")
+line = LineChart(["Mon", "Tue", "Wed", "Thu", "Fri"], [Series("p95 load", [820, 790, 410, 380, 372])], null, "ms")
 pie = PieChart(["Whole", "In pieces"], [1108, 96], "donut")
-files = Accordion([AccordionItem("files", "Files touched (" + @Count(changed) + ")", Table([Col("File", @Each(changed, "f", f.path), "code"), Col("Lines", @Each(changed, "f", f.lines), "number"), Col("Change", @Each(changed, "f", f.kind), "tag")]))])
-changed = [{path: "src/web/pullspace.rs", lines: 2, kind: "cap"}, {path: "web/src/review.rs", lines: 14, kind: "pieces"}, {path: "src/web/tests.rs", lines: 31, kind: "tests"}]
-more = Steps([StepsItem("Raise the cap", "Done in `pullspace.rs`.", "done"), StepsItem("Check the hub's limit", Progress(48, 64, "MB of the hub's 64 MB frame"), "active"), StepsItem("Ship", null, "todo")])
+files = Accordion([AccordionItem("Files touched (" + @Count(changed) + ")", Table([Col("File", changed.path, "code"), Col("Lines", changed.lines, "number"), Col("Change", @Each(changed, "f", Tag(f.kind, f.tone)))]))])
+changed = [{path: "src/web/pullspace.rs", lines: 2, kind: "cap", tone: "accent"}, {path: "web/src/review.rs", lines: 14, kind: "pieces", tone: "neutral"}, {path: "src/web/tests.rs", lines: 31, kind: "tests", tone: "success"}]
+more = Steps([StepsItem("Raise the cap", "Done in `src/web/pullspace.rs`.", "done"), StepsItem("Check the hub's limit", Progress(48, 64, "MB of the hub's 64 MB frame"), "active"), StepsItem("Ship", null, "todo")])
 followUps = FollowUpBlock([FollowUpItem("Apply it to the browser mirror too"), FollowUpItem("How was this measured?")])"#;
 
 /// A lesson, as the lesson button would get one: from the simplest case up to the change.
 const LESSON_ARTIFACT: &str = r#"title = "How the page gets a file"
-root = Lesson("Why big files now come in 64 KB pieces, and why that makes the page faster", [p1, p2, p3, p4])
-p1 = LessonPart("Asking for a file", "The simplest case", [TextContent("When you open a file in the code view, the page in your browser doesn't have it yet. It **asks** tamale for it, and tamale, on your computer, reads the file and sends the text back. Like asking a librarian for a book: you ask, they fetch it, you read."), Flow([FlowNode("You open main.rs", "the page"), FlowNode("Ask for it", "a message", "accent"), FlowNode("Read it", "tamale"), FlowNode("Show it", "the page", "success")]), Callout("info", "Remember", "One ask, one answer: the whole file at once.")], [Check("If the file were 50 MB, what would you notice while it's sent whole?", "Think about what the page can do while it waits.", "Nothing shows until the whole file has arrived; on a slow phone connection that can be many seconds, and one huge message can be refused or time out."), QuickCheck("Where does the file's text come from?", ["The browser's cache", "tamale reading it on your computer", "GitHub"], 1, "The page has no files of its own: tamale reads them where they live.")])
-p2 = LessonPart("A size limit", "+ A cap", [TextContent("Sending everything at once breaks down for big files. So tamale has a **cap**: files up to a size are sent whole, bigger ones aren't."), CodeBlock("rust", "pub const MAX_INLINE: u64 = 512 * 1024;", "src/web/pullspace.rs")], [Check("Why have a cap at all, instead of always sending files whole?", "What did part 1's question show?", "Whole files are simplest and fastest when small; past some size, one message gets too slow and too big, so there has to be a line.")])
-p3 = LessonPart("Pieces", "Where main is today", [TextContent("Past the cap, a file is sent in **pieces** of 64 KB, which the page puts back together. The page can show the first piece while the rest arrive.")], [Check("A 200 KB file: how many pieces, and why might that be slower than sending it whole?", null, "Four pieces (64 KB each, the last one partly full): four round trips instead of one, each paying the network's delay.")])
-p4 = LessonPart("Raising the cap", "The change", [TextContent("Part 3's answer is the whole story: small files paid for pieces they didn't need. The branch raises the cap from 128 KB to **512 KB**, so most files go back to the simplest case."), Diff("src/web/pullspace.rs", "@@ -38,1 +38,1 @@\n-pub const MAX_INLINE: u64 = 128 * 1024;\n+pub const MAX_INLINE: u64 = 512 * 1024;")], [Check("In terms of part 1, what did this change do for a 300 KB file?")])"#;
+root = Lesson("Why small files now arrive in one message, and what that changes for a 300 KB file", [p1, p2, p3, p4])
+p1 = LessonPart("Asking for a file", "The simplest case", [p1text, p1flow, p1idea], [p1quick, p1check])
+p1text = TextContent("When you open a file in the code view, the page in your browser doesn't have it yet. It **asks** tamale for it, and tamale, on your computer, reads the file and sends the text back. Like asking a librarian for a book: you ask, they fetch it, you read.")
+p1flow = Sequence(["Page", "tamale"], [Message("Page", "tamale", "\"send me `main.rs`\"", "you opened it", "accent"), Message("tamale", "tamale", "reads it from disk"), Message("tamale", "Page", "the whole file", "one message", "success")])
+p1idea = Callout("info", "The idea to keep", "One ask, one answer: the whole file at once.")
+p1quick = QuickCheck("Where does the file's text come from?", ["The browser's cache", "tamale reading it on your computer", "GitHub"], 1, "The page has no files of its own: tamale reads them where they live.")
+p1check = Check("If the file were 50 MB, what would you notice while it's sent whole?", "Think about what the page can show while it waits.", "Nothing shows until the whole file has arrived; on a slow phone connection that can be many seconds, and one huge message can be refused or time out.")
+p2 = LessonPart("A size limit", "+ A cap", [p2text, p2code, p2idea], [p2quick, p2check])
+p2text = TextContent("Sending everything at once breaks down for big files. So tamale has a **cap**: files up to a size are sent whole, bigger ones aren't.")
+p2code = CodeBlock("rust", "/// Files up to this size are sent in one message.\npub const MAX_INLINE: u64 = 128 * 1024;\npub const PIECE: u64 = 64 * 1024;", "src/web/pullspace.rs", 40, [41])
+p2idea = Callout("info", "The idea to keep", "The cap is a line: under it, the simplest case; over it, something else has to happen.")
+p2quick = QuickCheck("Which of these are sent whole with a 128 KB cap?", ["A 90 KB file", "A 128 KB file", "A 200 KB file", "A 3 MB file"], [0, 1], "Up to the cap means the cap itself too. The other two are over it.")
+p2check = Check("Why have a cap at all, instead of always sending files whole?", "What did part 1's question show?", "Whole files are simplest and fastest when small; past some size, one message gets too slow and too big, so there has to be a line.")
+p3 = LessonPart("Pieces", "Where main is today", [p3text, p3pick, p3table, p3walk], [p3check])
+p3text = TextContent("Past the cap, a file is sent in **pieces** of 64 KB, which the page puts back together. Each piece is its own ask and answer. Pick a file size to see what that costs:")
+$size = "200"
+p3pick = SegmentedControl("size", [SelectItem("90", "90 KB"), SelectItem("200", "200 KB"), SelectItem("300", "300 KB"), SelectItem("3000", "3 MB")], $size)
+p3table = Table([Col("", ["How it's sent", "Round trips"]), Col("Cap at 128 KB", trips[$size].old), Col("Cap at 512 KB", trips[$size].new)])
+trips = {"90": {old: ["whole", 1], new: ["whole", 1]}, "200": {old: ["4 pieces", 4], new: ["whole", 1]}, "300": {old: ["5 pieces", 5], new: ["whole", 1]}, "3000": {old: ["37 pieces", 37], new: ["37 pieces", 37]}}
+p3walk = Steps([StepsItem("The page asks for a 200 KB file", "It's over the 128 KB cap, so tamale answers with how many pieces there are: **4**."), StepsItem("Piece 1", "64 KB arrive. The page can already show the top of the file."), StepsItem("Pieces 2 and 3", "Two more asks, two more answers: 192 KB so far."), StepsItem("Piece 4", "The last 8 KB. Four round trips for a file that would have fit in one message.")], "walk")
+p3check = Check("A 200 KB file: how many pieces, and why might that be slower than sending it whole?", null, "Four pieces (64 KB each, the last one partly full): four round trips instead of one, each paying the network's delay.")
+p4 = LessonPart("Raising the cap", "The change", [p4text, p4diff, p4whole], [p4check])
+p4text = TextContent("Part 3 is the whole story: files a little over the cap paid for pieces they didn't need. The branch raises the cap from 128 KB to **512 KB**, so most files go back to the simplest case.")
+p4diff = Diff("src/web/pullspace.rs", "@@ -41,1 +41,1 @@\n-pub const MAX_INLINE: u64 = 128 * 1024;\n+pub const MAX_INLINE: u64 = 512 * 1024;", "Four times the cap: one message for nearly every source file")
+p4whole = Diagram([DiagramNode("ask", "Page asks for a file"), DiagramNode("size", "Over 512 KB?", "MAX_INLINE", "accent"), DiagramNode("whole", "One message", "part 1", "success"), DiagramNode("pieces", "64 KB pieces", "part 3", "warning")], [DiagramEdge("ask", "size"), DiagramEdge("size", "whole", "no"), DiagramEdge("size", "pieces", "yes")])
+p4check = Check("In terms of part 1, what did this change do for a 300 KB file?", "Use the table in part 3.", "It's under the new cap, so it's back to one ask and one answer: one round trip instead of five.")"#;
 
 /// A chef's page with a sample kitchen and conversation, served on this machine until
 /// `TAMALE_FAKE_SECONDS` (default 60) pass, for looking at: prints `URL=<url>`.
@@ -1503,6 +1525,28 @@ async fn fake_review_page() {
         entries.push(Entry::Assistant(format!(
             "The cap, on a page:\n\n```openui\n{SHOWCASE_ARTIFACT}\n```"
         )));
+    }
+    // Every file in a directory (TAMALE_FAKE_DOCS), in name order, each as a reply: an
+    // `.openui` file is a document, any other file a whole reply as a model wrote it.
+    if let Ok(dir) = std::env::var("TAMALE_FAKE_DOCS") {
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| Some(e.ok()?.path()))
+            .filter(|p| p.is_file())
+            .collect();
+        files.sort();
+        for file in files {
+            let text = std::fs::read_to_string(&file).unwrap();
+            let name = file.file_name().unwrap().to_string_lossy().into_owned();
+            entries.push(Entry::User(name));
+            entries.push(Entry::Assistant(
+                if file.extension().is_some_and(|e| e == "openui") {
+                    format!("```openui\n{}\n```", text.trim_end())
+                } else {
+                    text
+                },
+            ));
+        }
     }
     let mut v = view(&entries);
     v.status = Status {

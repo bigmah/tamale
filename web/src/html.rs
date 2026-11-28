@@ -326,85 +326,9 @@ pub fn user_html(text: &str) -> String {
     out
 }
 
-/// Extensions that make a bare name (`app.js`, no directory) a file rather than `a.b`.
-const FILE_EXT: &[&str] = &[
-    "rs", "js", "mjs", "cjs", "ts", "tsx", "jsx", "py", "go", "rb", "java", "kt", "swift", "c",
-    "h", "cc", "cpp", "hpp", "cs", "php", "sh", "bash", "zsh", "toml", "yaml", "yml", "json", "md",
-    "txt", "html", "css", "scss", "sql", "lock", "xml", "svg", "proto", "vue", "svelte", "lua",
-    "ex", "exs", "zig", "nix", "tf", "ini", "cfg", "conf",
-];
-
-/// The file some text names, if it reads as one: a path with an extension, optionally with
-/// `:line`, `:line-line` or `#Lline`. Whether there is such a file is pullspace's to say.
-pub fn file_path(raw: &str) -> Option<(String, Option<u64>)> {
-    let mut text = raw.trim();
-    for q in ['\'', '"', '`'] {
-        text = text.strip_prefix(q).unwrap_or(text);
-        text = text.strip_suffix(q).unwrap_or(text);
-    }
-    // The line, if any.
-    let (path, line) = if let Some((path, l)) = text.split_once("#L") {
-        let first: String = l.chars().take_while(char::is_ascii_digit).collect();
-        let tail = &l[first.len()..];
-        let ok = !first.is_empty()
-            && (tail.is_empty()
-                || tail
-                    .strip_prefix('-')
-                    .map(|t| t.trim_start_matches('L'))
-                    .is_some_and(|t| !t.is_empty() && t.chars().all(|c| c.is_ascii_digit())));
-        if !ok {
-            return None;
-        }
-        (path, first.parse().ok())
-    } else if let Some(colon) = text.find(':') {
-        let (path, tail) = (&text[..colon], &text[colon + 1..]);
-        let first: String = tail.chars().take_while(char::is_ascii_digit).collect();
-        if first.is_empty() {
-            return None;
-        }
-        let mut more = &tail[first.len()..];
-        while let Some(rest) = more.strip_prefix(['-', ':']) {
-            let n = rest.chars().take_while(char::is_ascii_digit).count();
-            if n == 0 {
-                return None;
-            }
-            more = &rest[n..];
-        }
-        if !more.is_empty() {
-            return None;
-        }
-        (path, first.parse().ok())
-    } else {
-        (text, None)
-    };
-    let word = |c: char| c.is_alphanumeric() || "_.@+-".contains(c);
-    let body = path
-        .strip_prefix('~')
-        .or_else(|| path.strip_prefix(".."))
-        .or_else(|| path.strip_prefix('.'))
-        .unwrap_or(path);
-    let body = body.strip_prefix('/').unwrap_or(body);
-    if body.is_empty()
-        || body
-            .split('/')
-            .any(|seg| seg.is_empty() || !seg.chars().all(word))
-    {
-        return None;
-    }
-    let name = body.rsplit('/').next()?;
-    let (stem, ext) = name.rsplit_once('.')?;
-    if stem.is_empty()
-        || ext.is_empty()
-        || ext.len() > 8
-        || !ext.chars().all(|c| c.is_alphanumeric() || c == '_')
-    {
-        return None;
-    }
-    if !path.contains('/') && !FILE_EXT.contains(&ext.to_ascii_lowercase().as_str()) {
-        return None;
-    }
-    Some((path.to_string(), line.filter(|l| *l > 0)))
-}
+/// The file some text names (see `openui::text::file_path`): replies and artifacts read
+/// paths the same way.
+pub use openui::text::file_path;
 
 /// Marks inline `code` that names a file as a link to the code view.
 fn decorate(html: &str) -> String {

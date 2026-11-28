@@ -87,6 +87,8 @@ fn start(mut app: App) {
                 HostEvent::OpenPath { path, diff } => {
                     if !app.is_chef() {
                         let (p, line) = crate::html::file_path(&path).unwrap_or((path, None));
+                        // From an artifact that has the whole screen, the code takes over.
+                        app.close_full();
                         app.open_in_code(&p, line, diff);
                     }
                 }

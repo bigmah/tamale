@@ -264,40 +264,92 @@ fn Check(node: Node, part: usize, part_title: String) -> Element {
     }
 }
 
-/// A multiple-choice question, answered on the spot.
+/// A multiple-choice question, answered on the spot. With one right answer a tap answers
+/// it; with several, the reader ticks the ones they think are right and then checks.
 #[component]
 fn QuickCheck(node: Node) -> Element {
-    let mut picked = use_signal(|| None::<usize>);
+    let mut picked = use_signal(Vec::<usize>::new);
+    let mut checked = use_signal(|| false);
     let options: Vec<String> = node
         .arg("options")
         .items()
         .iter()
         .map(Value::text)
         .collect();
-    let right = node.arg("answer").num();
-    let right = (right >= 0.0).then_some(right as usize);
+    // The right options, by index: as numbers, or as they're sometimes given instead, by
+    // letter ("B") or by the option's own words.
+    let right: Vec<usize> = node
+        .arg("answer")
+        .items()
+        .iter()
+        .filter_map(|v| match v {
+            Value::Num(n) if *n >= 0.0 => Some(*n as usize),
+            Value::Str(s) => {
+                let s = s.trim();
+                let letter = match s.as_bytes() {
+                    [c] if c.is_ascii_alphabetic() => {
+                        Some((c.to_ascii_uppercase() - b'A') as usize)
+                    }
+                    _ => None,
+                };
+                s.parse::<usize>()
+                    .ok()
+                    .or_else(|| options.iter().position(|o| o.trim() == s))
+                    .or(letter)
+            }
+            _ => None,
+        })
+        .filter(|i| *i < options.len())
+        .collect();
+    let several = right.len() > 1;
     let why = node.opt("why");
+    let answered = checked();
+    let chosen = picked();
+    let correct = answered && {
+        let mut a = chosen.clone();
+        let mut b = right.clone();
+        a.sort_unstable();
+        b.sort_unstable();
+        a == b
+    };
     rsx! {
-        div { class: "oui-check quick",
+        div { class: if answered && correct { "oui-check quick answered" } else { "oui-check quick" },
             div { class: "oui-check-q",
-                span { class: "mark", "?" }
+                span { class: "mark", if answered && correct { "✓" } else { "?" } }
                 span { {rich(&node.str("question"))} }
             }
-            div { class: "oui-quick-options", role: "radiogroup",
+            if several && !answered { div { class: "oui-check-note", "More than one is right: pick every one that is." } }
+            div { class: "oui-quick-options", role: if several { "group" } else { "radiogroup" },
                 for (k, o) in options.into_iter().enumerate() {
                     {
-                        let state = match picked() {
-                            Some(p) if Some(k) == right => "right",
-                            Some(p) if p == k => "wrong",
-                            Some(_) => "dim",
-                            None => "",
+                        let on = chosen.contains(&k);
+                        let state = match (answered, right.contains(&k), on) {
+                            (true, true, _) => "right",
+                            (true, false, true) => "wrong",
+                            (true, false, false) => "dim",
+                            (false, _, true) => "on",
+                            (false, _, false) => "",
                         };
                         rsx! {
                             button {
                                 class: "oui-quick {state}",
-                                role: "radio",
-                                "aria-checked": "{picked() == Some(k)}",
-                                onclick: move |_| picked.set(Some(k)),
+                                role: if several { "checkbox" } else { "radio" },
+                                "aria-checked": "{on}",
+                                onclick: move |_| {
+                                    if several {
+                                        if checked() {
+                                            return;
+                                        }
+                                        let mut now = picked.write();
+                                        match now.iter().position(|p| *p == k) {
+                                            Some(at) => { now.remove(at); }
+                                            None => now.push(k),
+                                        }
+                                    } else {
+                                        picked.set(vec![k]);
+                                        checked.set(true);
+                                    }
+                                },
                                 span { class: "l", "{(b'A' + (k as u8 % 26)) as char}" }
                                 span { {rich(&o)} }
                             }
@@ -305,9 +357,15 @@ fn QuickCheck(node: Node) -> Element {
                     }
                 }
             }
-            if let Some(p) = picked() {
-                div { class: if Some(p) == right { "oui-quick-why right" } else { "oui-quick-why wrong" },
-                    strong { if Some(p) == right { "Right. " } else { "Not quite. " } }
+            if several && !answered {
+                div { class: "oui-check-row",
+                    span { class: "spacer" }
+                    button { class: "oui-btn v-primary", disabled: chosen.is_empty(), onclick: move |_| checked.set(true), "Check" }
+                }
+            }
+            if answered {
+                div { class: if correct { "oui-quick-why right" } else { "oui-quick-why wrong" },
+                    strong { if correct { "Right. " } else { "Not quite. " } }
                     if let Some(w) = why { {rich(&w)} }
                 }
             }

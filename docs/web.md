@@ -83,13 +83,31 @@ back to the terminal, and `Ctrl+C` quits. Any number of tabs can be open.
 - **Artifacts.** During a web session replies are brief: a few sentences, or a list of at
   most 10 items. A longer answer (more than 10 items, or tables, diagrams or long code) comes
   as a sentence or three of summary followed by an artifact that carries all of it,
-  interactive when that helps (flows, steps, tabs, diffs, charts, filters, follow-up
+  interactive when that helps (diagrams, steps, tabs, diffs, charts, filters, follow-up
   questions). The model writes it in [OpenUI Lang](https://www.openui.com/docs/openui-lang)
   as a fenced ```` ```openui ```` block: one `name = Component(args…)` statement a line,
   using tamale's component library (the `openui/` crate). The page draws it with its own
   Dioxus components (`openui/dioxus`), as part of the page rather than in a frame,
   so an artifact is data and never runs script. It's drawn while it streams in, `root`
   first, and its controls can keep `$state`, filter lists or send the agent a message.
+  - *What it's made of.* Paths through code are diagrams: a `Flow` for one straight path,
+    a `Diagram` for what branches, merges or loops (laid out from its edges, top to
+    bottom), a `Sequence` for who sends what to whom. Code and diffs are coloured by
+    language, lose the indentation their lines share, and can mark the lines to look at;
+    a diff is numbered from its hunk headers. Charts write their values on their marks
+    where there's room, and a series can take a colour that means something. `Steps` can
+    be walked one at a time.
+  - *Files are links.* A file's name in an artifact (in backticks, in a table's code
+    column, at the head of a code block or a diff) opens that file in the code view, at
+    its line when it gives one.
+  - *It fits its own width.* An artifact lays itself out for the room it has, not the
+    window's, so it's as compact in a narrow chat beside the code as it is on a phone:
+    flows become timelines, wide tables a card a row, and code wraps under its own
+    indentation rather than scrolling.
+  - *Calls that are nearly right are drawn as meant* (a callout's variant given last, a
+    tab given an id it doesn't take), and what really can't be drawn is listed under the
+    artifact once it has finished.
+
   The bar above it can **revise** it (puts `Revise the "<title>" artifact: ` in the
   prompt; the model answers with the whole updated document), download its document,
   expand it (`Esc` closes) or open it in a new tab. Back in the terminal, each artifact is
@@ -97,8 +115,9 @@ back to the terminal, and `Ctrl+C` quits. Any number of tabs can be open.
   tap ("Can you generate an artifact for this?"), as in the iOS app; it hides while you
   type.
 - **Artifact guide.** How to write artifacts lives in a guide (`src/web/artifact.md`: the
-  output contract, OpenUI Lang's syntax, which components fit which kind of answer and a
-  quality checklist). The component reference in it is generated from the library, so it
+  output contract, OpenUI Lang's syntax, how to design one so its first screen is the
+  answer, which diagram and which components fit which kind of answer, how to quote code
+  and diffs, and a quality checklist). The component reference in it is generated from the library, so it
   always matches what the page can draw. While `/web` is on it is added to the system
   prompt, and each prompt only carries a short reminder. To use your own, put it in
   `~/.config/tamale/artifacts.md`; it replaces the built-in prose, and the reference goes
@@ -152,8 +171,10 @@ back to the terminal, and `Ctrl+C` quits. Any number of tabs can be open.
   `main` first and then explains the change in terms of the parts before it. The page shows
   one part at a time, with a rail of every part and what you've marked understood. Each part
   ends with checks: open questions (`Check`, with a hint, and what a good answer covers once
-  you've answered) and multiple choice (`QuickCheck`, answered on the spot). It also has a
-  discussion. Answers, questions and replies go to the agent as ordinary messages whose
+  you've answered) and multiple choice (`QuickCheck`, answered on the spot; with several
+  right answers you tick them and check). A part can be an experiment, too: a control
+  that switches what a table or a diagram shows, or steps walked one at a time. It also
+  has a discussion. Answers, questions and replies go to the agent as ordinary messages whose
   first line names the lesson and part (`[Lesson: <title> · Part 2: <part>]`). The agent
   tutors Socratically: a verdict (**Right.**, **Partly.** or **Not yet.**), the missing
   piece shown on the simplest case, and one follow-up question. The page finds those
@@ -271,5 +292,7 @@ instead, which is how a phone sees it and where the browser withholds storage an
 clipboard; with `TAMALE_HUB_URL` and `TAMALE_HUB_KEY` set it also connects to
 that hub and prints a link in. `TAMALE_FAKE_VIDEO=<path>` adds a reply that shows that video,
 `TAMALE_FAKE_ARTIFACT=1` one with an artifact, `TAMALE_FAKE_LESSON=1` one with a lesson whose
-answers and questions get a canned tutor reply, and prompts the page sends are printed as
+answers and questions get a canned tutor reply, `TAMALE_FAKE_DOCS=<dir>` a reply for every
+file in that directory (an `.openui` file is a document, any other file a whole reply), for
+looking at artifacts you've written or collected, and prompts the page sends are printed as
 `SEND=…`.

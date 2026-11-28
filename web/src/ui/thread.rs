@@ -363,7 +363,8 @@ pub fn ArtifactBox(src: String, title: String, source: String, done: bool) -> El
                 }
             }
             div { class: "artifact-body",
-                OpenUi { source, done, send: Some(send), talk }
+                // The files it names open in the code view, where there is one.
+                OpenUi { source, done, send: Some(send), talk, paths: !app.is_chef() }
             }
         }
     }

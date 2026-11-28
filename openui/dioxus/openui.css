@@ -4,21 +4,42 @@
 
 .oui {
   --oui-pad: 20px;
+  /* What an artifact's parts sit on, for the few that must cover what's behind them. */
+  --oui-surface: var(--bg);
   padding: var(--oui-pad);
   font-size: 14px;
   line-height: 1.55;
   color: var(--fg);
   overflow-wrap: anywhere;
   min-width: 0;
+  /* Its parts lay themselves out for its width, not the window's (`@container`, below): an
+     artifact in a narrow chat beside the code is as narrow as one on a phone. */
+  container-type: inline-size;
 }
 .oui > * + * { margin-top: 14px; }
 .oui-empty { color: var(--fg-faint); font-size: 13px; padding: 8px 0; }
 .oui-problems { margin-top: 16px; font-size: 12px; color: var(--fg-faint); }
 .oui-problems summary { cursor: pointer; }
 .oui-problems ul { margin: 6px 0 0 18px; }
-.oui code { font-family: var(--mono); font-size: 0.9em; background: var(--bg-3); padding: 1px 5px; border-radius: 4px; }
+.oui strong { color: var(--fg-bright); font-weight: 620; }
+.oui code { font-family: var(--mono); font-size: 0.88em; background: rgba(255, 255, 255, 0.065); padding: 1px 4px; border-radius: 4px; color: var(--fg-bright); }
 .oui a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
-.oui-num { font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 12px; color: var(--fg-dim); }
+/* A file's name, where the page opens files (the web UI's code view). */
+.oui .pathlink { cursor: pointer; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 2.5px; transition: color var(--quick) var(--ease); }
+.oui .pathlink:hover { color: var(--accent); text-decoration-color: var(--accent-line); }
+.oui-num { font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 12px; color: var(--fg-dim); white-space: nowrap; overflow-wrap: normal; }
+
+/* The colours of code (openui::code's kinds), as the chat's code blocks have them. */
+.oui .t-c { color: #6b7385; font-style: italic; }
+.oui .t-s { color: #99c794; }
+.oui .t-n, .oui .t-k { color: #f99157; }
+.oui .t-kw { color: #c594c5; }
+.oui .t-fn { color: #6699cc; }
+.oui .t-ty, .oui .t-attr { color: #fac863; }
+.oui .t-tag { color: #ec5f67; }
+.oui .t-add { color: var(--added); }
+.oui .t-del { color: var(--deleted); }
+.oui .t-hd { color: var(--accent); }
 
 /* layout */
 .oui-stack { display: flex; flex-direction: column; min-width: 0; }
@@ -32,24 +53,33 @@
 .oui-stack.align-between { justify-content: space-between; }
 .oui-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(var(--min, 220px), 100%), 1fr)); }
 .oui-grid > * { min-width: 0; }
-.oui-card { background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 18px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.oui-card .oui-card { padding: 14px; }
-.oui-card.v-sunk { background: var(--bg); border-color: var(--border-soft); }
+/* A row of figures: as many across as fit. */
+.oui-grid.metrics { grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); gap: 10px; }
+.oui-card { --oui-surface: var(--bg-1); background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 18px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.oui-card .oui-card { padding: 14px; gap: 10px; }
+.oui-card.v-sunk { --oui-surface: var(--bg); background: var(--bg); border-color: var(--border-soft); }
 .oui-card.v-accent { border-color: var(--accent-line); background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--bg-1); }
 .oui-card.v-success { border-color: rgba(79, 191, 122, 0.45); }
 .oui-card.v-warning { border-color: var(--warn-line); }
 .oui-card.v-danger { border-color: rgba(224, 108, 117, 0.5); }
 .oui-header h2 { font-size: 22px; font-weight: 650; letter-spacing: -0.015em; line-height: 1.25; color: var(--fg-bright); margin: 0; }
-.oui-header p { margin: 4px 0 0; color: var(--fg-dim); }
-.oui-inline-header h3 { margin: 4px 0 0; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.07em; color: var(--fg-faint); }
+.oui-header p { margin: 5px 0 0; color: var(--fg-dim); max-width: 78ch; }
+/* A header inside a card that's inside another names that card, not the artifact. */
+.oui-card .oui-card .oui-header h2 { font-size: 16px; letter-spacing: -0.01em; }
+.oui-card .oui-card .oui-header p { font-size: 13px; margin-top: 2px; }
+.oui-inline-header { margin-top: 4px; }
+.oui-inline-header h3 { margin: 0; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.07em; color: var(--fg-faint); }
 .oui-inline-header p { margin: 2px 0 0; color: var(--fg-dim); font-size: 13px; }
 .oui-sep { border: none; border-top: 1px solid var(--border-soft); margin: 4px 0; }
 
-.oui-tablist { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
-.oui-tab { min-height: 40px; padding: 8px 14px; color: var(--fg-dim); border-bottom: 2px solid transparent; margin-bottom: -1px; font-size: 13px; font-weight: 550; touch-action: manipulation; transition: color var(--quick) var(--ease), border-color var(--quick) var(--ease); }
+/* Tabs stay on one line: more than fit are scrolled to. */
+.oui-tablist { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 14px; overflow-x: auto; scrollbar-width: none; }
+.oui-tablist::-webkit-scrollbar { display: none; }
+.oui-tab { flex: none; min-height: 40px; padding: 8px 14px; color: var(--fg-dim); border-bottom: 2px solid transparent; font-size: 13px; font-weight: 550; white-space: nowrap; touch-action: manipulation; transition: color var(--quick) var(--ease), border-color var(--quick) var(--ease); }
 .oui-tab:hover { color: var(--fg); }
 .oui-tab.on { color: var(--fg-bright); border-bottom-color: var(--accent); }
-.oui-tab:focus-visible, .oui-btn:focus-visible, .oui-acc-head:focus-visible, .oui-tree-row:focus-visible, .oui-followup:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
+.oui-tab:focus-visible, .oui-btn:focus-visible, .oui-acc-head:focus-visible, .oui-tree-row:focus-visible, .oui-followup:focus-visible, .oui-dg-node:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
+.oui-tabpanel { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 
 .oui-accordion { border: 1px solid var(--border); border-radius: var(--r-lg); overflow: hidden; }
 .oui-acc + .oui-acc { border-top: 1px solid var(--border-soft); }
@@ -61,15 +91,28 @@
 
 .oui-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .oui-step { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; position: relative; padding-bottom: 16px; }
+.oui-step:last-child { padding-bottom: 0; }
 .oui-step:not(:last-child)::before { content: ""; position: absolute; left: 13px; top: 30px; bottom: 2px; width: 2px; background: var(--border); }
-.oui-step-n { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--bg-3); color: var(--fg-dim); font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.oui-step-n { width: 28px; height: 28px; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--bg-3); color: var(--fg-dim); font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; }
 .oui-step.s-done .oui-step-n { background: rgba(79, 191, 122, 0.18); color: var(--added); }
 .oui-step.s-active .oui-step-n { background: var(--accent); color: var(--on-accent); }
 .oui-step.s-blocked .oui-step-n { background: rgba(224, 108, 117, 0.18); color: var(--deleted); }
 .oui-step-body { min-width: 0; display: flex; flex-direction: column; gap: 8px; padding-top: 3px; }
 .oui-step-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-weight: 600; color: var(--fg-bright); }
+/* Steps one at a time (Steps(items, "walk")). */
+.oui-walk { display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: var(--r-lg); min-width: 0; }
+.oui-walk-bar { display: flex; gap: 4px; }
+.oui-walk-bar button { flex: 1; height: 20px; padding: 8px 0; background: var(--bg-4); background-clip: content-box; border-radius: 2px; touch-action: manipulation; transition: background-color var(--quick) var(--ease); }
+.oui-walk-bar button.seen { background-color: var(--accent-line); }
+.oui-walk-bar button.on { background-color: var(--accent); }
+.oui-walk-step { display: flex; flex-direction: column; gap: 10px; min-width: 0; animation: oui-in 200ms var(--ease); }
+.oui-walk-title { display: flex; align-items: center; gap: 10px; font-weight: 600; color: var(--fg-bright); }
+.oui-walk-title .oui-step-n { background: var(--accent); color: var(--on-accent); }
+.oui-walk-of { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--fg-faint); white-space: nowrap; }
+.oui-walk-nav { display: flex; justify-content: space-between; gap: 8px; }
+@keyframes oui-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
-.oui-pill, .oui-tag { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 10px; font-size: 11px; font-weight: 600; letter-spacing: 0.02em; background: var(--bg-3); color: var(--fg-dim); white-space: nowrap; }
+.oui-pill, .oui-tag { display: inline-flex; align-items: center; align-self: flex-start; height: 20px; padding: 0 8px; border-radius: 10px; font-size: 11px; font-weight: 600; letter-spacing: 0.02em; background: var(--bg-3); color: var(--fg-dim); white-space: nowrap; overflow-wrap: normal; }
 .oui-pill.s-done, .oui-pill.t-good, .oui-tag.v-success { background: var(--add-bg); color: var(--added); }
 .oui-pill.s-active, .oui-tag.v-accent { background: var(--accent-soft); color: var(--accent); }
 .oui-pill.s-blocked, .oui-pill.t-bad, .oui-tag.v-danger { background: var(--del-bg); color: var(--deleted); }
@@ -87,11 +130,13 @@
 .oui-md > * + * { margin-top: 10px; }
 .oui-md h3 { font-size: 15px; color: var(--fg-bright); }
 .oui-md h4 { font-size: 14px; color: var(--fg-bright); }
+.oui-md * + h3, .oui-md * + h4 { margin-top: 16px; }
 .oui-md ul, .oui-md ol { padding-left: 20px; }
 .oui-md li + li { margin-top: 4px; }
+.oui-md li::marker, .oui-list > li::marker { color: var(--fg-faint); }
 .oui-md blockquote { border-left: 3px solid var(--border); padding-left: 12px; color: var(--fg-dim); }
-.oui-md pre { background: var(--bg-2); border-radius: var(--r); padding: 10px 12px; overflow-x: auto; font-size: 12.5px; }
-.oui-md pre code { background: none; border: none; padding: 0; }
+.oui-md pre { background: var(--bg-2); border: 1px solid var(--border-soft); border-radius: var(--r); padding: 10px 12px; overflow-x: auto; font-size: 12.5px; line-height: 1.6; }
+.oui-md pre code { background: none; border: none; padding: 0; font-size: inherit; color: var(--fg); }
 
 .oui-callout { border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 var(--r) var(--r) 0; padding: 10px 14px; display: flex; flex-direction: column; gap: 2px; }
 .oui-callout strong { color: var(--fg-bright); font-weight: 650; }
@@ -107,32 +152,45 @@
 .oui-add { color: var(--added); }
 .oui-del { color: var(--deleted); }
 .oui-diff-note { padding: 8px 12px; font-size: 13px; color: var(--fg-dim); border-bottom: 1px solid var(--border-soft); }
-.oui-copy { position: absolute; top: 4px; right: 6px; height: 24px; padding: 0 8px; border-radius: var(--r-sm); font-size: 11px; color: var(--fg-dim); background: var(--bg-3); }
+.oui-copy { position: absolute; top: 4px; right: 6px; z-index: 1; height: 24px; padding: 0 8px; border-radius: var(--r-sm); font-size: 11px; color: var(--fg-dim); background: var(--bg-3); }
 .oui-copy.done { color: var(--added); }
 /* A grid, so every row is as wide as the widest and its colour runs the whole way. */
-.oui-lines { display: grid; overflow-x: auto; padding: 6px 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }
+.oui-lines { display: grid; overflow-x: auto; padding: 6px 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; tab-size: 4; }
 .oui-line { display: flex; }
 .oui-line code { flex: 1; background: none; border: none; padding: 0 12px 0 0; border-radius: 0; font-size: inherit; color: var(--fg); white-space: pre; }
-.oui-ln { flex: none; width: 4ch; padding: 0 10px 0 6px; text-align: right; color: var(--fg-faint); opacity: 0.7; user-select: none; box-sizing: content-box; }
+.oui-ind { white-space: pre; }
+.oui-ln { flex: none; width: var(--ln, 3ch); padding: 0 10px 0 8px; text-align: right; color: var(--fg-faint); opacity: 0.7; user-select: none; box-sizing: content-box; }
+.oui-ln.one { display: none; }
 .oui-sign { flex: none; width: 1.5ch; color: var(--fg-faint); user-select: none; }
+/* The lines a CodeBlock marks; the rest step back. */
+.oui-line.mark { background: rgba(92, 156, 245, 0.13); box-shadow: inset 2px 0 0 var(--accent); }
+.oui-line.mark .oui-ln { color: var(--accent); opacity: 1; }
+.oui-code.has-marks .oui-line:not(.mark) code { opacity: 0.55; }
 .oui-line.d-add { background: var(--add-bg); }
 .oui-line.d-add .oui-sign { color: var(--added); }
 .oui-line.d-del { background: var(--del-bg); }
 .oui-line.d-del .oui-sign { color: var(--deleted); }
-.oui-line.d-hunk, .oui-line.d-meta { color: var(--fg-faint); }
-.oui-line.d-hunk { background: var(--accent-soft); }
+.oui-line.d-hunk code, .oui-line.d-meta code, .oui-line.d-gap code { color: var(--fg-faint); padding-left: 12px; }
+.oui-line.d-hunk { background: var(--tint); border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft); margin: 4px 0; font-size: 11.5px; }
+.oui-line.d-hunk:first-child { margin-top: -6px; border-top: none; }
+.oui-line.d-gap code { text-align: center; letter-spacing: 0.3em; }
+/* A diff whose hunks don't say where they are has no line numbers. */
+.oui-diff.nonum .oui-ln { display: none; }
+.oui-diff.nonum .oui-sign { padding-left: 10px; box-sizing: content-box; }
 
 .oui-table-wrap { overflow-x: auto; border: 1px solid var(--border-soft); border-radius: var(--r); }
 .oui-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .oui-table caption { caption-side: top; text-align: left; padding: 8px 12px; color: var(--fg-dim); font-size: 12px; }
-.oui-table th { white-space: nowrap; overflow-wrap: normal; text-align: left; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-faint); background: var(--bg-2); }
-.oui-table th, .oui-table td { padding: 8px 12px; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+.oui-table th { white-space: nowrap; text-align: left; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-faint); background: var(--bg-2); }
+/* Words break only where they must, so a column is at least as wide as its longest one. */
+.oui-table th, .oui-table td { padding: 8px 12px; border-bottom: 1px solid var(--border-soft); vertical-align: top; overflow-wrap: break-word; }
 .oui-table tr:last-child td { border-bottom: none; }
-.oui-table .c-number { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 12.5px; }
+.oui-table .c-number { text-align: right; white-space: nowrap; }
+.oui-table td.c-number { font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 12.5px; }
 
 .oui-metric { background: var(--bg-2); border: 1px solid var(--border-soft); border-radius: var(--r); padding: 12px 14px; min-width: 0; }
-.oui-metric-value { font-size: 28px; font-weight: 650; letter-spacing: -0.02em; line-height: 1.15; color: var(--fg-bright); font-variant-numeric: tabular-nums; }
-.oui-metric-label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; color: var(--fg-dim); font-size: 12.5px; }
+.oui-metric-value { font-size: 26px; font-weight: 650; letter-spacing: -0.02em; line-height: 1.15; color: var(--fg-bright); font-variant-numeric: tabular-nums; }
+.oui-metric-label { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 4px; color: var(--fg-dim); font-size: 12.5px; }
 .oui-progress-label { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; margin-bottom: 6px; }
 .oui-track { height: 8px; border-radius: 4px; background: var(--bg-3); overflow: hidden; }
 .oui-fill { height: 100%; border-radius: 4px; background: var(--accent); transition: width 300ms var(--ease); }
@@ -143,6 +201,13 @@
 .oui-list { margin: 0; padding: 0 0 0 20px; display: flex; flex-direction: column; gap: 4px; }
 .oui-list.v-plain { list-style: none; padding: 0; gap: 0; border: 1px solid var(--border-soft); border-radius: var(--r); overflow: hidden; }
 .oui-list.v-plain > .oui-li + .oui-li { border-top: 1px solid var(--border-soft); }
+/* For and against, and what's done: each item under its own mark. */
+.oui-list.v-pros, .oui-list.v-cons, .oui-list.v-check { list-style: none; padding: 0; gap: 6px; }
+.oui-list.v-pros > .oui-li, .oui-list.v-cons > .oui-li, .oui-list.v-check > .oui-li { position: relative; padding-left: 24px; }
+.oui-list.v-pros > .oui-li::before, .oui-list.v-cons > .oui-li::before, .oui-list.v-check > .oui-li::before { position: absolute; left: 3px; top: 0; font-family: var(--mono); font-weight: 700; }
+.oui-list.v-pros > .oui-li::before { content: "+"; color: var(--added); }
+.oui-list.v-cons > .oui-li::before { content: "−"; color: var(--deleted); }
+.oui-list.v-check > .oui-li::before { content: "✓"; color: var(--added); }
 .oui-li-row { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; min-width: 0; }
 .oui-list.v-plain .oui-li-row { min-height: 44px; padding: 8px 12px; }
 .oui-li-row.tap { touch-action: manipulation; }
@@ -162,62 +227,135 @@
 .oui-tree-label { min-width: 0; }
 .oui-tree-detail { margin: 2px 0 8px 26px; padding: 8px 10px; background: var(--bg-2); border-radius: var(--r-sm); font-size: 13px; color: var(--fg-dim); }
 
-.oui-flow { display: flex; align-items: stretch; gap: 6px; }
-.oui-flow.row { flex-direction: row; flex-wrap: wrap; }
-.oui-flow.column { flex-direction: column; align-items: stretch; }
-.oui-flow-node { flex: 1 1 140px; min-width: 0; background: var(--bg-2); border: 1.5px solid var(--border); border-radius: var(--r); padding: 10px 12px; }
-.oui-flow.column .oui-flow-node { flex: none; }
-.oui-flow-label { font-weight: 600; color: var(--fg-bright); font-size: 13px; }
-.oui-flow-detail { font-family: var(--mono); font-size: 11.5px; color: var(--fg-faint); margin-top: 2px; }
-.oui-flow-node.t-accent { border-color: var(--accent); background: var(--accent-soft); }
-.oui-flow-node.t-success { border-color: var(--added); background: var(--add-bg); }
-.oui-flow-node.t-warning { border-color: var(--modified); background: rgba(226, 179, 76, 0.1); }
-.oui-flow-node.t-danger { border-color: var(--deleted); background: var(--del-bg); }
-.oui-flow-node.t-violet { border-color: var(--violet); background: rgba(167, 139, 250, 0.12); }
-.oui-flow-arrow { flex: none; display: grid; place-items: center; color: var(--fg-faint); }
-.oui-flow-arrow svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.oui-flow.column .oui-flow-arrow svg { transform: rotate(90deg); }
+/* What a tone colours: a flow node's edge or dot, a diagram's box, a sequence's arrow. */
+.oui-flow-node, .oui-dg-node { --c: var(--line); --tone-bg: transparent; }
+.oui-seq-msg { --c: var(--fg-dim); }
+.oui .t-accent { --c: var(--accent); --tone-bg: var(--accent-soft); }
+.oui .t-success { --c: var(--added); --tone-bg: var(--add-bg); }
+.oui .t-warning { --c: var(--modified); --tone-bg: rgba(226, 179, 76, 0.1); }
+.oui .t-danger { --c: var(--deleted); --tone-bg: var(--del-bg); }
+.oui .t-violet { --c: var(--violet); --tone-bg: rgba(167, 139, 250, 0.12); }
+
+/* A flow across the page is boxes joined by arrows; down the page (and on a phone) it's
+   a timeline, a numbered dot a step. */
+.oui-flow { display: flex; flex-direction: column; }
+.oui-flow.row { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr)); gap: 8px 26px; }
+.oui-flow-node { position: relative; min-width: 0; background: linear-gradient(var(--tone-bg), var(--tone-bg)), var(--bg-2); border: 1.5px solid var(--border); border-radius: var(--r); padding: 10px 12px; }
+.oui-flow.row .oui-flow-node:not(:last-child)::after { content: ""; position: absolute; left: calc(100% + 8px); top: 50%; width: 7px; height: 7px; border-top: 1.5px solid var(--fg-faint); border-right: 1.5px solid var(--fg-faint); transform: translateY(-50%) rotate(45deg); }
+.oui-flow-node:not(.t-neutral) { border-color: var(--c); }
+.oui-flow-n { display: none; }
+.oui-flow-label { font-weight: 600; color: var(--fg-bright); font-size: 13px; overflow-wrap: break-word; }
+.oui-flow-detail { font-family: var(--mono); font-size: 11.5px; color: var(--fg-faint); margin-top: 2px; overflow-wrap: break-word; }
+.oui-flow.column .oui-flow-node { border: none; background: none; border-radius: 0; padding: 1px 0 14px 32px; }
+.oui-flow.column .oui-flow-node:last-child { padding-bottom: 0; }
+.oui-flow.column .oui-flow-node:not(:last-child)::after { content: ""; position: absolute; left: 10px; top: 24px; bottom: 0; width: 2px; background: var(--border); }
+.oui-flow.column .oui-flow-n { position: absolute; left: 0; top: 0; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--bg-3); color: var(--fg-dim); font-size: 11px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.oui-flow.column .oui-flow-node:not(.t-neutral) .oui-flow-n { background: var(--c); color: var(--on-accent); }
+.oui-flow.column .oui-flow-node:not(.t-neutral) .oui-flow-label { color: var(--c); }
 .oui-img { display: block; max-width: 100%; height: auto; border-radius: var(--r); }
 
-/* charts */
-.oui-chart { margin: 0; min-width: 0; --c0: var(--accent); --c1: var(--violet); --c2: var(--added); --c3: var(--modified); --c4: var(--deleted); --c5: #56b6c2; }
-.c0 { --c: var(--c0); } .c1 { --c: var(--c1); } .c2 { --c: var(--c2); } .c3 { --c: var(--c3); } .c4 { --c: var(--c4); } .c5 { --c: var(--c5); }
-.oui-readout { min-height: 20px; font-size: 12.5px; color: var(--fg-bright); font-variant-numeric: tabular-nums; margin-bottom: 4px; }
-.oui-plot { position: relative; height: 200px; margin: 8px 0 0 40px; }
+/* A diagram (src/diagram.rs): boxes in rows of a fixed height, arrows drawn between them. */
+.oui-diagram { margin: 0; min-width: 0; }
+.oui-dg-canvas { position: relative; }
+.oui-dg-edges { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.oui-dg-edges path { fill: none; stroke: var(--line); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.oui-dg-edges path.dashed { stroke-dasharray: 4 4; }
+.oui-dg-row { position: absolute; left: 0; right: 0; height: 58px; display: flex; justify-content: space-around; }
+.oui-dg-node, .oui-dg-pass { flex: none; width: calc(100% / var(--cols, 1) - 12px); max-width: 240px; }
+.oui-dg-node { position: relative; z-index: 1; height: 58px; padding: 5px 10px; display: flex; flex-direction: column; justify-content: center; gap: 1px; text-align: center; background: linear-gradient(var(--tone-bg), var(--tone-bg)), var(--bg-2); border: 1.5px solid var(--border); border-radius: var(--r); overflow: hidden; touch-action: manipulation; transition: box-shadow var(--quick) var(--ease); }
+.oui-dg-node:not(.t-neutral) { border-color: var(--c); }
+.oui-dg-node.on { box-shadow: 0 0 0 2px var(--accent-line); }
+.oui-dg-label { font-weight: 600; font-size: 12.5px; line-height: 1.25; color: var(--fg-bright); overflow-wrap: break-word; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.oui-dg-detail { font-family: var(--mono); font-size: 10.5px; color: var(--fg-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oui-dg-detail code, .oui-flow-detail code { background: none; padding: 0; font-size: inherit; color: inherit; }
+.oui-dg-head { position: absolute; z-index: 2; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 7px solid var(--line); transform: translate(-50%, -100%); }
+.oui-dg-head.up { border-top: none; border-bottom: 7px solid var(--line); transform: translate(-50%, 0); }
+.oui-dg-edge-label { position: absolute; z-index: 2; transform: translate(-50%, -50%); max-width: 46%; padding: 0 7px; border-radius: 9px; border: 1px solid var(--border); background: var(--bg-3); font-size: 11px; line-height: 17px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oui-dg-readout { display: flex; flex-wrap: wrap; gap: 2px 8px; margin-top: 10px; padding: 8px 12px; border-radius: var(--r); background: var(--tint); font-size: 12.5px; color: var(--fg-dim); }
+
+/* A sequence: an actor a column, a message an arrow between two of their lines. */
+.oui-seq { margin: 0; min-width: 0; }
+.oui-seq-actors { display: grid; grid-template-columns: repeat(var(--n, 2), minmax(0, 1fr)); }
+.oui-seq-actor { display: flex; justify-content: center; padding: 0 3px; min-width: 0; }
+.oui-seq-actor span { max-width: 100%; padding: 5px 10px; border-radius: var(--r); background: var(--bg-3); border: 1px solid var(--border); font-weight: 600; font-size: 12.5px; line-height: 1.3; color: var(--fg-bright); text-align: center; overflow-wrap: break-word; }
+.oui-seq-body { position: relative; display: flex; flex-direction: column; gap: 12px; padding: 14px 0 8px; }
+.oui-seq-lanes { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(var(--n, 2), minmax(0, 1fr)); pointer-events: none; }
+.oui-seq-lanes span { justify-self: center; width: 0; border-left: 1.5px dashed var(--border); }
+.oui-seq-msg { position: relative; min-width: 0; }
+.oui-seq-text { min-width: 0; }
+.oui-seq-label { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; padding: 0 6px 1px 0; background: var(--oui-surface); font-size: 13px; font-weight: 550; color: var(--fg-bright); text-align: left; }
+.oui-seq-msg:not(.t-neutral) .oui-seq-label { color: var(--c); }
+.oui-seq-n { flex: none; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; display: inline-grid; place-items: center; background: var(--bg-3); color: var(--fg-dim); font-size: 10.5px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.oui-seq-detail { font-size: 12px; color: var(--fg-dim); }
+.oui-seq-detail > :first-child { background: var(--oui-surface); }
+.oui-seq-arrow { position: relative; height: 12px; margin-top: 2px; color: var(--c); }
+.oui-seq-arrow::before { content: ""; position: absolute; left: 0; right: 0; top: 5px; border-top: 1.5px solid currentColor; }
+.oui-seq-arrow.dashed::before { border-top-style: dashed; }
+.oui-seq-arrow::after { content: ""; position: absolute; top: 1px; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; }
+.oui-seq-arrow.right::after { right: 0; border-left: 8px solid currentColor; }
+.oui-seq-arrow.left::after { left: 0; border-right: 8px solid currentColor; }
+.oui-seq-msg.note .oui-seq-text { width: fit-content; max-width: 100%; padding: 5px 10px; border: 1px solid var(--border); border-left: 2.5px solid var(--c); border-radius: var(--r-sm); background: var(--bg-3); text-align: left; }
+.oui-seq-msg.note .oui-seq-label, .oui-seq-msg.note .oui-seq-detail > :first-child { background: none; }
+
+/* charts (src/charts.rs) */
+.oui-chart { margin: 0; min-width: 0; --c0: var(--accent); --c1: var(--violet); --c2: var(--added); --c3: var(--modified); --c4: var(--deleted); --c5: #56b6c2; --c6: #f0a45d; --c7: #d16d9e; }
+.c0 { --c: var(--c0); } .c1 { --c: var(--c1); } .c2 { --c: var(--c2); } .c3 { --c: var(--c3); } .c4 { --c: var(--c4); } .c5 { --c: var(--c5); } .c6 { --c: var(--c6); } .c7 { --c: var(--c7); }
+.ct-accent { --c: var(--accent); } .ct-good { --c: var(--added); } .ct-bad { --c: var(--deleted); } .ct-warning { --c: var(--modified); } .ct-violet { --c: var(--violet); } .ct-neutral { --c: var(--fg-faint); }
+.oui-chart-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; min-height: 18px; }
+.oui-axis-title { font-size: 11px; color: var(--fg-faint); }
+.oui-axis-title.x { text-align: center; margin: 4px 0 0 40px; }
+.oui-readout { font-size: 12.5px; color: var(--fg-bright); font-variant-numeric: tabular-nums; text-align: right; }
+.oui-plot { position: relative; height: 200px; margin: 18px 0 0 40px; }
 .oui-gridline { position: absolute; left: 0; right: 0; height: 0; border-top: 1px solid var(--border-soft); }
 .oui-gridline span { position: absolute; right: calc(100% + 8px); top: -8px; font-size: 11px; color: var(--fg-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .oui-bars { position: absolute; inset: 0; display: flex; }
 .oui-slot { flex: 1; display: flex; justify-content: center; gap: 3px; padding: 0 8px; min-width: 0; }
-.oui-col { position: relative; flex: 1 1 0; max-width: 40px; min-width: 0; }
+.oui-col { position: relative; flex: 1 1 0; max-width: 48px; min-width: 0; }
 .oui-bar { position: absolute; left: 0; right: 0; background: var(--c); border-radius: 3px 3px 0 0; opacity: 0.88; touch-action: manipulation; transition: opacity var(--quick) var(--ease); }
-.oui-bar:hover, .oui-bar.on { opacity: 1; box-shadow: 0 0 0 2px var(--bg-1), 0 0 0 3px var(--c); }
+.oui-bar.down { border-radius: 0 0 3px 3px; }
+.oui-bar:hover, .oui-bar.on { opacity: 1; box-shadow: 0 0 0 2px var(--oui-surface), 0 0 0 3px var(--c); }
+/* A mark's value, written by it where there are few enough marks to have room. */
+.oui-bar-v, .oui-dot-v { display: none; position: absolute; left: 50%; transform: translateX(-50%); font-size: 10.5px; line-height: 1; color: var(--fg-dim); font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }
+.oui-bar-v { margin-bottom: 4px; }
+.oui-bar-v.down { margin: 4px 0 0; }
+.oui-dot-v { bottom: calc(100% - 4px); }
+.oui-plot.few .oui-bar-v, .oui-plot.few .oui-dot-v { display: block; }
 .oui-xlabels { display: flex; margin-left: 40px; margin-top: 6px; }
 .oui-xlabels span { flex: 1; min-width: 0; text-align: center; font-size: 11px; color: var(--fg-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 2px; }
-.oui-xlabels.spread { justify-content: space-between; }
-.oui-xlabels.spread span { flex: 0 1 auto; }
-.oui-axis-titles { display: flex; justify-content: space-between; font-size: 11px; color: var(--fg-faint); margin-top: 4px; }
-.oui-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: 12px; color: var(--fg-dim); }
+/* A line's labels sit under its points, not in equal shares of the width. */
+.oui-xlabels.at { display: block; position: relative; height: 16px; }
+.oui-xlabels.at span { position: absolute; top: 0; max-width: 28%; padding: 0; transform: translateX(-50%); }
+.oui-xlabels.at span.first { transform: none; }
+.oui-xlabels.at span.last { transform: translateX(-100%); }
+.oui-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; font-size: 12px; color: var(--fg-dim); }
 .oui-legend > span { display: inline-flex; align-items: center; gap: 6px; }
 .oui-swatch { width: 10px; height: 10px; border-radius: 3px; background: var(--c); flex: none; display: inline-block; }
 .oui-lines-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .oui-line-path { fill: none; stroke: var(--c); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
 .oui-area { fill: var(--c); opacity: 0.14; stroke: none; }
 .oui-dot { position: absolute; width: 24px; height: 24px; margin: 0 0 -12px -12px; border-radius: 50%; touch-action: manipulation; }
-.oui-dot::after { content: ""; position: absolute; inset: 8px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 2px var(--bg-1); transition: inset var(--quick) var(--ease); }
+.oui-dot::after { content: ""; position: absolute; inset: 8px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 2px var(--oui-surface); transition: inset var(--quick) var(--ease); }
 .oui-dot.on::after, .oui-dot:hover::after { inset: 6px; }
 .oui-hbars { display: flex; flex-direction: column; gap: 8px; }
-.oui-hrow { display: grid; grid-template-columns: minmax(80px, 30%) minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.oui-hrow { display: grid; grid-template-columns: minmax(80px, 32%) minmax(0, 1fr); gap: 10px; align-items: center; }
 .oui-hlabel { font-size: 12.5px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .oui-htrack { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.oui-htrack.stacked { flex-direction: row; gap: 0; }
-.oui-htrack.stacked .oui-hbar-line { display: contents; }
 .oui-hbar-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.oui-hbar { height: 14px; min-width: 2px; border-radius: 0 3px 3px 0; background: var(--c); opacity: 0.88; }
-.oui-pie { display: flex; flex-wrap: wrap; align-items: center; gap: 20px; }
-.oui-pie-svg { width: 160px; height: 160px; flex: none; }
-.oui-pie-svg path { fill: var(--c); stroke: var(--bg-1); stroke-width: 0.02; opacity: 0.88; cursor: pointer; }
+.oui-hbar-space { flex: 1; min-width: 0; display: flex; }
+.oui-hbar { flex: none; height: 14px; min-width: 2px; background: var(--c); opacity: 0.88; }
+.oui-hbar:first-child { border-radius: 3px 0 0 3px; }
+.oui-hbar:last-child { border-radius: 0 3px 3px 0; }
+.oui-hbar:only-child { border-radius: 3px; }
+.oui-hbar-line .oui-num { flex: none; min-width: 5ch; text-align: right; }
+.oui-pie { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 16px 20px; }
+.oui-pie-plot { position: relative; width: 160px; height: 160px; flex: none; }
+.oui-pie-svg { width: 100%; height: 100%; display: block; }
+.oui-pie-svg path { fill: var(--c); stroke: var(--oui-surface); stroke-width: 0.02; opacity: 0.88; cursor: pointer; }
 .oui-pie-svg path.on, .oui-pie-svg path:hover { opacity: 1; }
-.oui-pie-legend { flex: 1 1 200px; display: flex; flex-direction: column; min-width: 0; }
+.oui-pie-middle { position: absolute; inset: 0; padding: 0 36px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; pointer-events: none; }
+.oui-pie-middle strong { font-size: 18px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.oui-pie-middle span { max-width: 100%; font-size: 11px; color: var(--fg-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oui-pie-legend { flex: 1 1 220px; display: flex; flex-direction: column; min-width: 0; }
 .oui-pie-legend button { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 2px 6px; border-radius: var(--r-sm); text-align: left; font-size: 13px; }
 .oui-pie-legend button.on, .oui-pie-legend button:hover { background: var(--tint); }
 .oui-pie-label { flex: 1; min-width: 0; }
@@ -247,7 +385,7 @@
 @media (min-width: 641px) { .oui-input { font-size: 14px; } }
 .oui-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 textarea.oui-input { resize: vertical; }
-.oui-segmented { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px; border-radius: var(--r); background: var(--bg-2); border: 1px solid var(--border-soft); max-width: 100%; }
+.oui-segmented { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px; border-radius: var(--r); background: var(--bg-2); border: 1px solid var(--border-soft); max-width: 100%; align-self: flex-start; }
 .oui-segmented button { min-height: 36px; padding: 6px 12px; border-radius: var(--r-sm); font-size: 13px; color: var(--fg-dim); touch-action: manipulation; }
 .oui-segmented button.on { background: var(--bg-4); color: var(--fg-bright); }
 .oui-switch { display: inline-flex; align-items: center; gap: 10px; min-height: 40px; text-align: left; touch-action: manipulation; }
@@ -258,33 +396,88 @@ textarea.oui-input { resize: vertical; }
 .oui-slider { display: flex; align-items: center; gap: 12px; }
 .oui-slider input { flex: 1; min-width: 0; accent-color: var(--accent); height: 40px; }
 
+@container (min-width: 601px) {
+  .oui-plot.some .oui-bar-v, .oui-plot.some .oui-dot-v { display: block; }
+}
+
 @media (max-width: 640px) {
   .oui { --oui-pad: 14px; font-size: 15px; }
+}
+
+/* A narrow artifact: on a phone, or in a chat that shares the window with the code. */
+@container (max-width: 600px) {
   .oui-card { padding: 14px; }
   .oui-header h2 { font-size: 20px; }
-  .oui-lines code, .oui-md pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-  .oui-lines { display: block; }
-  .oui-ln { width: 3ch; padding: 0 6px 0 4px; }
-  .oui-flow.row { flex-direction: column; flex-wrap: nowrap; }
-  .oui-flow.row .oui-flow-node { flex: none; }
-  .oui-flow.row .oui-flow-arrow svg { transform: rotate(90deg); }
+  /* Two figures across, and a last one on its own takes the row. */
+  .oui-grid.metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .oui-grid.metrics > :last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .oui-metric { padding: 10px 12px; }
+  .oui-metric-value { font-size: 22px; }
+  /* Code wraps rather than scrolls: at half its indentation, and with what wraps set in
+     from where its line starts, so the shape of the code survives. */
+  .oui-lines { display: block; font-size: 12px; }
+  .oui-line code { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; padding-left: calc(var(--ind, 0) * 0.5ch + 2ch); text-indent: -2ch; }
+  /* The indentation is that padding, not spaces a long first word could wrap away from. */
+  .oui-ind { display: none; }
+  .oui-md pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .oui-ln { padding: 0 8px 0 6px; }
+  /* One number a line: the new one, or the old one of a line that's gone. */
+  .oui-ln.two { display: none; }
+  .oui-ln.one { display: block; }
+  /* A flow is a timeline (the rules of .oui-flow.column, above). */
+  .oui-flow.row { display: flex; gap: 0; }
+  .oui-flow.row .oui-flow-node { border: none; background: none; border-radius: 0; padding: 1px 0 14px 32px; }
+  .oui-flow.row .oui-flow-node:last-child { padding-bottom: 0; }
+  .oui-flow.row .oui-flow-node:not(:last-child)::after { left: 10px; top: 24px; bottom: 0; width: 2px; height: auto; border: none; background: var(--border); transform: none; }
+  .oui-flow.row .oui-flow-n { position: absolute; left: 0; top: 0; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--bg-3); color: var(--fg-dim); font-size: 11px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .oui-flow.row .oui-flow-node:not(.t-neutral) .oui-flow-n { background: var(--c); color: var(--on-accent); }
+  .oui-flow.row .oui-flow-node:not(.t-neutral) .oui-flow-label { color: var(--c); }
+  .oui-flow-label { font-size: 14px; }
   .oui-stack.row > * { flex-basis: 100%; }
+  /* A step's number sits by its title, and what it says takes the whole width. */
+  .oui-step { grid-template-columns: 24px minmax(0, 1fr); gap: 8px 10px; padding-bottom: 18px; }
+  .oui-step:not(:last-child)::before { display: none; }
+  .oui-step-n { width: 24px; height: 24px; font-size: 11.5px; }
+  .oui-step-body { display: contents; }
+  .oui-step-title { align-self: center; }
+  .oui-step-body > :not(.oui-step-title) { grid-column: 1 / -1; }
+  .oui-walk { padding: 12px; }
+  /* A list row's note goes under it. */
+  .oui-li-row { flex-wrap: wrap; gap: 2px 12px; }
+  .oui-li-main { flex-basis: 100%; }
+  .oui-li-meta { max-width: 100%; text-align: left; }
+  .oui-dg-node, .oui-dg-pass { width: calc(100% / var(--cols, 1) - 8px); }
+  .oui-dg-node { padding: 4px 6px; }
+  .oui-dg-label { font-size: 12px; }
+  .oui-seq-actor span { padding: 4px 6px; font-size: 12px; }
   .oui-plot { margin-left: 34px; height: 180px; }
-  .oui-xlabels { margin-left: 34px; }
+  .oui-xlabels, .oui-axis-title.x { margin-left: 34px; }
+  .oui-xlabels.at span.wide { display: none; }
   .oui-slot { padding: 0 3px; gap: 1px; }
-  /* Wide tables become a card a row, each cell under its column's name. */
+  /* Wide tables become a card a row: its first cell the card's title, the others beside
+     their column's name. */
   .oui-table-wrap:has(.stack) { border: none; overflow: visible; }
-  .oui-table.stack, .oui-table.stack tbody, .oui-table.stack tr, .oui-table.stack td { display: block; width: auto; }
+  .oui-table.stack, .oui-table.stack caption, .oui-table.stack tbody, .oui-table.stack tr, .oui-table.stack td { display: block; width: auto; }
+  .oui-table.stack caption { padding: 0 0 8px; }
   .oui-table.stack thead { display: none; }
-  .oui-table.stack tr { border: 1px solid var(--border-soft); border-radius: var(--r); padding: 6px 12px; margin-bottom: 8px; background: var(--bg-1); }
-  .oui-table.stack td { border: none; padding: 4px 0; text-align: left; }
-  .oui-table.stack td::before { content: attr(data-label); display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-faint); }
-  .oui-hrow { grid-template-columns: minmax(0, 1fr) auto; }
-  .oui-hrow .oui-hlabel { grid-column: 1 / -1; white-space: normal; }
+  .oui-table.stack tr { border: 1px solid var(--border-soft); border-radius: var(--r); padding: 8px 12px; margin-bottom: 8px; background: var(--bg-2); }
+  .oui-table.stack tr:last-child { margin-bottom: 0; }
+  .oui-table.stack td { position: relative; min-height: 26px; border: none; padding: 3px 0 3px 38%; text-align: left; white-space: normal; }
+  .oui-table.stack td:empty { display: none; }
+  .oui-table.stack td::before { content: attr(data-label); position: absolute; left: 0; top: 6px; width: 35%; font-family: var(--sans); font-size: 10.5px; font-weight: 650; line-height: 1.4; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .oui-table.stack td:first-child { padding: 0 0 6px; font-family: var(--sans); font-size: 14px; font-weight: 600; color: var(--fg-bright); }
+  .oui-table.stack td:first-child::before { display: none; }
+  .oui-hrow { grid-template-columns: minmax(0, 1fr); gap: 3px; }
+  .oui-hrow .oui-hlabel { white-space: normal; }
+  .oui-talk-you { margin-left: 16px; }
+  .oui-talk-tutor { margin-right: 0; }
+  .oui-lesson-count { display: none; }
+  .oui-lesson-nav { justify-content: space-between; }
+  .oui-lesson h2.oui-lesson-title { font-size: 20px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .oui *, .oui *::after { transition: none !important; }
+  .oui *, .oui *::after { transition: none !important; animation: none !important; }
 }
 
 /* lessons (src/lesson.rs): one part at a time, a rail of the parts, checks and a discussion */
@@ -310,7 +503,7 @@ textarea.oui-input { resize: vertical; }
 .oui-lesson-content { display: flex; flex-direction: column; gap: 14px; min-width: 0; font-size: 15px; line-height: 1.6; }
 .oui-lesson-checks, .oui-talk { display: flex; flex-direction: column; gap: 10px; padding-top: 14px; border-top: 1px solid var(--border-soft); }
 .oui-lesson-checks h3, .oui-talk h3 { margin: 0; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.07em; color: var(--fg-faint); }
-.oui-check { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--bg-1); }
+.oui-check { --oui-surface: var(--bg-1); display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--bg-1); }
 .oui-check.answered { border-color: rgba(79, 191, 122, 0.4); }
 .oui-check-q { display: flex; gap: 10px; align-items: flex-start; color: var(--fg-bright); font-weight: 550; }
 .oui-check-q .mark { flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 700; }
@@ -326,6 +519,8 @@ textarea.oui-input { resize: vertical; }
 .oui-quick { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 6px 12px 6px 6px; border-radius: var(--r); border: 1px solid var(--border); background: var(--bg); color: var(--fg); text-align: left; touch-action: manipulation; transition: all var(--quick) var(--ease); }
 .oui-quick:hover { border-color: var(--line); }
 .oui-quick .l { flex: none; width: 26px; height: 26px; border-radius: var(--r-sm); display: grid; place-items: center; background: var(--bg-3); font-size: 12px; font-weight: 650; color: var(--fg-dim); }
+.oui-quick.on { border-color: var(--accent); background: var(--accent-soft); }
+.oui-quick.on .l { background: var(--accent); color: var(--on-accent); }
 .oui-quick.right { border-color: rgba(79, 191, 122, 0.6); background: var(--add-bg); }
 .oui-quick.right .l { background: var(--added); color: var(--on-accent); }
 .oui-quick.wrong { border-color: rgba(224, 108, 117, 0.6); background: var(--del-bg); }
@@ -357,10 +552,3 @@ textarea.oui-input { resize: vertical; }
 .oui-lesson-nav { display: flex; align-items: center; gap: 10px; padding-top: 14px; border-top: 1px solid var(--border-soft); }
 .oui-lesson-count { flex: 1; text-align: center; font-size: 12px; color: var(--fg-faint); }
 .oui-lesson-offline { font-size: 12.5px; color: var(--fg-faint); margin: 0; }
-@media (max-width: 560px) {
-  .oui-talk-you { margin-left: 16px; }
-  .oui-talk-tutor { margin-right: 0; }
-  .oui-lesson-count { display: none; }
-  .oui-lesson-nav { justify-content: space-between; }
-  .oui-lesson h2.oui-lesson-title { font-size: 20px; }
-}

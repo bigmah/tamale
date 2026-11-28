@@ -7,11 +7,13 @@
 //! `openui-dioxus` crate in `dioxus/`), so an artifact is data, never a script.
 //!
 //! What's here: tokens ([`lex`]), statements and expressions ([`parse`]), evaluation against
-//! the `$state` ([`eval`]), the component library, and the text helpers the renderer lays
-//! out with ([`text`]). Tool calls (`Query`, `Mutation`, `@Run`) aren't supported: an
-//! artifact embeds its data.
+//! the `$state` ([`eval`]), the component library, and what the renderer lays out with: text
+//! ([`text`]), the colours of code ([`code`]) and where a diagram's boxes go ([`graph`]).
+//! Tool calls (`Query`, `Mutation`, `@Run`) aren't supported: an artifact embeds its data.
 
+pub mod code;
 pub mod eval;
+pub mod graph;
 pub mod lesson;
 pub mod lex;
 pub mod library;
@@ -136,7 +138,7 @@ mod tests {
 root = Card([header, chart, tabs])
 header = CardHeader("p95 down 38%", "after the cache fix")
 chart = BarChart(["Before", "After"], [Series("p95 ms", [420, 260])])
-tabs = Tabs([TabItem("a", "Why", TextContent("The **cache** was cold.")), TabItem("b", "Next", TextContent("Ship it"))])
+tabs = Tabs([TabItem("Why", TextContent("The **cache** was cold.")), TabItem("Next", TextContent("Ship it"))])
 "#;
 
     #[test]

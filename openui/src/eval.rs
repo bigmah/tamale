@@ -300,12 +300,15 @@ impl<'a> Eval<'a> {
             Expr::Bool(b) => Value::Bool(*b),
             Expr::Num(n) => Value::Num(*n),
             Expr::Str(s) => Value::Str(s.clone()),
-            // A reference that doesn't resolve drops out of a list rather than leave a gap.
+            // A reference that doesn't resolve drops out of a list rather than leave a gap. A
+            // `null` that was written stays: it's a table's empty cell or a chart's missing
+            // point, and what follows it keeps its place.
             Expr::Array(items) => Value::Array(
                 items
                     .iter()
-                    .map(|i| self.expr(i))
-                    .filter(|v| !v.is_null())
+                    .map(|i| (matches!(i, Expr::Null), self.expr(i)))
+                    .filter(|(written, v)| *written || !v.is_null())
+                    .map(|(_, v)| v)
                     .collect(),
             ),
             Expr::Object(kv) => {
@@ -322,16 +325,19 @@ impl<'a> Eval<'a> {
                 if crate::library::component(name).is_none() {
                     self.problem(format!("unknown component {name}"));
                 }
+                let mut values: Vec<Value> = args.iter().map(|a| self.expr(a)).collect();
+                let mut binds: Vec<Option<String>> = args
+                    .iter()
+                    .map(|a| match a {
+                        Expr::State(n) => Some(n.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                crate::library::normalize(name, &mut values, &mut binds);
                 Value::Node(Node {
                     name: name.clone(),
-                    args: args.iter().map(|a| self.expr(a)).collect(),
-                    binds: args
-                        .iter()
-                        .map(|a| match a {
-                            Expr::State(n) => Some(n.clone()),
-                            _ => None,
-                        })
-                        .collect(),
+                    args: values,
+                    binds,
                 })
             }
             Expr::Func(name, args) => self.func(name, args),
@@ -630,6 +636,14 @@ mod tests {
         );
         let Value::Node(n) = v else { panic!() };
         assert_eq!(n.arg("children").items().len(), 1);
+    }
+
+    #[test]
+    fn a_null_that_was_written_keeps_its_place() {
+        assert_eq!(
+            eval("x = [1, null, 3, missing]", "x"),
+            Value::Array(vec![Value::Num(1.0), Value::Null, Value::Num(3.0)])
+        );
     }
 
     #[test]

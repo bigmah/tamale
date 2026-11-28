@@ -298,30 +298,33 @@ body.chef .endbtn:hover { color: var(--deleted); border-color: rgba(224, 108, 11
 .blk { display: contents; }
 .prose > .blk:first-child > :first-child { margin-top: 0; }
 .prose > .blk:last-child > :last-child { margin-bottom: 0; }
-.prose p, .prose ul, .prose ol, .prose blockquote, .prose .codeblock, .prose .table { margin: 0 0 0.8em; }
-.prose p { white-space: pre-line; }
-.prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 {
+/* These stop at an artifact (.oui), which is drawn inside a reply but styles its own text
+   (openui.css); they start again in a lesson's replies, which are prose inside one. So
+   each ends in `:where(:not(.oui *), .oui .prose *)`, which adds nothing to its weight. */
+.prose :is(p, ul, ol, blockquote):where(:not(.oui *), .oui .prose *), .prose .codeblock, .prose .table { margin: 0 0 0.8em; }
+.prose p:where(:not(.oui *), .oui .prose *) { white-space: pre-line; }
+.prose :is(h1, h2, h3, h4, h5, h6):where(:not(.oui *), .oui .prose *) {
   color: var(--fg-bright);
   font-weight: 620;
   line-height: 1.3;
   margin: 1.2em 0 0.5em;
   letter-spacing: -0.01em;
 }
-.prose h1 { font-size: 1.35em; }
-.prose h2 { font-size: 1.2em; }
-.prose h3 { font-size: 1.07em; }
-.prose h4, .prose h5, .prose h6 { font-size: 1em; color: var(--fg); }
-.prose strong { color: var(--fg-bright); font-weight: 620; }
-.prose a { color: var(--accent); text-decoration: none; }
-.prose a:hover { text-decoration: underline; }
-.prose ul, .prose ol { padding-left: 1.4em; }
-.prose li { margin: 0.2em 0; }
-.prose li > p { margin: 0 0 0.3em; }
-.prose li::marker { color: var(--fg-faint); }
-.prose li:has(> input[type="checkbox"]) { list-style: none; margin-left: -1.3em; }
+.prose h1:where(:not(.oui *), .oui .prose *) { font-size: 1.35em; }
+.prose h2:where(:not(.oui *), .oui .prose *) { font-size: 1.2em; }
+.prose h3:where(:not(.oui *), .oui .prose *) { font-size: 1.07em; }
+.prose :is(h4, h5, h6):where(:not(.oui *), .oui .prose *) { font-size: 1em; color: var(--fg); }
+.prose strong:where(:not(.oui *), .oui .prose *) { color: var(--fg-bright); font-weight: 620; }
+.prose a:where(:not(.oui *), .oui .prose *) { color: var(--accent); text-decoration: none; }
+.prose a:where(:not(.oui *), .oui .prose *):hover { text-decoration: underline; }
+.prose :is(ul, ol):where(:not(.oui *), .oui .prose *) { padding-left: 1.4em; }
+.prose li:where(:not(.oui *), .oui .prose *) { margin: 0.2em 0; }
+.prose li > p:where(:not(.oui *), .oui .prose *) { margin: 0 0 0.3em; }
+.prose li:where(:not(.oui *), .oui .prose *)::marker { color: var(--fg-faint); }
+.prose li:where(:not(.oui *), .oui .prose *):has(> input[type="checkbox"]) { list-style: none; margin-left: -1.3em; }
 .prose input[type="checkbox"] { accent-color: var(--accent); margin-right: 4px; vertical-align: -1px; }
-.prose hr { border: none; border-top: 1px solid var(--border); margin: 1.4em 0; }
-.prose blockquote { border-left: 2px solid var(--line); padding: 0 0 0 12px; color: var(--fg-dim); }
+.prose hr:where(:not(.oui *), .oui .prose *) { border: none; border-top: 1px solid var(--border); margin: 1.4em 0; }
+.prose blockquote:where(:not(.oui *), .oui .prose *) { border-left: 2px solid var(--line); padding: 0 0 0 12px; color: var(--fg-dim); }
 .prose blockquote.callout { border-radius: 0 var(--r) var(--r) 0; padding: 8px 12px; background: var(--tint); }
 .callout-title { font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 2px; }
 .callout.note { border-color: var(--accent); } .callout.note .callout-title { color: var(--accent); }
@@ -330,7 +333,7 @@ body.chef .endbtn:hover { color: var(--deleted); border-color: rgba(224, 108, 11
 .callout.warning { border-color: var(--modified); } .callout.warning .callout-title { color: var(--modified); }
 .callout.caution { border-color: var(--deleted); } .callout.caution .callout-title { color: var(--deleted); }
 
-.prose code, .msg.user code, .msg.info code, .msg.error code {
+.prose code:where(:not(.oui *), .oui .prose *), .msg.user code, .msg.info code, .msg.error code {
   font-family: var(--mono);
   font-size: 0.86em;
   background: var(--bg-3);
@@ -468,11 +471,11 @@ body.artifact-open .scroller { overflow: hidden; }
 body.artifact-open .app::after { content: ""; position: fixed; inset: 0; z-index: 49; }
 
 .table { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--r-lg); }
-.prose table { border-collapse: collapse; width: 100%; font-size: 13px; }
-.prose th, .prose td { padding: 6px 12px; border-bottom: 1px solid var(--border-soft); text-align: left; vertical-align: top; }
-.prose th { background: var(--bg-2); color: var(--fg-bright); font-weight: 600; }
-.prose tr:last-child td { border-bottom: none; }
-.prose tbody tr:nth-child(even) td { background: var(--tint); }
+.prose table:where(:not(.oui *), .oui .prose *) { border-collapse: collapse; width: 100%; font-size: 13px; }
+.prose :is(th, td):where(:not(.oui *), .oui .prose *) { padding: 6px 12px; border-bottom: 1px solid var(--border-soft); text-align: left; vertical-align: top; }
+.prose th:where(:not(.oui *), .oui .prose *) { background: var(--bg-2); color: var(--fg-bright); font-weight: 600; }
+.prose tr:last-child td:where(:not(.oui *), .oui .prose *) { border-bottom: none; }
+.prose tbody tr:nth-child(even) td:where(:not(.oui *), .oui .prose *) { background: var(--tint); }
 .al-c { text-align: center !important; }
 .al-r { text-align: right !important; }
 

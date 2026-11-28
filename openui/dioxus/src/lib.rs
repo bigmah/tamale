@@ -6,9 +6,12 @@
 //! A document that's still streaming in is drawn as far as it has come.
 
 use dioxus::prelude::*;
+use openui::code;
 use openui::text::{self as t, DiffKind, Span};
 use openui::{Act, Eval, Node, State, Value};
 
+mod charts;
+mod diagram;
 mod lesson;
 pub use lesson::Exchange;
 
@@ -57,6 +60,8 @@ struct Ctx {
     title: Memo<String>,
     /// For a lesson: what the reader sent from it and the agent's replies.
     talk: Memo<Vec<Exchange>>,
+    /// Whether the page opens files: then a file's name is a link to it (see [`path_link`]).
+    paths: bool,
 }
 
 /// The form a part is in, for the buttons that send its values.
@@ -72,13 +77,16 @@ struct FormInfo {
 struct Tried(Signal<bool>);
 
 /// An artifact. `send` is how its actions talk to the agent; `talk`, for a lesson, is what
-/// the reader sent from it and the replies (see `openui::lesson`).
+/// the reader sent from it and the replies (see `openui::lesson`). With `paths`, the files
+/// it names are marked as links (`.pathlink`, with the path in `data-path`) for the page to
+/// open: tamale's web UI shows them in its code view.
 #[component]
 pub fn OpenUi(
     source: String,
     done: bool,
     send: Option<Callback<String>>,
     #[props(default)] talk: Vec<Exchange>,
+    #[props(default)] paths: bool,
 ) -> Element {
     let program = use_memo(use_reactive!(|source| openui::parse(&source)));
     let title = use_memo(use_reactive!(
@@ -97,6 +105,7 @@ pub fn OpenUi(
         send,
         title,
         talk,
+        paths,
     });
     let program = program.read();
     let st = state.read();
@@ -182,8 +191,19 @@ fn view_node(n: &Node, cx: &Cx) -> Element {
                 w if w >= 80.0 => w.min(480.0),
                 _ => 220.0,
             };
+            // A row of figures lays itself out: two across on a phone, never one left over.
+            let children = n.arg("children").items();
+            let metrics = !children.is_empty()
+                && children
+                    .iter()
+                    .all(|c| matches!(c, Value::Node(m) if m.name == "Metric"));
+            let class = if metrics {
+                "oui-grid metrics"
+            } else {
+                "oui-grid"
+            };
             rsx! {
-                div { class: "oui-grid", style: "--min: {min}px",
+                div { class, style: "--min: {min}px",
                     {view(n.arg("children"), cx)}
                 }
             }
@@ -213,6 +233,7 @@ fn view_node(n: &Node, cx: &Cx) -> Element {
                 }
             }
         },
+        "Steps" if n.str("mode") == "walk" => rsx! { Walk { node, cx: cx2 } },
         "Steps" => rsx! {
             ol { class: "oui-steps",
                 for (i, item) in nodes(n.arg("items"), "StepsItem").into_iter().enumerate() {
@@ -255,16 +276,48 @@ fn view_node(n: &Node, cx: &Cx) -> Element {
                 _ => 1,
             };
             let code = n.str("code");
-            let label = n.opt("filename").unwrap_or_else(|| n.str("language"));
+            let filename = n.opt("filename");
+            let language = n.str("language");
+            // The lines as shown: without the indentation they share, coloured by the
+            // language, or by the file's when the language doesn't say.
+            let shown = t::dedent(code.trim_matches('\n'));
+            let lines = match code::highlight(&language, &shown) {
+                plain if plain.iter().flatten().all(|(k, _)| *k == code::Kind::Plain) => {
+                    match &filename {
+                        Some(f) => code::highlight(&code::language_of(f), &shown),
+                        None => plain,
+                    }
+                }
+                coloured => coloured,
+            };
+            let marks = t::line_set(
+                &n.arg("highlight")
+                    .items()
+                    .iter()
+                    .map(Value::text)
+                    .collect::<Vec<_>>(),
+            );
+            let marked = |no: usize| marks.iter().any(|(a, b)| *a <= no && no <= *b);
+            let has_marks = (0..lines.len()).any(|i| marked(start + i));
+            let width = (start + lines.len()).to_string().len().max(2);
             rsx! {
-                figure { class: "oui-code",
-                    if !label.is_empty() { figcaption { "{label}" } }
+                figure { class: if has_marks { "oui-code has-marks" } else { "oui-code" }, style: "--ln: {width}ch",
+                    match &filename {
+                        Some(f) => rsx! { figcaption { {path_link(f, Some(start).filter(|s| *s > 1))} } },
+                        None if !language.is_empty() => rsx! { figcaption { "{language}" } },
+                        None => rsx! {},
+                    }
                     CopyButton { text: code.clone() }
                     div { class: "oui-lines",
-                        for (i, line) in code.trim_end_matches('\n').split('\n').enumerate() {
-                            div { class: "oui-line",
-                                span { class: "oui-ln", "{start + i}" }
-                                code { "{line}" }
+                        for (i, runs) in lines.into_iter().enumerate() {
+                            {
+                                let ind = indent_of(&runs);
+                                rsx! {
+                                    div { class: if marked(start + i) { "oui-line mark" } else { "oui-line" },
+                                        span { class: "oui-ln", "{start + i}" }
+                                        code { style: "--ind: {ind}", {code_runs(runs)} }
+                                    }
+                                }
                             }
                         }
                     }
@@ -272,18 +325,33 @@ fn view_node(n: &Node, cx: &Cx) -> Element {
             }
         }
         "Diff" => {
+            let file = n.str("file");
             let rows = t::diff_rows(&n.str("patch"));
+            let language = code::language_of(&file);
             let (adds, dels) = rows.iter().fold((0, 0), |(a, d), r| match r.kind {
                 DiffKind::Add => (a + 1, d),
                 DiffKind::Del => (a, d + 1),
                 _ => (a, d),
             });
+            // Lines are numbered only when the hunks said where they are.
+            let numbered = rows.iter().any(|r| r.old.is_some() || r.new.is_some());
+            let width = rows
+                .iter()
+                .filter_map(|r| r.old.max(r.new))
+                .max()
+                .map_or(2, |n| n.to_string().len().max(2));
+            // Where the first change is, for the link to open the file at.
+            let first = rows
+                .iter()
+                .find(|r| matches!(r.kind, DiffKind::Add | DiffKind::Del))
+                .and_then(|r| r.new.or(r.old))
+                .map(|l| l as usize);
             rsx! {
-                figure { class: "oui-diff",
+                figure { class: if numbered { "oui-diff" } else { "oui-diff nonum" }, style: "--ln: {width}ch",
                     figcaption {
-                        span { class: "oui-diff-file", "{n.str(\"file\")}" }
-                        span { class: "oui-add", "+{adds}" }
-                        span { class: "oui-del", "−{dels}" }
+                        span { class: "oui-diff-file", {path_link(&file, first)} }
+                        if adds > 0 { span { class: "oui-add", "+{adds}" } }
+                        if dels > 0 { span { class: "oui-del", "−{dels}" } }
                     }
                     if let Some(note) = n.opt("note") { div { class: "oui-diff-note", {rich(&note)} } }
                     div { class: "oui-lines",
@@ -294,18 +362,29 @@ fn view_node(n: &Node, cx: &Cx) -> Element {
                                     DiffKind::Del => "del",
                                     DiffKind::Hunk => "hunk",
                                     DiffKind::Meta => "meta",
+                                    DiffKind::Gap => "gap",
                                     DiffKind::Context => "ctx",
                                 };
                                 let sign = match r.kind { DiffKind::Add => "+", DiffKind::Del => "−", _ => "" };
                                 let old = r.old.map(|o| o.to_string()).unwrap_or_default();
                                 let new = r.new.map(|o| o.to_string()).unwrap_or_default();
-                                rsx! {
-                                    div { class: "oui-line d-{kind}",
-                                        span { class: "oui-ln", "{old}" }
-                                        span { class: "oui-ln", "{new}" }
-                                        span { class: "oui-sign", "{sign}" }
-                                        code { "{r.text}" }
-                                    }
+                                // The one number a narrow screen has room for.
+                                let one = if new.is_empty() { old.clone() } else { new.clone() };
+                                let runs = code::highlight_line(&language, &r.text);
+                                let ind = indent_of(&runs);
+                                match r.kind {
+                                    DiffKind::Hunk => rsx! { div { class: "oui-line d-hunk", code { {hunk_label(&r.text)} } } },
+                                    DiffKind::Gap => rsx! { div { class: "oui-line d-gap", "aria-label": "Lines left out", code { "⋯" } } },
+                                    DiffKind::Meta => rsx! { div { class: "oui-line d-meta", code { "{r.text}" } } },
+                                    _ => rsx! {
+                                        div { class: "oui-line d-{kind}",
+                                            span { class: "oui-ln two", "{old}" }
+                                            span { class: "oui-ln two", "{new}" }
+                                            span { class: "oui-ln one", "{one}" }
+                                            span { class: "oui-sign", "{sign}" }
+                                            code { style: "--ind: {ind}", {code_runs(runs)} }
+                                        }
+                                    },
                                 }
                             }
                         }
@@ -318,7 +397,7 @@ fn view_node(n: &Node, cx: &Cx) -> Element {
             let tone = n.opt("tone").unwrap_or_else(|| "neutral".into());
             rsx! {
                 div { class: "oui-metric",
-                    div { class: "oui-metric-value", "{n.str(\"value\")}" }
+                    div { class: "oui-metric-value", "{figure(n.arg(\"value\"))}" }
                     div { class: "oui-metric-label",
                         span { {rich(&n.str("label"))} }
                         if let Some(d) = n.opt("delta") { span { class: "oui-pill t-{tone}", "{d}" } }
@@ -354,7 +433,7 @@ fn view_node(n: &Node, cx: &Cx) -> Element {
         "Tag" => tag(&n.str("text"), &n.opt("variant").unwrap_or_default()),
         "TagBlock" => rsx! {
             div { class: "oui-tags",
-                for t in n.arg("tags").items() {
+                for t in n.arg("tags").items().into_iter().filter(|t| !t.is_null()) {
                     match t {
                         Value::Node(tn) => view_node(&tn, cx),
                         other => tag(&other.text(), ""),
@@ -363,8 +442,16 @@ fn view_node(n: &Node, cx: &Cx) -> Element {
             }
         },
         "ListBlock" => {
-            let variant = n.opt("variant").unwrap_or_else(|| "bullet".into());
-            let items = n.arg("items").items();
+            let variant = match n.str("variant").as_str() {
+                v @ ("number" | "plain" | "pros" | "cons" | "check") => v.to_string(),
+                _ => "bullet".into(),
+            };
+            let items: Vec<Value> = n
+                .arg("items")
+                .items()
+                .into_iter()
+                .filter(|i| !i.is_null())
+                .collect();
             let body = rsx! {
                 for item in items {
                     match item {
@@ -395,23 +482,21 @@ fn view_node(n: &Node, cx: &Cx) -> Element {
                 "row"
             };
             let steps = nodes(n.arg("nodes"), "FlowNode");
-            let last = steps.len().saturating_sub(1);
+            // The arrows between the nodes, and the timeline's rail, are the stylesheet's.
             rsx! {
                 div { class: "oui-flow {dir}",
                     for (i, f) in steps.into_iter().enumerate() {
                         div { class: "oui-flow-node t-{f.opt(\"tone\").unwrap_or_else(|| \"neutral\".into())}",
+                            span { class: "oui-flow-n", "aria-hidden": "true", "{i + 1}" }
                             div { class: "oui-flow-label", {rich(&f.str("label"))} }
                             if let Some(d) = f.opt("detail") { div { class: "oui-flow-detail", {rich(&d)} } }
-                        }
-                        if i < last {
-                            div { class: "oui-flow-arrow", "aria-hidden": "true",
-                                svg { view_box: "0 0 24 24", path { d: "M5 12h14M13 6l6 6-6 6" } }
-                            }
                         }
                     }
                 }
             }
         }
+        "Diagram" => rsx! { diagram::Diagram { node } },
+        "Sequence" => rsx! { diagram::Sequence { node } },
         "FlowNode" => view_node(
             &Node {
                 name: "Flow".into(),
@@ -430,10 +515,10 @@ fn view_node(n: &Node, cx: &Cx) -> Element {
             }
         }
         // ------------------------------------------------------------ charts
-        "BarChart" => rsx! { BarChart { node } },
-        "HorizontalBarChart" => rsx! { HBarChart { node } },
-        "LineChart" | "AreaChart" => rsx! { LineChart { node } },
-        "PieChart" => rsx! { PieChart { node } },
+        "BarChart" => rsx! { charts::BarChart { node } },
+        "HorizontalBarChart" => rsx! { charts::HBarChart { node } },
+        "LineChart" | "AreaChart" => rsx! { charts::LineChart { node } },
+        "PieChart" => rsx! { charts::PieChart { node } },
         // ------------------------------------------------------------ interactive
         "Button" => rsx! { Button { node, cx: cx2 } },
         "Buttons" => {
@@ -496,10 +581,16 @@ fn content(v: &Value, cx: &Cx) -> Element {
 /// Text with inline markdown.
 fn rich(s: &str) -> Element {
     let spans = t::inline(s);
-    rsx! { {spans.into_iter().map(span)} }
+    let paths = links();
+    rsx! { {spans.into_iter().map(|s| span(s, paths))} }
 }
 
-fn span(s: Span) -> Element {
+/// Whether the page opens the files an artifact names.
+fn links() -> bool {
+    try_consume_context::<Ctx>().is_some_and(|c| c.paths)
+}
+
+fn span(s: Span, paths: bool) -> Element {
     let Span {
         text,
         bold,
@@ -507,20 +598,107 @@ fn span(s: Span) -> Element {
         code,
         link,
     } = s;
-    let inner = if code {
-        rsx! { code { "{text}" } }
-    } else if bold {
-        rsx! { strong { "{text}" } }
-    } else if italic {
-        rsx! { em { "{text}" } }
+    let mut inner = if code {
+        code_span(&text, paths)
     } else {
         rsx! { "{text}" }
     };
+    if italic {
+        inner = rsx! { em { {inner} } };
+    }
+    if bold {
+        inner = rsx! { strong { {inner} } };
+    }
     match link {
         Some(href) => {
             rsx! { a { href: "{href}", target: "_blank", rel: "noopener noreferrer", {inner} } }
         }
         None => inner,
+    }
+}
+
+/// A name in code's type. One that names a file opens it, where the page can (`paths`).
+fn code_span(text: &str, paths: bool) -> Element {
+    match t::file_path(text).filter(|_| paths) {
+        Some((path, _)) => rsx! {
+            code { class: "pathlink", "data-path": "{text}", title: "Open {path} in the code view", "{text}" }
+        },
+        None => rsx! { code { "{text}" } },
+    }
+}
+
+/// A file's name, as the head of its code or its diff: a link to the file (at `line`, when
+/// it's known) where the page opens files.
+fn path_link(file: &str, line: Option<usize>) -> Element {
+    let known = t::file_path(file).filter(|_| links());
+    match known {
+        Some((path, at)) => {
+            let to = match line.filter(|_| at.is_none()) {
+                Some(l) => format!("{path}:{l}"),
+                None => file.to_string(),
+            };
+            rsx! { span { class: "pathlink", "data-path": "{to}", title: "Open {path} in the code view", "{file}" } }
+        }
+        None => rsx! { "{file}" },
+    }
+}
+
+/// How far a line of code is indented, in characters: the width of the whitespace it
+/// starts with, which [`code_runs`] sets apart.
+fn indent_of(runs: &[code::Run]) -> usize {
+    match runs.first() {
+        Some((code::Kind::Plain, text)) => t::indent_width(text),
+        _ => 0,
+    }
+}
+
+/// A line of code in its colours. Its indentation is a part of its own, which a narrow
+/// artifact draws as half as much padding (see `.oui-ind`).
+fn code_runs(mut runs: Vec<code::Run>) -> Element {
+    let indent = match runs.first_mut() {
+        Some((code::Kind::Plain, text)) => {
+            let at = text.len() - text.trim_start_matches([' ', '\t']).len();
+            let indent: String = text.drain(..at).collect();
+            Some(indent).filter(|i| !i.is_empty())
+        }
+        _ => None,
+    };
+    rsx! {
+        if let Some(indent) = indent { span { class: "oui-ind", "{indent}" } }
+        for (kind, text) in runs {
+            if kind == code::Kind::Plain { "{text}" } else { span { class: "t-{kind.class()}", "{text}" } }
+        }
+    }
+}
+
+/// A hunk's header as a reader wants it: where it is, without the counts.
+/// `@@ -40,7 +40,9 @@ impl Link {` reads `impl Link {`, or `Line 40` when it names nothing.
+fn hunk_label(header: &str) -> String {
+    let rest = header.trim_start_matches('@').trim();
+    let (range, context) = match rest.split_once("@@") {
+        Some((range, context)) => (range.trim(), context.trim()),
+        None => ("", rest),
+    };
+    if !context.is_empty() {
+        return context.to_string();
+    }
+    let line = range
+        .split_whitespace()
+        .find_map(|p| p.strip_prefix('+'))
+        .and_then(|p| p.split(',').next())
+        .filter(|l| l.parse::<u32>().is_ok());
+    match line {
+        Some(l) => format!("Line {l}"),
+        // A header that names its place in words: `@@ fn read @@`.
+        None => range.to_string(),
+    }
+}
+
+/// A figure as a metric or a table shows it: a number's digits grouped from 10,000 up.
+fn figure(v: &Value) -> String {
+    match v {
+        Value::Num(n) => t::grouped(*n),
+        other => other.text(),
     }
 }
 
@@ -537,7 +715,14 @@ fn markdown(md: &str) -> Element {
                     t::Block::Quote(q) => rsx! { blockquote { {rich(&q)} } },
                     t::Block::List { ordered: true, items } => rsx! { ol { for i in items { li { {rich(&i)} } } } },
                     t::Block::List { ordered: false, items } => rsx! { ul { for i in items { li { {rich(&i)} } } } },
-                    t::Block::Code { code, .. } => rsx! { pre { code { "{code}" } } },
+                    t::Block::Code { lang, code } => rsx! {
+                        pre { code {
+                            for (i, runs) in code::highlight(&lang, &code).into_iter().enumerate() {
+                                if i > 0 { "\n" }
+                                {code_runs(runs)}
+                            }
+                        } }
+                    },
                 }
             }
         }
@@ -559,13 +744,14 @@ fn table(n: &Node) -> Element {
     let rows = data.iter().map(Vec::len).max().unwrap_or(0);
     let labels: Vec<String> = cols.iter().map(|c| c.str("label")).collect();
     let types: Vec<String> = cols.iter().map(|c| c.str("type")).collect();
+    let paths = links();
     // Wide tables become cards on phones; narrow ones fit as they are.
     let stack = if cols.len() > 3 { "stack" } else { "" };
     rsx! {
         div { class: "oui-table-wrap",
             table { class: "oui-table {stack}",
                 if let Some(c) = n.opt("caption") { caption { {rich(&c)} } }
-                thead { tr { for (l, ty) in labels.iter().zip(&types) { th { class: "c-{ty}", "{l}" } } } }
+                thead { tr { for (l, ty) in labels.iter().zip(&types) { th { class: "c-{ty}", {rich(l)} } } } }
                 tbody {
                     for r in 0..rows {
                         tr {
@@ -576,9 +762,12 @@ fn table(n: &Node) -> Element {
                                     let label = labels[c].clone();
                                     rsx! {
                                         td { class: "c-{ty}", "data-label": "{label}",
-                                            match ty.as_str() {
-                                                "code" => rsx! { code { "{v.text()}" } },
-                                                "tag" => tag(&v.text(), ""),
+                                            match (&v, ty.as_str()) {
+                                                (Value::Null, _) => rsx! {},
+                                                (Value::Node(cell), _) => view_node(cell, &Cx::default()),
+                                                (_, "code") => code_span(&v.text(), paths),
+                                                (_, "tag") => tag(&v.text(), ""),
+                                                (_, "number") => rsx! { "{figure(&v)}" },
                                                 _ => rich(&v.text()),
                                             }
                                         }
@@ -622,6 +811,50 @@ fn Tabs(node: Node, cx: Cx) -> Element {
             }
             if let Some(item) = items.get(current) {
                 div { class: "oui-tabpanel", role: "tabpanel", {content(item.arg("content"), &cx)} }
+            }
+        }
+    }
+}
+
+/// Steps one at a time (`Steps(items, "walk")`): the reader moves through them, so each
+/// step's state is what they're looking at before they see the next.
+#[component]
+fn Walk(node: Node, cx: Cx) -> Element {
+    let items = nodes(node.arg("items"), "StepsItem");
+    let mut at = use_signal(|| 0usize);
+    let count = items.len();
+    let current = at().min(count.saturating_sub(1));
+    let Some(item) = items.get(current) else {
+        return rsx! {};
+    };
+    rsx! {
+        div { class: "oui-walk",
+            onkeydown: move |e: KeyboardEvent| match e.key() {
+                Key::ArrowRight if current + 1 < count => at.set(current + 1),
+                Key::ArrowLeft if current > 0 => at.set(current - 1),
+                _ => {}
+            },
+            div { class: "oui-walk-bar",
+                for i in 0..count {
+                    button {
+                        class: if i == current { "on" } else if i < current { "seen" } else { "" },
+                        "aria-label": "Step {i + 1}",
+                        "aria-current": if i == current { "step" } else { "false" },
+                        onclick: move |_| at.set(i),
+                    }
+                }
+            }
+            div { key: "{current}", class: "oui-walk-step",
+                div { class: "oui-walk-title",
+                    span { class: "oui-step-n", "{current + 1}" }
+                    span { {rich(&item.str("title"))} }
+                    span { class: "oui-walk-of", "of {count}" }
+                }
+                {content(item.arg("details"), &cx)}
+            }
+            div { class: "oui-walk-nav",
+                button { class: "oui-btn v-secondary", disabled: current == 0, onclick: move |_| at.set(current.saturating_sub(1)), "← Back" }
+                button { class: "oui-btn v-primary", disabled: current + 1 >= count, onclick: move |_| at.set(current + 1), "Next →" }
             }
         }
     }
@@ -1027,345 +1260,5 @@ fn Control(node: Node) -> Element {
                 }
             }
         }
-    }
-}
-
-// ---------------------------------------------------------------- charts
-
-/// Labels and each series' name and values.
-fn chart_data(node: &Node) -> (Vec<String>, Vec<(String, Vec<f64>)>) {
-    let labels: Vec<String> = node.arg("labels").items().iter().map(Value::text).collect();
-    let series = nodes(node.arg("series"), "Series")
-        .iter()
-        .map(|s| {
-            (
-                s.str("name"),
-                s.arg("values").items().iter().map(Value::num).collect(),
-            )
-        })
-        .collect();
-    (labels, series)
-}
-
-fn legend(series: &[(String, Vec<f64>)]) -> Element {
-    rsx! {
-        if series.len() > 1 {
-            div { class: "oui-legend",
-                for (i, (name, _)) in series.iter().enumerate() {
-                    span { span { class: "oui-swatch c{i % 6}" } "{name}" }
-                }
-            }
-        }
-    }
-}
-
-/// The line above a chart that says what was tapped.
-fn readout(
-    picked: Option<(usize, usize)>,
-    labels: &[String],
-    series: &[(String, Vec<f64>)],
-) -> Element {
-    let text = picked.and_then(|(l, s)| {
-        let (name, values) = series.get(s)?;
-        let v = values.get(l)?;
-        let label = labels.get(l).cloned().unwrap_or_default();
-        Some(if series.len() > 1 {
-            format!("{label} · {name}: {}", openui::eval::num_text(*v))
-        } else {
-            format!("{label}: {}", openui::eval::num_text(*v))
-        })
-    });
-    let text = text.unwrap_or_default();
-    rsx! { div { class: "oui-readout", "aria-live": "polite", "{text}" } }
-}
-
-fn y_axis(ticks: &[f64], pct: impl Fn(f64) -> f64) -> Element {
-    rsx! {
-        for t in ticks {
-            div { class: "oui-gridline", style: "bottom: {pct(*t)}%",
-                span { "{t::short_num(*t)}" }
-            }
-        }
-    }
-}
-
-#[component]
-fn BarChart(node: Node) -> Element {
-    let (labels, series) = chart_data(&node);
-    let stacked = node.str("variant") == "stacked";
-    let mut picked = use_signal(|| None::<(usize, usize)>);
-    let n = labels
-        .len()
-        .max(series.iter().map(|s| s.1.len()).max().unwrap_or(0));
-    let at = |s: &(String, Vec<f64>), i: usize| s.1.get(i).copied().unwrap_or(0.0);
-    let (mut lo, mut hi) = (0f64, 0f64);
-    for i in 0..n {
-        if stacked {
-            hi = hi.max(series.iter().map(|s| at(s, i).max(0.0)).sum());
-            lo = lo.min(series.iter().map(|s| at(s, i).min(0.0)).sum());
-        } else {
-            for s in &series {
-                hi = hi.max(at(s, i));
-                lo = lo.min(at(s, i));
-            }
-        }
-    }
-    let (ticks, bottom, top) = t::ticks(lo, hi);
-    let pct = move |v: f64| (v - bottom) / (top - bottom) * 100.0;
-    let zero = pct(0.0);
-    rsx! {
-        figure { class: "oui-chart",
-            {readout(picked(), &labels, &series)}
-            div { class: "oui-plot",
-                {y_axis(&ticks, pct)}
-                div { class: "oui-bars",
-                    for i in 0..n {
-                        div { class: "oui-slot",
-                            if stacked {
-                                div { class: "oui-col",
-                                    {
-                                        let mut up = 0.0;
-                                        let mut down = 0.0;
-                                        let segs: Vec<(usize, f64, f64)> = series.iter().enumerate().map(|(s, data)| {
-                                            let v = at(data, i);
-                                            let (from, to) = if v >= 0.0 { let f = up; up += v; (f, up) } else { let f = down; down += v; (down, f) };
-                                            (s, pct(from), pct(to) - pct(from))
-                                        }).collect();
-                                        rsx! {
-                                            for (s, b, h) in segs {
-                                                button { class: "oui-bar c{s % 6}", style: "bottom: {b}%; height: {h}%",
-                                                    "aria-label": "{labels.get(i).cloned().unwrap_or_default()}: {at(&series[s], i)}",
-                                                    onclick: move |_| picked.set(Some((i, s))),
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            } else {
-                                for (s, data) in series.iter().enumerate() {
-                                    {
-                                        let v = at(data, i);
-                                        let (b, h) = if v >= 0.0 { (zero, pct(v) - zero) } else { (pct(v), zero - pct(v)) };
-                                        let on = picked() == Some((i, s));
-                                        rsx! {
-                                            div { class: "oui-col",
-                                                button { class: if on { "oui-bar on c{s % 6}" } else { "oui-bar c{s % 6}" },
-                                                    style: "bottom: {b}%; height: {h.max(0.4)}%",
-                                                    "aria-label": "{labels.get(i).cloned().unwrap_or_default()}: {v}",
-                                                    onclick: move |_| picked.set(Some((i, s))),
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            div { class: "oui-xlabels", for l in labels.iter() { span { title: "{l}", "{l}" } } }
-            {axis_titles(&node)}
-            {legend(&series)}
-        }
-    }
-}
-
-fn axis_titles(node: &Node) -> Element {
-    let (x, y) = (node.str("xLabel"), node.str("yLabel"));
-    rsx! {
-        if !x.is_empty() || !y.is_empty() {
-            div { class: "oui-axis-titles",
-                span { "{y}" }
-                span { "{x}" }
-            }
-        }
-    }
-}
-
-#[component]
-fn HBarChart(node: Node) -> Element {
-    let (labels, series) = chart_data(&node);
-    let stacked = node.str("variant") == "stacked";
-    let at = |s: &(String, Vec<f64>), i: usize| s.1.get(i).copied().unwrap_or(0.0).max(0.0);
-    let n = labels.len();
-    let top = (0..n)
-        .map(|i| {
-            if stacked {
-                series.iter().map(|s| at(s, i)).sum::<f64>()
-            } else {
-                series.iter().map(|s| at(s, i)).fold(0.0, f64::max)
-            }
-        })
-        .fold(0.0, f64::max)
-        .max(f64::MIN_POSITIVE);
-    rsx! {
-        figure { class: "oui-chart",
-            div { class: "oui-hbars",
-                for i in 0..n {
-                    div { class: "oui-hrow",
-                        div { class: "oui-hlabel", title: "{labels[i]}", "{labels[i]}" }
-                        div { class: if stacked { "oui-htrack stacked" } else { "oui-htrack" },
-                            for (s, data) in series.iter().enumerate() {
-                                {
-                                    let v = at(data, i);
-                                    let w = v / top * 100.0;
-                                    rsx! {
-                                        div { class: "oui-hbar-line",
-                                            div { class: "oui-hbar c{s % 6}", style: "width: {w}%" }
-                                            if !stacked { span { class: "oui-num", "{t::short_num(v)}" } }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if stacked {
-                            span { class: "oui-num", "{t::short_num(series.iter().map(|s| at(s, i)).sum())}" }
-                        }
-                    }
-                }
-            }
-            {legend(&series)}
-        }
-    }
-}
-
-#[component]
-fn LineChart(node: Node) -> Element {
-    let (labels, series) = chart_data(&node);
-    let area = node.name == "AreaChart";
-    let mut picked = use_signal(|| None::<(usize, usize)>);
-    let n = labels
-        .len()
-        .max(series.iter().map(|s| s.1.len()).max().unwrap_or(0));
-    let all = series.iter().flat_map(|s| s.1.iter().copied());
-    let (lo, hi) = all.fold((0f64, 0f64), |(lo, hi), v| (lo.min(v), hi.max(v)));
-    let (ticks, bottom, top) = t::ticks(lo, hi);
-    let y = move |v: f64| (v - bottom) / (top - bottom) * 100.0;
-    let x = move |i: usize| {
-        if n <= 1 {
-            50.0
-        } else {
-            i as f64 / (n - 1) as f64 * 100.0
-        }
-    };
-    rsx! {
-        figure { class: "oui-chart",
-            {readout(picked(), &labels, &series)}
-            div { class: "oui-plot",
-                {y_axis(&ticks, y)}
-                svg { class: "oui-lines-svg", view_box: "0 0 100 100", preserve_aspect_ratio: "none", "aria-hidden": "true",
-                    for (s, (_, values)) in series.iter().enumerate() {
-                        {
-                            let points: Vec<String> = values.iter().enumerate().map(|(i, v)| format!("{:.3},{:.3}", x(i), 100.0 - y(*v))).collect();
-                            let line = points.join(" ");
-                            let fill = format!("{:.3},{:.3} {line} {:.3},{:.3}", x(0), 100.0 - y(bottom.max(0.0).min(top)), x(values.len().saturating_sub(1)), 100.0 - y(bottom.max(0.0).min(top)));
-                            rsx! {
-                                if area { polygon { class: "oui-area c{s % 6}", points: "{fill}" } }
-                                polyline { class: "oui-line-path c{s % 6}", points: "{line}" }
-                            }
-                        }
-                    }
-                }
-                for (s, (_, values)) in series.iter().enumerate() {
-                    for (i, v) in values.iter().enumerate() {
-                        {
-                            let on = picked() == Some((i, s));
-                            rsx! {
-                                button { class: if on { "oui-dot on c{s % 6}" } else { "oui-dot c{s % 6}" },
-                                    style: "left: {x(i)}%; bottom: {y(*v)}%",
-                                    "aria-label": "{labels.get(i).cloned().unwrap_or_default()}: {v}",
-                                    onclick: move |_| picked.set(Some((i, s))),
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            div { class: "oui-xlabels spread", for l in labels.iter() { span { title: "{l}", "{l}" } } }
-            {axis_titles(&node)}
-            {legend(&series)}
-        }
-    }
-}
-
-#[component]
-fn PieChart(node: Node) -> Element {
-    let labels: Vec<String> = node.arg("labels").items().iter().map(Value::text).collect();
-    let values: Vec<f64> = node
-        .arg("values")
-        .items()
-        .iter()
-        .map(|v| v.num().max(0.0))
-        .collect();
-    let donut = node.str("variant") == "donut";
-    let total: f64 = values.iter().sum();
-    let mut picked = use_signal(|| None::<usize>);
-    let mut a0 = -std::f64::consts::FRAC_PI_2;
-    let slices: Vec<(usize, String)> = values
-        .iter()
-        .enumerate()
-        .map(|(i, v)| {
-            let sweep = if total > 0.0 {
-                v / total * std::f64::consts::TAU
-            } else {
-                0.0
-            };
-            let path = arc(a0, a0 + sweep, if donut { 0.6 } else { 0.0 });
-            a0 += sweep;
-            (i, path)
-        })
-        .collect();
-    rsx! {
-        figure { class: "oui-chart oui-pie",
-            svg { view_box: "-1.05 -1.05 2.1 2.1", class: "oui-pie-svg", role: "img",
-                for (i, d) in slices {
-                    path { class: if picked() == Some(i) { "on c{i % 6}" } else { "c{i % 6}" }, d: "{d}",
-                        onclick: move |_| picked.set(Some(i)),
-                    }
-                }
-            }
-            div { class: "oui-pie-legend",
-                for (i, l) in labels.iter().enumerate() {
-                    {
-                        let v = values.get(i).copied().unwrap_or(0.0);
-                        let share = if total > 0.0 { v / total * 100.0 } else { 0.0 };
-                        rsx! {
-                            button { class: if picked() == Some(i) { "on" } else { "" }, onclick: move |_| picked.set(Some(i)),
-                                span { class: "oui-swatch c{i % 6}" }
-                                span { class: "oui-pie-label", "{l}" }
-                                span { class: "oui-num", "{t::short_num(v)} · {share:.0}%" }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// An SVG path for the slice from angle `a0` to `a1` of a unit circle, a ring when `inner`
-/// is above 0.
-fn arc(a0: f64, a1: f64, inner: f64) -> String {
-    // A whole circle can't be one arc.
-    let a1 = if a1 - a0 >= std::f64::consts::TAU {
-        a0 + std::f64::consts::TAU - 1e-4
-    } else {
-        a1
-    };
-    let large = if a1 - a0 > std::f64::consts::PI { 1 } else { 0 };
-    let (x0, y0, x1, y1) = (a0.cos(), a0.sin(), a1.cos(), a1.sin());
-    if inner <= 0.0 {
-        format!("M0 0 L{x0:.4} {y0:.4} A1 1 0 {large} 1 {x1:.4} {y1:.4} Z")
-    } else {
-        let r = inner;
-        format!(
-            "M{:.4} {:.4} L{x0:.4} {y0:.4} A1 1 0 {large} 1 {x1:.4} {y1:.4} L{:.4} {:.4} A{r} {r} 0 {large} 0 {:.4} {:.4} Z",
-            x0 * r,
-            y0 * r,
-            x1 * r,
-            y1 * r,
-            x0 * r,
-            y0 * r
-        )
     }
 }
